@@ -1,0 +1,31 @@
+{
+  "kind": "collectionType",
+  "collectionName": "notes",
+  "info": {
+    "singularName": "note",
+    "pluralName": "notes",
+    "displayName": "Note",
+    "description": "Short MCP-authored note attached to a video. Distinct from Video.notes (which is the user's rich-text scratchpad) — this is an append-only list of small observations that an external MCP client (e.g. Claude Desktop) can leave for later reference."
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "video": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::video.video"
+    },
+    "body": {
+      "type": "text",
+      "required": true,
+      "maxLength": 4000
+    },
+    "author": {
+      "type": "string",
+      "maxLength": 120,
+      "description": "Free-form author label — typically the MCP client name (e.g. \"claude-desktop\")."
+    }
+  }
+}
