@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Accordion } from 'radix-ui';
 import { buildMarkdownComponents, stripInlineTimecodes } from './TimecodeMarkdown';
+import { Button } from '#/components/ui/button';
 import { getChatResponseEvidence } from '#/data/server-functions/videos';
 import type { EvidenceCitation } from '#/lib/services/transcript';
 
@@ -159,25 +160,17 @@ export function VideoChat({ videoId, onSeek, className }: Readonly<Props>) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
 
-  const scrollToBottom = () => {
-    requestAnimationFrame(() => {
-      scrollRef.current?.scrollTo({
-        top: scrollRef.current.scrollHeight,
-        behavior: 'smooth',
-      });
-    });
-  };
-
-  // Auto-grow the textarea up to a reasonable max. Keeps the input
-  // single-line-ish until the user types a long question.
   useEffect(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
-  }, [input]);
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [messages]);
+
+  const clear = () => {
+    if (pending) return;
+    setMessages([]);
+    setError(null);
+  };
 
   const sendPrompt = async (promptText: string) => {
     if (pending) return;
@@ -195,7 +188,6 @@ export function VideoChat({ videoId, onSeek, className }: Readonly<Props>) {
     setInput('');
     setPending(true);
     setError(null);
-    scrollToBottom();
 
     try {
       let accumulated = '';
@@ -217,7 +209,6 @@ export function VideoChat({ videoId, onSeek, className }: Readonly<Props>) {
         if (event.kind === 'text') {
           accumulated += event.delta;
           pushUpdate();
-          scrollToBottom();
         } else if (event.kind === 'tool_start') {
           toolCalls.set(event.id, {
             id: event.id,
@@ -227,7 +218,6 @@ export function VideoChat({ videoId, onSeek, className }: Readonly<Props>) {
             status: 'running',
           });
           pushUpdate();
-          scrollToBottom();
         } else if (event.kind === 'tool_end') {
           const existing = toolCalls.get(event.id);
           toolCalls.set(event.id, {
@@ -277,47 +267,72 @@ export function VideoChat({ videoId, onSeek, className }: Readonly<Props>) {
     void sendPrompt(input);
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // Enter submits; Shift+Enter (and other modifier combos) inserts a newline.
-    if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
-      e.preventDefault();
-      void sendPrompt(input);
-    }
-  };
-
   return (
-    <section className={`flex min-h-0 flex-col ${className ?? 'mb-12'}`}>
+    <section
+      className={`flex min-h-0 flex-col ${className ?? 'mb-12'}`}
+      aria-label="Chat with this video"
+    >
+      <header className="shrink-0 flex items-center justify-between gap-3 pb-4">
+        <div>
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--ink-muted)]">
+            Ask about this video
+          </h2>
+          <p className="mt-1 text-xs text-[var(--ink-muted)]">
+            Answers come from the transcript. Timestamps seek the player.
+          </p>
+        </div>
+        {messages.length > 0 && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={clear}
+            disabled={pending}
+          >
+            Clear
+          </Button>
+        )}
+      </header>
+
       <div
         ref={scrollRef}
-        className="flex-1 min-h-0 overflow-y-auto"
+        className="min-h-0 flex-1 overflow-y-auto"
       >
-        {messages.length === 0 && !pending ? (
-          <EmptyState
-            onPick={(p) => {
-              setInput(p);
-              textareaRef.current?.focus();
-            }}
-          />
-        ) : (
-          <div className="grid gap-6 py-2">
-            {messages.map((msg, i) => (
-              <MessageRow
-                key={i}
-                message={msg}
-                onSeek={onSeek}
-                streaming={
-                  pending && i === messages.length - 1 && msg.role === 'assistant'
-                }
-              />
+        {messages.length === 0 && (
+          <div className="flex flex-wrap gap-2 pb-4">
+            {SUGGESTED_PROMPTS.map((p) => (
+              <button
+                key={p}
+                type="button"
+                onClick={() => void sendPrompt(p)}
+                disabled={pending}
+                className="rounded-full border border-[var(--line)] bg-[var(--bg-subtle)] px-3 py-1 text-xs text-[var(--ink-muted)] transition hover:border-[var(--line-strong)] hover:text-[var(--ink)] disabled:opacity-50"
+              >
+                {p}
+              </button>
             ))}
           </div>
         )}
+
+        <div className="grid gap-4 pb-4">
+          {messages.map((msg, i) => (
+            <MessageRow
+              key={i}
+              message={msg}
+              onSeek={onSeek}
+              streaming={
+                pending && i === messages.length - 1 && msg.role === 'assistant'
+              }
+            />
+          ))}
+          <div ref={bottomRef} />
+        </div>
       </div>
 
       {error && (
         <div
           role="alert"
-          className="mt-2 flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive"
+          className="mb-3 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
         >
           <svg
             viewBox="0 0 16 16"
@@ -335,109 +350,24 @@ export function VideoChat({ videoId, onSeek, className }: Readonly<Props>) {
         </div>
       )}
 
-      <form
-        onSubmit={handleSubmit}
-        className="mt-3 flex items-end gap-2 rounded-2xl border border-[var(--line)] bg-[var(--card)] px-3 py-2.5 focus-within:border-[var(--line-strong)]"
-      >
-        <textarea
-          ref={textareaRef}
+      <form onSubmit={handleSubmit} className="shrink-0 flex gap-2 pt-3">
+        <input
+          type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          rows={1}
           placeholder="Ask about this video…  (/web <query> to force web search)"
           disabled={pending}
-          className="min-h-[1.5rem] flex-1 resize-none border-0 bg-transparent px-1 text-sm leading-6 text-[var(--ink)] outline-none placeholder:text-[var(--ink-muted)] disabled:opacity-50"
+          className="h-10 min-w-0 flex-1 rounded-full border border-[var(--line)] bg-[var(--bg-subtle)] px-4 text-sm text-[var(--ink)] placeholder:text-[var(--ink-muted)] focus:border-[var(--line-strong)] focus:outline-none disabled:opacity-50"
         />
-        <button
+        <Button
           type="submit"
+          size="pill"
           disabled={pending || !input.trim()}
-          aria-label="Send message"
-          className="inline-flex h-8 w-8 flex-none items-center justify-center rounded-full bg-[var(--ink)] text-[var(--cream)] transition hover:bg-[var(--ink-soft)] disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {pending ? (
-            <svg
-              viewBox="0 0 16 16"
-              width="14"
-              height="14"
-              className="animate-spin"
-              aria-hidden="true"
-            >
-              <circle
-                cx="8"
-                cy="8"
-                r="6"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeDasharray="20 30"
-                strokeLinecap="round"
-              />
-            </svg>
-          ) : (
-            <svg
-              viewBox="0 0 24 24"
-              width="14"
-              height="14"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M12 19V5" />
-              <path d="m5 12 7-7 7 7" />
-            </svg>
-          )}
-        </button>
+          {pending ? 'Thinking…' : 'Send'}
+        </Button>
       </form>
-
-      <p className="mt-1.5 text-center text-[0.65rem] text-[var(--ink-muted)]">
-        Enter to send · Shift+Enter for a new line
-      </p>
     </section>
-  );
-}
-
-function EmptyState({ onPick }: Readonly<{ onPick: (prompt: string) => void }>) {
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-5 py-10 text-center">
-      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--bg-subtle)]">
-        <svg
-          viewBox="0 0 24 24"
-          width="18"
-          height="18"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className="text-[var(--ink-muted)]"
-          aria-hidden="true"
-        >
-          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-        </svg>
-      </div>
-      <div className="max-w-xs">
-        <p className="text-sm font-medium text-[var(--ink)]">Ask about this video</p>
-        <p className="mt-1 text-xs leading-relaxed text-[var(--ink-muted)]">
-          Answers come from the transcript. Timestamps in responses seek the video.
-        </p>
-      </div>
-      <div className="flex w-full max-w-xs flex-wrap justify-center gap-1.5">
-        {SUGGESTED_PROMPTS.map((p) => (
-          <button
-            key={p}
-            type="button"
-            onClick={() => onPick(p)}
-            className="rounded-full border border-[var(--line)] bg-[var(--card)] px-3 py-1.5 text-[0.7rem] text-[var(--ink-soft)] transition hover:border-[var(--line-strong)] hover:text-[var(--ink)]"
-          >
-            {p}
-          </button>
-        ))}
-      </div>
-    </div>
   );
 }
 
@@ -452,67 +382,48 @@ function MessageRow({
 }>) {
   if (message.role === 'user') {
     return (
-      <div className="flex justify-end">
-        <div className="max-w-[85%] rounded-2xl rounded-br-md bg-[var(--ink)] px-4 py-2.5 text-sm leading-relaxed text-[var(--cream)]">
-          {message.content}
-        </div>
+      <div className="ml-auto max-w-[85%] rounded-2xl rounded-br-sm bg-[var(--accent)]/10 px-4 py-2.5 text-sm text-[var(--ink)]">
+        {message.content}
       </div>
     );
   }
 
+  const isEmpty = message.content.length === 0 && streaming;
+
   return (
-    <div className="flex gap-3">
-      <div
-        aria-hidden="true"
-        className="flex h-7 w-7 flex-none items-center justify-center rounded-full bg-[var(--ink)] text-[var(--cream)]"
-      >
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
-          <path d="M12 2l2.09 6.26L20 10l-5.91 1.74L12 18l-2.09-6.26L4 10l5.91-1.74L12 2z" />
-        </svg>
-      </div>
-      <div className="chat-md min-w-0 flex-1 pt-0.5 text-sm leading-relaxed text-[var(--ink)]">
-        {message.content.length === 0 && streaming ? (
-          <span className="inline-flex items-center gap-2 text-[var(--ink-muted)]">
-            <span className="inline-flex gap-1">
-              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-[var(--ink-muted)]" />
-              <span
-                className="h-1.5 w-1.5 animate-bounce rounded-full bg-[var(--ink-muted)]"
-                style={{ animationDelay: '150ms' }}
-              />
-              <span
-                className="h-1.5 w-1.5 animate-bounce rounded-full bg-[var(--ink-muted)]"
-                style={{ animationDelay: '300ms' }}
-              />
-            </span>
-          </span>
-        ) : (
-          <>
-            {message.toolCalls && message.toolCalls.length > 0 && (
-              <ToolCallsPanel toolCalls={message.toolCalls} />
-            )}
-            {/* Strip inline `[mm:ss]` / `(mm:ss)` timecodes from the
-                chat body. The model often peppers them inline for
-                "grounding," but the Sources accordion below already
-                shows each citation with its transcript excerpt —
-                inline chips are redundant visual noise. */}
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={buildMarkdownComponents(onSeek)}
-            >
-              {stripInlineTimecodes(message.content)}
-            </ReactMarkdown>
-            {streaming && (
-              <span
-                aria-hidden="true"
-                className="ml-0.5 inline-block h-4 w-[2px] animate-pulse bg-[var(--ink-muted)] align-middle"
-              />
-            )}
-            {!streaming && message.evidence && message.evidence.length > 0 && (
-              <EvidencePanel evidence={message.evidence} onSeek={onSeek} />
-            )}
-          </>
-        )}
-      </div>
+    <div className="mr-auto max-w-[95%]">
+      {message.toolCalls && message.toolCalls.length > 0 && (
+        <div className="mb-2">
+          <ToolCallsPanel toolCalls={message.toolCalls} />
+        </div>
+      )}
+      {isEmpty ? (
+        <div className="inline-flex items-center gap-2 rounded-2xl rounded-bl-sm border border-[var(--line)] bg-[var(--bg-subtle)] px-4 py-3 text-sm text-[var(--ink-muted)]">
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--ink-muted)]" />
+          <span>Thinking…</span>
+        </div>
+      ) : (
+        <div className="chat-md rounded-2xl rounded-bl-sm border border-[var(--line)] bg-[var(--bg-subtle)] px-4 py-3 text-sm leading-relaxed text-[var(--ink)]">
+          {/* Strip inline `[mm:ss]` / `(mm:ss)` timecodes from the chat body
+              — the Sources accordion below shows each citation with its
+              transcript excerpt, so inline chips are redundant. */}
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={buildMarkdownComponents(onSeek)}
+          >
+            {stripInlineTimecodes(message.content)}
+          </ReactMarkdown>
+          {streaming && (
+            <span
+              aria-hidden="true"
+              className="ml-0.5 inline-block h-4 w-[2px] animate-pulse bg-[var(--ink-muted)] align-middle"
+            />
+          )}
+          {!streaming && message.evidence && message.evidence.length > 0 && (
+            <EvidencePanel evidence={message.evidence} onSeek={onSeek} />
+          )}
+        </div>
+      )}
     </div>
   );
 }
