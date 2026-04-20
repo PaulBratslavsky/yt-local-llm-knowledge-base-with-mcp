@@ -11,6 +11,12 @@ const schema = z.object({
     .enum(['any', 'pending', 'generated', 'failed'])
     .default('any')
     .describe('Filter by summaryStatus.'),
+  verdict: z
+    .enum(['any', 'worth_it', 'skim', 'skip'])
+    .default('any')
+    .describe(
+      'Filter by the AI-generated watch verdict. worth_it = dense/actionable, skim = mixed, skip = generic. Use "worth_it" to find videos the summary alone cannot replace.',
+    ),
   tag: z
     .string()
     .optional()
@@ -20,11 +26,12 @@ const schema = z.object({
 export const listVideosTool: ToolDef<z.infer<typeof schema>> = {
   name: 'listVideos',
   description:
-    'List videos in the knowledge base. Returns header fields (title, youtubeVideoId, author, tags, summaryStatus) — use getVideo for the full record including summary.',
+    'List videos in the knowledge base. Returns header fields (title, youtubeVideoId, author, tags, summaryStatus, watchVerdict, verdictSummary) — use getVideo for the full record including summary.',
   schema,
-  execute: async ({ page, pageSize, status, tag }, { strapi }) => {
+  execute: async ({ page, pageSize, status, verdict, tag }, { strapi }) => {
     const filters: Record<string, unknown> = {};
     if (status !== 'any') filters.summaryStatus = { $eq: status };
+    if (verdict !== 'any') filters.watchVerdict = { $eq: verdict };
     if (tag) filters.tags = { name: { $eq: tag.trim().toLowerCase() } };
 
     const start = (page - 1) * pageSize;
@@ -40,6 +47,8 @@ export const listVideosTool: ToolDef<z.infer<typeof schema>> = {
         'summaryStatus',
         'summaryTitle',
         'summaryDescription',
+        'watchVerdict',
+        'verdictSummary',
         'createdAt',
       ],
       populate: { tags: { fields: ['name'] } },

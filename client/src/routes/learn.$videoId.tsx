@@ -19,8 +19,27 @@ import {
   triggerSummaryGeneration,
   type GenerationProgress,
 } from '#/data/server-functions/videos';
-import type { StrapiVideo } from '#/lib/services/videos';
+import type { StrapiVideo, WatchVerdict } from '#/lib/services/videos';
 import type { GenerationMode } from '#/lib/validations/post';
+
+const VERDICT_LABEL: Record<WatchVerdict, string> = {
+  worth_it: 'Worth watching',
+  skim: 'Skim it',
+  skip: 'Skip',
+};
+
+const VERDICT_BADGE: Record<WatchVerdict, string> = {
+  worth_it:
+    'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
+  skim: 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400',
+  skip: 'border-[var(--line)] bg-[var(--bg-subtle)] text-[var(--ink-muted)]',
+};
+
+const VERDICT_PANEL: Record<WatchVerdict, string> = {
+  worth_it: 'border-emerald-500/20 bg-emerald-500/5',
+  skim: 'border-amber-500/20 bg-amber-500/5',
+  skip: 'border-[var(--line)] bg-[var(--card)]',
+};
 
 // The learn page loads by videoId (the YouTube id in the URL). There are
 // four possible states:
@@ -201,6 +220,30 @@ function SummaryView({
               </p>
             )}
           </header>
+          {video.watchVerdict && video.verdictSummary && (
+            <section
+              className={`mb-10 rounded-2xl border p-5 sm:p-6 ${VERDICT_PANEL[video.watchVerdict]}`}
+            >
+              <div className="flex items-center gap-2">
+                <span
+                  className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[0.65rem] font-semibold uppercase tracking-wider ${VERDICT_BADGE[video.watchVerdict]}`}
+                >
+                  {VERDICT_LABEL[video.watchVerdict]}
+                </span>
+                <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--ink-muted)]">
+                  Should I watch this?
+                </h2>
+              </div>
+              <p className="mt-3 text-base font-medium leading-relaxed text-[var(--ink)]">
+                {video.verdictSummary}
+              </p>
+              {video.verdictReason && (
+                <p className="mt-2 text-sm leading-relaxed text-[var(--ink-soft)]">
+                  {video.verdictReason}
+                </p>
+              )}
+            </section>
+          )}
           {video.summaryOverview && (
             <section className="mb-10">
               <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--ink-muted)]">

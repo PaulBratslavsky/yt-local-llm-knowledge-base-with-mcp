@@ -1,5 +1,43 @@
 import { Link } from '@tanstack/react-router';
-import { type StrapiVideo } from '#/lib/services/videos';
+import { type StrapiVideo, type WatchVerdict } from '#/lib/services/videos';
+
+const VERDICT_META: Record<
+  WatchVerdict,
+  { label: string; className: string }
+> = {
+  worth_it: {
+    label: 'Worth watching',
+    className:
+      'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
+  },
+  skim: {
+    label: 'Skim it',
+    className:
+      'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400',
+  },
+  skip: {
+    label: 'Skip',
+    className:
+      'border-[var(--line)] bg-[var(--bg-subtle)] text-[var(--ink-muted)]',
+  },
+};
+
+function VerdictBlock({ video }: Readonly<{ video: StrapiVideo }>) {
+  if (!video.watchVerdict || !video.verdictSummary) return null;
+  const meta = VERDICT_META[video.watchVerdict];
+  return (
+    <div className="mt-3 flex flex-col gap-2">
+      <span
+        className={`inline-flex w-fit items-center rounded-full border px-2.5 py-0.5 text-[0.65rem] font-semibold uppercase tracking-wider ${meta.className}`}
+      >
+        {meta.label}
+      </span>
+      <p className="text-sm leading-relaxed text-[var(--ink-soft)]">
+        {video.verdictSummary}
+      </p>
+    </div>
+  );
+}
 
 function relativeTime(iso: string): string {
   const then = new Date(iso).getTime();
@@ -94,6 +132,7 @@ export function VideoCard({ video }: Readonly<{ video: StrapiVideo }>) {
         {video.caption && (
           <p className="mt-1 text-sm leading-relaxed text-[var(--ink-soft)]">{video.caption}</p>
         )}
+        <VerdictBlock video={video} />
         <TagChips video={video} />
       </div>
 

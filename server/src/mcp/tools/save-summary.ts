@@ -35,6 +35,25 @@ const schema = z.object({
   summaryTitle: z.string().min(1).max(200),
   summaryDescription: z.string().min(1).max(500),
   summaryOverview: z.string().min(1).describe('Markdown TL;DR — 1–2 paragraphs.'),
+  watchVerdict: z
+    .enum(['skip', 'skim', 'worth_it'])
+    .describe(
+      'Honest "should the user watch this?" judgement. worth_it = dense with specific/actionable info the summary cannot replace. skim = some useful parts plus filler. skip = generic advice the summary covers.',
+    ),
+  verdictSummary: z
+    .string()
+    .min(1)
+    .max(280)
+    .describe(
+      'ONE sentence, format: "Worth it if you care about X. Skip if you already know Y." Be specific.',
+    ),
+  verdictReason: z
+    .string()
+    .min(1)
+    .max(1000)
+    .describe(
+      '2-4 sentences on what the video does well, what it assumes the viewer knows, and who should watch it.',
+    ),
   keyTakeaways: z.array(TakeawaySchema).min(1).max(10),
   sections: z.array(SectionSchema).min(1).max(20),
   actionSteps: z.array(ActionStepSchema).min(1).max(10),
@@ -72,6 +91,9 @@ export const saveSummaryTool: ToolDef<z.infer<typeof schema>> = {
         summaryTitle: args.summaryTitle,
         summaryDescription: args.summaryDescription,
         summaryOverview: args.summaryOverview,
+        watchVerdict: args.watchVerdict,
+        verdictSummary: args.verdictSummary,
+        verdictReason: args.verdictReason,
         summaryGeneratedAt: new Date().toISOString(),
         aiModel: args.aiModel ?? null,
         keyTakeaways: args.keyTakeaways,

@@ -13,6 +13,8 @@ const FIELDS = [
   'summaryTitle',
   'summaryDescription',
   'summaryOverview',
+  'verdictSummary',
+  'verdictReason',
 ];
 
 const schema = z.object({
@@ -40,6 +42,8 @@ async function runQuery(strapi: any, filters: Record<string, unknown>, limit: nu
       'summaryTitle',
       'summaryDescription',
       'summaryStatus',
+      'watchVerdict',
+      'verdictSummary',
       'createdAt',
     ],
     populate: { tags: { fields: ['name'] } },

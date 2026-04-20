@@ -223,6 +223,21 @@ const SummarySchema = z.object({
     .describe(
       'One-sentence subtitle describing what the viewer will learn. MAX 500 characters.',
     ),
+  watchVerdict: z
+    .enum(['skip', 'skim', 'worth_it'])
+    .describe(
+      'Overall recommendation on whether to watch the full video. "worth_it" = dense with specific, actionable information the summary cannot fully replace. "skim" = some useful parts but also filler or well-known material; the summary plus spot-watching covers most of it. "skip" = mostly generic advice; the summary is enough.',
+    ),
+  verdictSummary: z
+    .string()
+    .describe(
+      'ONE sentence, MAX 280 characters. Format: "Worth it if you care about X. Skip if you already know Y." Be specific about X and Y — do not write generic filler.',
+    ),
+  verdictReason: z
+    .string()
+    .describe(
+      '2-4 sentences explaining the verdict. Cover what the video does well, what it assumes you already know, and who the ideal viewer is. MAX 1000 characters. No markdown.',
+    ),
   overview: z
     .string()
     .describe(
@@ -277,6 +292,8 @@ export type GeneratedSummary = z.infer<typeof SummarySchema>;
 const LIMITS = {
   summaryTitle: 200,
   summaryDescription: 500,
+  verdictSummary: 280,
+  verdictReason: 1000,
   takeawayText: 280,
   sectionHeading: 200,
   sectionBody: 2000,
@@ -311,6 +328,15 @@ function sanitizeSummary(
     ? (note('description', raw.description.length, LIMITS.summaryDescription),
       clamp(raw.description, LIMITS.summaryDescription))
     : raw.description;
+
+  const verdictSummary = raw.verdictSummary.length > LIMITS.verdictSummary
+    ? (note('verdictSummary', raw.verdictSummary.length, LIMITS.verdictSummary),
+      clamp(raw.verdictSummary, LIMITS.verdictSummary))
+    : raw.verdictSummary;
+  const verdictReason = raw.verdictReason.length > LIMITS.verdictReason
+    ? (note('verdictReason', raw.verdictReason.length, LIMITS.verdictReason),
+      clamp(raw.verdictReason, LIMITS.verdictReason))
+    : raw.verdictReason;
 
   const keyTakeaways = raw.keyTakeaways.map((t, i) => {
     if (t.text.length <= LIMITS.takeawayText) return t;
@@ -352,6 +378,8 @@ function sanitizeSummary(
     ...raw,
     title,
     description,
+    verdictSummary,
+    verdictReason,
     keyTakeaways,
     sections,
     actionSteps,
@@ -369,6 +397,14 @@ const SINGLE_PASS_TOKEN_BUDGET = 15_000;
 const SUMMARY_SYSTEM = [
   'You summarize YouTube videos for a personal knowledge base, producing structured notes someone can act on instead of rewatching.',
   'Be specific and evidence-oriented. Avoid marketing fluff, generic advice, and sentence-length filler.',
+  '',
+  'WATCH VERDICT — you must produce an honest "should I watch this?" judgement:',
+  ' • watchVerdict=worth_it — the video contains specific, dense, actionable information the summary alone cannot fully replace.',
+  ' • watchVerdict=skim — mix of useful parts and filler/well-known material. Summary plus spot-watching covers most of it.',
+  ' • watchVerdict=skip — mostly generic advice or surface-level content. The summary is enough.',
+  ' • verdictSummary — ONE sentence, format "Worth it if you care about X. Skip if you already know Y." Be specific about X and Y. No hedging like "it depends."',
+  ' • verdictReason — 2-4 sentences on what the video does well, what it assumes you already know, and who the ideal viewer is.',
+  ' • Judge the VIDEO ITSELF, not the topic. A well-known topic with dense novel framing = worth_it. A niche topic delivered as generic tips = skip.',
   '',
   'IMPORTANT — Do NOT emit timecodes. Leave `section.timeSec` unset (omit the field). Do not write `[mm:ss]` or `(mm:ss)` anywhere in section headings or bodies. Timecodes are recovered deterministically after your output via a transcript-match pass — if you try to produce them yourself they will be discarded.',
   '',
@@ -977,6 +1013,9 @@ export async function generateVideoSummary(
     summaryTitle: safe.title,
     summaryDescription: safe.description,
     summaryOverview: safe.overview,
+    watchVerdict: safe.watchVerdict,
+    verdictSummary: safe.verdictSummary,
+    verdictReason: safe.verdictReason,
     aiModel: SUMMARY_MODEL,
     transcriptSegments,
     keyTakeaways: safe.keyTakeaways,

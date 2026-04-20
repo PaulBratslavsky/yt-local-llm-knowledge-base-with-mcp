@@ -71,6 +71,18 @@
     "summaryOverview": {
       "type": "richtext"
     },
+    "watchVerdict": {
+      "type": "enumeration",
+      "enum": ["skip", "skim", "worth_it"]
+    },
+    "verdictSummary": {
+      "type": "string",
+      "maxLength": 280
+    },
+    "verdictReason": {
+      "type": "text",
+      "maxLength": 1000
+    },
     "summaryGeneratedAt": {
       "type": "datetime"
     },

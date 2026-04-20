@@ -78,6 +78,8 @@ export type StrapiTranscript = {
 
 export type SummaryStatus = 'pending' | 'generated' | 'failed';
 
+export type WatchVerdict = 'skip' | 'skim' | 'worth_it';
+
 export type StrapiVideo = {
   id: number;
   documentId: string;
@@ -94,6 +96,9 @@ export type StrapiVideo = {
   summaryTitle: string | null;
   summaryDescription: string | null;
   summaryOverview: string | null;
+  watchVerdict: WatchVerdict | null;
+  verdictSummary: string | null;
+  verdictReason: string | null;
   summaryGeneratedAt: string | null;
   aiModel: string | null;
   transcriptSegments: unknown | null;
@@ -299,6 +304,9 @@ export type UpdateVideoSummaryInput = {
   summaryTitle: string;
   summaryDescription: string;
   summaryOverview: string;
+  watchVerdict: WatchVerdict;
+  verdictSummary: string;
+  verdictReason: string;
   aiModel: string;
   transcriptSegments?: unknown;
   keyTakeaways: Array<{ text: string }>;

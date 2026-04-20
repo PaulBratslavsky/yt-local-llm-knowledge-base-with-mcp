@@ -620,6 +620,14 @@ export interface ApiVideoVideo extends Struct.CollectionTypeSchema {
       Schema.Attribute.SetMinMaxLength<{
         maxLength: 2000;
       }>;
+    verdictReason: Schema.Attribute.Text &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 1000;
+      }>;
+    verdictSummary: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 280;
+      }>;
     videoAuthor: Schema.Attribute.String &
       Schema.Attribute.SetMinMaxLength<{
         maxLength: 200;
@@ -632,6 +640,7 @@ export interface ApiVideoVideo extends Struct.CollectionTypeSchema {
       Schema.Attribute.SetMinMaxLength<{
         maxLength: 300;
       }>;
+    watchVerdict: Schema.Attribute.Enumeration<['skip', 'skim', 'worth_it']>;
     youtubeVideoId: Schema.Attribute.String &
       Schema.Attribute.Required &
       Schema.Attribute.Unique &
