@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
+import { createFileRoute, Link, useNavigate, useRouter } from '@tanstack/react-router';
 import { z } from 'zod';
 import { VideoCard } from '#/components/VideoCard';
 import { Button } from '#/components/ui/button';
@@ -32,12 +32,29 @@ function FeedPage() {
   const { result } = Route.useLoaderData();
   const search = Route.useSearch();
   const navigate = useNavigate();
+  const router = useRouter();
 
   // Selection mode is page-local state. Switching tags/search keeps the
   // current selection because the component doesn't remount — only the
   // loader re-runs. Leaving /feed resets everything.
   const [selectionMode, setSelectionMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  // Poll the loader while any card is `pending` so summaries flip to
+  // "generated" on the feed without a manual refresh. Triggers on:
+  //   - a fresh ingest (the new row is pending until the background job
+  //     completes)
+  //   - regenerate from the card (the server function kicks off a job and
+  //     returns immediately; the card's status flips to pending)
+  // Cleared the moment nothing is pending anymore.
+  useEffect(() => {
+    const anyPending = result.videos.some((v) => v.summaryStatus === 'pending');
+    if (!anyPending) return;
+    const id = globalThis.setInterval(() => {
+      void router.invalidate();
+    }, 3000);
+    return () => globalThis.clearInterval(id);
+  }, [result.videos, router]);
 
   // Escape cancels selection mode, matching the intuitive pattern.
   useEffect(() => {
