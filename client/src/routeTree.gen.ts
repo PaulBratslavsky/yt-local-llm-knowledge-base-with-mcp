@@ -11,10 +11,12 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as NewPostRouteImport } from './routes/new-post'
 import { Route as FeedRouteImport } from './routes/feed'
+import { Route as DigestRouteImport } from './routes/digest'
 import { Route as AboutRouteImport } from './routes/about'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as VideoDocumentIdRouteImport } from './routes/video.$documentId'
 import { Route as LearnVideoIdRouteImport } from './routes/learn.$videoId'
+import { Route as ApiDigestChatRouteImport } from './routes/api.digest-chat'
 import { Route as ApiChatRouteImport } from './routes/api.chat'
 
 const NewPostRoute = NewPostRouteImport.update({
@@ -25,6 +27,11 @@ const NewPostRoute = NewPostRouteImport.update({
 const FeedRoute = FeedRouteImport.update({
   id: '/feed',
   path: '/feed',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DigestRoute = DigestRouteImport.update({
+  id: '/digest',
+  path: '/digest',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AboutRoute = AboutRouteImport.update({
@@ -47,6 +54,11 @@ const LearnVideoIdRoute = LearnVideoIdRouteImport.update({
   path: '/learn/$videoId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiDigestChatRoute = ApiDigestChatRouteImport.update({
+  id: '/api/digest-chat',
+  path: '/api/digest-chat',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiChatRoute = ApiChatRouteImport.update({
   id: '/api/chat',
   path: '/api/chat',
@@ -56,18 +68,22 @@ const ApiChatRoute = ApiChatRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/about': typeof AboutRoute
+  '/digest': typeof DigestRoute
   '/feed': typeof FeedRoute
   '/new-post': typeof NewPostRoute
   '/api/chat': typeof ApiChatRoute
+  '/api/digest-chat': typeof ApiDigestChatRoute
   '/learn/$videoId': typeof LearnVideoIdRoute
   '/video/$documentId': typeof VideoDocumentIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/about': typeof AboutRoute
+  '/digest': typeof DigestRoute
   '/feed': typeof FeedRoute
   '/new-post': typeof NewPostRoute
   '/api/chat': typeof ApiChatRoute
+  '/api/digest-chat': typeof ApiDigestChatRoute
   '/learn/$videoId': typeof LearnVideoIdRoute
   '/video/$documentId': typeof VideoDocumentIdRoute
 }
@@ -75,9 +91,11 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/about': typeof AboutRoute
+  '/digest': typeof DigestRoute
   '/feed': typeof FeedRoute
   '/new-post': typeof NewPostRoute
   '/api/chat': typeof ApiChatRoute
+  '/api/digest-chat': typeof ApiDigestChatRoute
   '/learn/$videoId': typeof LearnVideoIdRoute
   '/video/$documentId': typeof VideoDocumentIdRoute
 }
@@ -86,27 +104,33 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/about'
+    | '/digest'
     | '/feed'
     | '/new-post'
     | '/api/chat'
+    | '/api/digest-chat'
     | '/learn/$videoId'
     | '/video/$documentId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/about'
+    | '/digest'
     | '/feed'
     | '/new-post'
     | '/api/chat'
+    | '/api/digest-chat'
     | '/learn/$videoId'
     | '/video/$documentId'
   id:
     | '__root__'
     | '/'
     | '/about'
+    | '/digest'
     | '/feed'
     | '/new-post'
     | '/api/chat'
+    | '/api/digest-chat'
     | '/learn/$videoId'
     | '/video/$documentId'
   fileRoutesById: FileRoutesById
@@ -114,9 +138,11 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AboutRoute: typeof AboutRoute
+  DigestRoute: typeof DigestRoute
   FeedRoute: typeof FeedRoute
   NewPostRoute: typeof NewPostRoute
   ApiChatRoute: typeof ApiChatRoute
+  ApiDigestChatRoute: typeof ApiDigestChatRoute
   LearnVideoIdRoute: typeof LearnVideoIdRoute
   VideoDocumentIdRoute: typeof VideoDocumentIdRoute
 }
@@ -135,6 +161,13 @@ declare module '@tanstack/react-router' {
       path: '/feed'
       fullPath: '/feed'
       preLoaderRoute: typeof FeedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/digest': {
+      id: '/digest'
+      path: '/digest'
+      fullPath: '/digest'
+      preLoaderRoute: typeof DigestRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/about': {
@@ -165,6 +198,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LearnVideoIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/digest-chat': {
+      id: '/api/digest-chat'
+      path: '/api/digest-chat'
+      fullPath: '/api/digest-chat'
+      preLoaderRoute: typeof ApiDigestChatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/chat': {
       id: '/api/chat'
       path: '/api/chat'
@@ -178,9 +218,11 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AboutRoute: AboutRoute,
+  DigestRoute: DigestRoute,
   FeedRoute: FeedRoute,
   NewPostRoute: NewPostRoute,
   ApiChatRoute: ApiChatRoute,
+  ApiDigestChatRoute: ApiDigestChatRoute,
   LearnVideoIdRoute: LearnVideoIdRoute,
   VideoDocumentIdRoute: VideoDocumentIdRoute,
 }

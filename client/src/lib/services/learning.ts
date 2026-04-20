@@ -1308,3 +1308,93 @@ export async function prepareChatPrompt(
     retrievedCount: retrieved.length,
   };
 }
+
+// -----------------------------------------------------------------------------
+// Cross-video chat — retrieves from each selected video's BM25 index and
+// builds a system prompt that labels every passage with its source video
+// title + timecode. Used by `/api/digest-chat` under the digest page.
+// -----------------------------------------------------------------------------
+
+// Fewer chunks per video — with N videos we'd otherwise blow past context.
+// 3 per video × 5 videos = 15 chunks ≈ 1800 words, similar footprint to
+// single-video chat's top-8 retrieval.
+const DIGEST_CHAT_TOP_K_PER_VIDEO = 3;
+
+async function retrieveChunksForDigest(
+  video: StrapiVideo,
+  query: string,
+): Promise<TranscriptChunk[]> {
+  if (!isStoredIndex(video.transcriptSegments)) return [];
+  return searchBM25(
+    video.transcriptSegments.bm25,
+    query,
+    DIGEST_CHAT_TOP_K_PER_VIDEO,
+  );
+}
+
+function formatMultiVideoChunks(
+  labeled: Array<{ videoTitle: string; chunks: TranscriptChunk[] }>,
+): string {
+  const blocks: string[] = [];
+  for (const entry of labeled) {
+    if (entry.chunks.length === 0) continue;
+    const body = entry.chunks
+      .map(
+        (c) =>
+          `  [${entry.videoTitle} · ${formatTimecode(c.timeSec)}] ${c.text}`,
+      )
+      .join('\n\n');
+    blocks.push(`--- From "${entry.videoTitle}" ---\n${body}`);
+  }
+  return blocks.join('\n\n');
+}
+
+function buildDigestChatSystemPrompt(
+  videos: StrapiVideo[],
+  labeled: Array<{ videoTitle: string; chunks: TranscriptChunk[] }>,
+): string {
+  const videoList = videos
+    .map(
+      (v, i) =>
+        `  ${i + 1}. "${v.videoTitle ?? v.youtubeVideoId}"${v.videoAuthor ? ` — ${v.videoAuthor}` : ''}`,
+    )
+    .join('\n');
+
+  const retrievedBlock = formatMultiVideoChunks(labeled);
+  const totalChunks = labeled.reduce((n, l) => n + l.chunks.length, 0);
+
+  return [
+    'You are answering questions across multiple YouTube videos that a user has grouped into a digest.',
+    'You have retrieved passages from each video (labeled with the video title and timecode) and you must ground every claim in them.',
+    'If the retrieved passages do not answer the question, say so plainly rather than invent content.',
+    '',
+    'CITATION FORMAT: When referring to a specific passage, cite it as `[<Exact video title> <mm:ss>]` — use the title string verbatim from the list below, and a timecode that came from the retrieved passages.',
+    'Compare and contrast across videos when relevant. When two videos say similar things, note the overlap; when they differ, call out the difference explicitly.',
+    'Keep answers concise (2–5 short paragraphs). Use markdown where it genuinely improves clarity. No preamble like "Great question!".',
+    '',
+    `Videos in this digest (${videos.length}):`,
+    videoList,
+    '',
+    totalChunks === 0
+      ? '(No retrieved passages matched this query — answer from general knowledge only if the question is outside the video scope, otherwise say you don\'t know.)'
+      : `---- Retrieved passages (top ${DIGEST_CHAT_TOP_K_PER_VIDEO} per video) ----\n${retrievedBlock}`,
+  ].join('\n');
+}
+
+export async function prepareDigestChatPrompt(
+  videos: StrapiVideo[],
+  messages: ChatMessage[],
+): Promise<{ system: string; retrievedCount: number }> {
+  const query = extractLatestUserQuery(messages);
+  const labeled = await Promise.all(
+    videos.map(async (v) => ({
+      videoTitle: v.videoTitle ?? v.youtubeVideoId,
+      chunks: await retrieveChunksForDigest(v, query),
+    })),
+  );
+  const retrievedCount = labeled.reduce((n, l) => n + l.chunks.length, 0);
+  return {
+    system: buildDigestChatSystemPrompt(videos, labeled),
+    retrievedCount,
+  };
+}

@@ -1,5 +1,7 @@
-import { Link } from '@tanstack/react-router';
+import { useState } from 'react';
+import { Link, useRouter } from '@tanstack/react-router';
 import { type StrapiVideo, type WatchVerdict } from '#/lib/services/videos';
+import { regenerateSummary } from '#/data/server-functions/videos';
 
 const VERDICT_META: Record<
   WatchVerdict,
@@ -96,10 +98,43 @@ function TagChips({ video }: Readonly<{ video: StrapiVideo }>) {
   );
 }
 
-export function VideoCard({ video }: Readonly<{ video: StrapiVideo }>) {
+type VideoCardProps = {
+  video: StrapiVideo;
+  // Selection mode — when set, renders a checkbox overlay. All four are
+  // optional so the component stays a drop-in for non-selection contexts.
+  selectable?: boolean;
+  selected?: boolean;
+  eligible?: boolean;
+  disabled?: boolean;
+  onToggle?: () => void;
+};
+
+export function VideoCard({
+  video,
+  selectable = false,
+  selected = false,
+  eligible = true,
+  disabled = false,
+  onToggle,
+}: Readonly<VideoCardProps>) {
   const src = `https://www.youtube-nocookie.com/embed/${video.youtubeVideoId}`;
+  const pickable = selectable && eligible && !disabled;
+  const mutedForSelection = selectable && !eligible;
+  const selectTooltip = !eligible
+    ? 'Needs a summary first'
+    : disabled
+      ? 'Max 5 per digest'
+      : selected
+        ? 'Click to deselect'
+        : 'Add to digest';
   return (
-    <article className="rise-in overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--card)] transition-shadow duration-300 hover:shadow-[0_1px_2px_rgba(9,9,11,0.04),0_12px_32px_rgba(9,9,11,0.06)]">
+    <article
+      className={`rise-in relative overflow-hidden rounded-2xl border bg-[var(--card)] transition-shadow duration-300 hover:shadow-[0_1px_2px_rgba(9,9,11,0.04),0_12px_32px_rgba(9,9,11,0.06)] ${
+        selected
+          ? 'border-[var(--accent)] ring-2 ring-[var(--accent)]/30'
+          : 'border-[var(--line)]'
+      } ${mutedForSelection ? 'opacity-60' : ''}`}
+    >
       <header className="flex items-center gap-3 px-5 pt-5">
         <div className="flex flex-1 flex-col leading-tight">
           <span className="text-xs text-[var(--ink-muted)]">
@@ -107,6 +142,29 @@ export function VideoCard({ video }: Readonly<{ video: StrapiVideo }>) {
           </span>
         </div>
         <SummaryStatusBadge video={video} />
+        {selectable && (
+          <button
+            type="button"
+            onClick={pickable ? onToggle : undefined}
+            disabled={!pickable}
+            aria-label={selectTooltip}
+            title={selectTooltip}
+            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 transition ${
+              selected
+                ? 'border-[var(--accent)] bg-[var(--accent)] text-white'
+                : 'border-[var(--line)] bg-[var(--card)]'
+            } ${pickable ? 'cursor-pointer hover:border-[var(--line-strong)]' : 'cursor-not-allowed opacity-50'}`}
+          >
+            {selected && (
+              <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+                <path
+                  fill="currentColor"
+                  d="M6.5 11.5L3 8l1.4-1.4L6.5 8.7l5.1-5.1L13 5z"
+                />
+              </svg>
+            )}
+          </button>
+        )}
       </header>
 
       <div className="mt-4 aspect-video w-full overflow-hidden bg-black">
@@ -136,7 +194,8 @@ export function VideoCard({ video }: Readonly<{ video: StrapiVideo }>) {
         <TagChips video={video} />
       </div>
 
-      <div className="flex items-center justify-end gap-1 border-t border-[var(--line)] px-3 py-2">
+      <div className="flex items-center justify-between gap-1 border-t border-[var(--line)] px-3 py-2">
+        <RegenerateOnCard video={video} />
         <Link
           to="/learn/$videoId"
           params={{ videoId: video.youtubeVideoId }}
@@ -152,5 +211,67 @@ export function VideoCard({ video }: Readonly<{ video: StrapiVideo }>) {
         </Link>
       </div>
     </article>
+  );
+}
+
+// Lightweight regenerate control — skips the full GenerationModeSelect UX
+// used on the learn page. Confirms, kicks off a run in `auto` mode, and
+// refreshes the feed so the status badge flips to "Generating…".
+// Hidden while the summary is still pending to avoid double-triggering.
+function RegenerateOnCard({ video }: Readonly<{ video: StrapiVideo }>) {
+  const router = useRouter();
+  const [running, setRunning] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  if (video.summaryStatus === 'pending') return <span />;
+
+  const label =
+    video.summaryStatus === 'failed' ? 'Retry generation' : 'Regenerate';
+
+  const onClick = async () => {
+    if (running) return;
+    if (
+      !globalThis.confirm(
+        'Regenerate the summary? Old content stays if regeneration fails, and is replaced on success.',
+      )
+    ) {
+      return;
+    }
+    setRunning(true);
+    setMsg(null);
+    try {
+      const result = await regenerateSummary({
+        data: { videoId: video.youtubeVideoId },
+      });
+      if (result.status === 'error') {
+        setMsg(result.error);
+        return;
+      }
+      if (result.status === 'already_running') {
+        setMsg('Already running');
+        return;
+      }
+      await router.invalidate();
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={running}
+      title={msg ?? label}
+      className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-[var(--ink-muted)] transition hover:bg-[var(--bg-subtle)] hover:text-[var(--ink)] disabled:opacity-50"
+    >
+      <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+        <path
+          fill="currentColor"
+          d="M13 8a5 5 0 1 1-1.46-3.54L13 3v4H9l1.54-1.54A3.5 3.5 0 1 0 11.5 8z"
+        />
+      </svg>
+      {running ? 'Starting…' : label}
+    </button>
   );
 }

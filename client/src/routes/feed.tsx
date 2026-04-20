@@ -1,8 +1,13 @@
-import { createFileRoute, Link } from '@tanstack/react-router';
+import { useEffect, useState } from 'react';
+import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { z } from 'zod';
 import { VideoCard } from '#/components/VideoCard';
 import { Button } from '#/components/ui/button';
 import { getFeed } from '#/data/server-functions/videos';
+import {
+  DIGEST_MAX_VIDEOS,
+  DIGEST_MIN_VIDEOS,
+} from '#/lib/services/digest';
 
 const FeedSearchSchema = z.object({
   q: z.string().max(200).optional(),
@@ -26,24 +31,92 @@ export const Route = createFileRoute('/feed')({
 function FeedPage() {
   const { result } = Route.useLoaderData();
   const search = Route.useSearch();
+  const navigate = useNavigate();
+
+  // Selection mode is page-local state. Switching tags/search keeps the
+  // current selection because the component doesn't remount — only the
+  // loader re-runs. Leaving /feed resets everything.
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  // Escape cancels selection mode, matching the intuitive pattern.
+  useEffect(() => {
+    if (!selectionMode) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setSelectionMode(false);
+        setSelected(new Set());
+      }
+    };
+    globalThis.addEventListener('keydown', onKey);
+    return () => globalThis.removeEventListener('keydown', onKey);
+  }, [selectionMode]);
+
+  const toggleSelected = (youtubeVideoId: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(youtubeVideoId)) {
+        next.delete(youtubeVideoId);
+      } else if (next.size < DIGEST_MAX_VIDEOS) {
+        next.add(youtubeVideoId);
+      }
+      return next;
+    });
+  };
+
+  const startDigestMode = () => {
+    setSelectionMode(true);
+    setSelected(new Set());
+  };
+
+  const cancelDigestMode = () => {
+    setSelectionMode(false);
+    setSelected(new Set());
+  };
+
+  const submitDigest = () => {
+    if (selected.size < DIGEST_MIN_VIDEOS) return;
+    navigate({
+      to: '/digest',
+      search: { videos: Array.from(selected).join(',') },
+    });
+  };
 
   return (
-    <main className="px-6 pb-20 pt-10 sm:px-10 sm:pt-14 lg:px-14">
+    <main className="px-6 pb-28 pt-10 sm:px-10 sm:pt-14 lg:px-14">
       <header className="mb-8">
         <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--line)] bg-[var(--card)] px-3 py-1 text-xs font-medium text-[var(--ink-muted)]">
           <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent)]" />
           Knowledge feed
         </span>
-        <h1 className="display-title mt-5 max-w-3xl text-[2.75rem] text-[var(--ink)] sm:text-[4rem]">
-          Shared videos,
-          <br />
-          <span className="text-[var(--ink-muted)]">summarized.</span>
-        </h1>
+        <div className="mt-5 flex flex-wrap items-start justify-between gap-4">
+          <h1 className="display-title max-w-3xl text-[2.75rem] text-[var(--ink)] sm:text-[4rem]">
+            Shared videos,
+            <br />
+            <span className="text-[var(--ink-muted)]">summarized.</span>
+          </h1>
+          {!selectionMode && result.videos.length > 0 && (
+            <Button
+              size="pill"
+              variant="outline"
+              onClick={startDigestMode}
+            >
+              Create digest
+            </Button>
+          )}
+        </div>
       </header>
 
       <SearchBar q={search.q ?? ''} tag={search.tag} />
 
       {search.tag && <ActiveTagPill tag={search.tag} />}
+
+      {selectionMode && (
+        <div className="mb-5 rounded-xl border border-[var(--accent)] bg-[var(--accent)]/10 px-4 py-3 text-sm text-[var(--ink)]">
+          Pick 2–{DIGEST_MAX_VIDEOS} videos to digest. Videos without
+          summaries can&apos;t be picked.
+        </div>
+      )}
 
       {result.videos.length === 0 ? (
         <EmptyFeed q={search.q} tag={search.tag} />
@@ -58,9 +131,23 @@ function FeedPage() {
             </span>
           </div>
           <section className="grid items-start gap-5 sm:grid-cols-2 lg:grid-cols-3">
-            {result.videos.map((video) => (
-              <VideoCard key={video.documentId} video={video} />
-            ))}
+            {result.videos.map((video) => {
+              const eligible = video.summaryStatus === 'generated';
+              const isSelected = selected.has(video.youtubeVideoId);
+              const atCap =
+                selected.size >= DIGEST_MAX_VIDEOS && !isSelected;
+              return (
+                <VideoCard
+                  key={video.documentId}
+                  video={video}
+                  selectable={selectionMode}
+                  selected={isSelected}
+                  eligible={eligible}
+                  disabled={atCap}
+                  onToggle={() => toggleSelected(video.youtubeVideoId)}
+                />
+              );
+            })}
           </section>
           <Pagination
             currentPage={result.page}
@@ -70,7 +157,51 @@ function FeedPage() {
           />
         </>
       )}
+
+      {selectionMode && (
+        <DigestSelectionBar
+          count={selected.size}
+          onCancel={cancelDigestMode}
+          onSubmit={submitDigest}
+        />
+      )}
     </main>
+  );
+}
+
+function DigestSelectionBar({
+  count,
+  onCancel,
+  onSubmit,
+}: Readonly<{
+  count: number;
+  onCancel: () => void;
+  onSubmit: () => void;
+}>) {
+  const canSubmit = count >= DIGEST_MIN_VIDEOS;
+  return (
+    <div
+      role="toolbar"
+      aria-label="Digest selection"
+      className="fixed inset-x-0 bottom-6 z-20 mx-auto flex w-[min(92vw,600px)] items-center justify-between gap-3 rounded-full border border-[var(--line)] bg-[var(--card)] px-4 py-2.5 shadow-[0_8px_24px_rgba(9,9,11,0.12)]"
+    >
+      <div className="flex items-center gap-2 text-sm text-[var(--ink)]">
+        <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-[var(--accent)] px-2 text-xs font-semibold text-white">
+          {count}
+        </span>
+        <span className="text-[var(--ink-muted)]">
+          of {DIGEST_MAX_VIDEOS} selected
+        </span>
+      </div>
+      <div className="flex items-center gap-2">
+        <Button variant="outline" size="sm" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button size="sm" onClick={onSubmit} disabled={!canSubmit}>
+          Create digest →
+        </Button>
+      </div>
+    </div>
   );
 }
 

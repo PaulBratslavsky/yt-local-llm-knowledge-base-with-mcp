@@ -23,6 +23,7 @@ import { aggregateByTagTool } from './aggregate-by-tag';
 import { listUntaggedTool } from './list-untagged';
 import { crossSearchTranscriptsTool } from './cross-search-transcripts';
 import { libraryStatsTool } from './library-stats';
+import { generateDigestTool } from './generate-digest';
 
 let registered = false;
 
@@ -55,4 +56,5 @@ export function registerAllTools(): void {
   registerTool(listUntaggedTool);
   registerTool(crossSearchTranscriptsTool);
   registerTool(libraryStatsTool);
+  registerTool(generateDigestTool);
 }
