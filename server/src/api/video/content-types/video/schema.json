@@ -71,6 +71,16 @@
     "summaryOverview": {
       "type": "richtext"
     },
+    "readableArticle": {
+      "type": "richtext"
+    },
+    "readableArticleGeneratedAt": {
+      "type": "datetime"
+    },
+    "readableArticleModel": {
+      "type": "string",
+      "maxLength": 100
+    },
     "watchVerdict": {
       "type": "enumeration",
       "enum": ["skip", "skim", "worth_it"]

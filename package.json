@@ -2,7 +2,7 @@
   "name": "yt-knowledge-base",
   "version": "0.1.0",
   "private": true,
-  "license": "MIT",
+  "license": "GPL-3.0-or-later",
   "description": "Community-curated YouTube knowledge base. TanStack Start + Strapi, with AI-generated summaries per video.",
   "type": "module",
   "scripts": {

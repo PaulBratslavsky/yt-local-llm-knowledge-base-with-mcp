@@ -378,6 +378,166 @@ export async function synthesizeDigest(
 // load the full video records in parallel, and synthesize. Returns both the
 // digest and the source video metadata — the UI needs both for clickable
 // theme chips.
+// =============================================================================
+// Long-form article — "research roundup" style flowing markdown synthesized
+// from the same source videos. Produces prose, not structured sections.
+// Like a blog post. No Zod schema — output is a plain markdown string
+// the client renders directly.
+// =============================================================================
+
+const ARTICLE_SYSTEM = [
+  'You write a long-form markdown blog post that synthesizes several YouTube videos into one coherent piece for a personal knowledge base.',
+  'The reader has NOT watched the videos — your article is the payoff of their time investment, not a teaser.',
+  '',
+  'REQUIRED STRUCTURE (follow exactly, in order):',
+  '',
+  '1. `#` H1 TITLE — one short, evocative title line. Not "Research Roundup" or "Cross-Video Digest".',
+  '',
+  '2. TL;DR SECTION — bold label (NOT a heading), then a bulleted list of 3-5 key takeaways. Each bullet: one crisp sentence, max two sentences.',
+  '   Example:',
+  '   **TL;DR**',
+  '',
+  '   - First takeaway as a complete sentence.',
+  '   - Second takeaway.',
+  '   - Third takeaway.',
+  '',
+  '3. INTRO — 1-2 flowing paragraphs that frame the shared theme and name the videos being synthesized.',
+  '',
+  '4. MAIN CONTENT — `##` H2 sections organized THEMATICALLY (not per-video). Weave in what each video contributes, naming the speaker inline (e.g., "In her talk, Jane Smith argues…"). Prose, not bullet soup. Use block quotes for memorable direct quotes from speakers. Use fenced code blocks when speakers discuss code or commands.',
+  '',
+  '5. OPTIONAL `## Where they disagree` — ONLY if there are real contradictions. Leave out when videos mostly agree (which is common).',
+  '',
+  '6. `## Bottom line` — one paragraph on what the reader should walk away with.',
+  '',
+  '7. SOURCES SECTION — bold label (NOT a heading), then one video per line in this exact format:',
+  '   **Sources**',
+  '',
+  '   - <Exact video title> by <Author>: <https://youtube.com/watch?v=VIDEO_ID>',
+  '',
+  'RULES:',
+  ' • Use video titles and authors VERBATIM from the input.',
+  ' • Use speakers\' terminology; never invent product or person names.',
+  ' • Ground every claim in what the summaries say — no outside knowledge.',
+  ' • No `[mm:ss]` timecodes anywhere.',
+  ' • No "thanks for reading" footers. No end summary beyond the Bottom line.',
+  ' • The post should read like one coherent essay by an author who watched all the videos — not N summaries glued together.',
+].join('\n');
+
+export async function synthesizeDigestArticle(
+  videos: StrapiVideo[],
+): Promise<ServiceResult<string>> {
+  if (videos.length < DIGEST_MIN_VIDEOS) {
+    return {
+      success: false,
+      error: `Need at least ${DIGEST_MIN_VIDEOS} videos.`,
+    };
+  }
+  if (videos.length > DIGEST_MAX_VIDEOS) {
+    return {
+      success: false,
+      error: `Max ${DIGEST_MAX_VIDEOS} videos per article.`,
+    };
+  }
+  const ineligible = videos.filter((v) => v.summaryStatus !== 'generated');
+  if (ineligible.length > 0) {
+    const titles = ineligible
+      .map((v) => v.videoTitle ?? v.youtubeVideoId)
+      .join(', ');
+    return {
+      success: false,
+      error: `These videos need summaries first: ${titles}`,
+    };
+  }
+
+  const tag = videos.map((v) => v.youtubeVideoId).join(',');
+  const started = performance.now();
+  logPhase(tag, '▶ article synthesis', { videos: videos.length });
+
+  const userPrompt = [
+    `Write a long-form article synthesizing these ${videos.length} videos.`,
+    '',
+    ...videos.map((v, i) => formatVideoForSynthesis(v, i)),
+  ].join('\n\n');
+
+  try {
+    const out = (await withRetry(
+      () =>
+        chat({
+          adapter: digestAdapter,
+          messages: [
+            { role: 'system', content: ARTICLE_SYSTEM },
+            { role: 'user', content: userPrompt },
+          ] as never,
+          stream: false,
+          temperature: 0.3,
+        }),
+      {
+        attempts: 2,
+        onRetry: (err, attempt, delayMs) => {
+          logPhase(tag, `↻ article retry ${attempt}/1 in ${delayMs}ms`, {
+            cause: err instanceof Error ? err.message : 'unknown',
+          });
+        },
+      },
+    )) as string;
+    // Strip possible ```markdown fence the model sometimes wraps output in.
+    const article = (() => {
+      const t = out.trim();
+      const fence = t.match(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n```\s*$/);
+      return fence ? fence[1].trim() : t;
+    })();
+    logPhase(tag, '✓ article synthesized', {
+      took: ms(started),
+      outChars: article.length,
+    });
+    return { success: true, data: article };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Article synthesis failed';
+    logPhase(tag, '✗ article failed', { error: message, took: ms(started) });
+    return { success: false, error: message };
+  }
+}
+
+export async function generateDigestArticleByIds(
+  identifiers: string[],
+): Promise<
+  | { success: true; article: string; videos: StrapiVideo[] }
+  | { success: false; error: string }
+> {
+  const unique = Array.from(new Set(identifiers.map((s) => s.trim()).filter(Boolean)));
+  if (unique.length < DIGEST_MIN_VIDEOS) {
+    return { success: false, error: `Pick at least ${DIGEST_MIN_VIDEOS} videos.` };
+  }
+  if (unique.length > DIGEST_MAX_VIDEOS) {
+    return { success: false, error: `Pick at most ${DIGEST_MAX_VIDEOS} videos.` };
+  }
+
+  const videos: StrapiVideo[] = [];
+  const missing: string[] = [];
+  await Promise.all(
+    unique.map(async (id) => {
+      const byVid = await fetchVideoByVideoIdService(id).catch(() => null);
+      if (byVid) {
+        videos.push(byVid);
+        return;
+      }
+      const byDoc = await fetchVideoByDocumentIdService(id).catch(() => null);
+      if (byDoc) {
+        videos.push(byDoc);
+        return;
+      }
+      missing.push(id);
+    }),
+  );
+  if (missing.length > 0) {
+    return { success: false, error: `Could not find: ${missing.join(', ')}` };
+  }
+
+  const result = await synthesizeDigestArticle(videos);
+  if (!result.success) return result;
+  return { success: true, article: result.data, videos };
+}
+
 export async function generateDigestByIds(
   identifiers: string[],
 ): Promise<

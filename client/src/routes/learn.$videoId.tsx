@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
-import { createFileRoute, useRouter } from '@tanstack/react-router';
+import { createFileRoute, Link, useRouter } from '@tanstack/react-router';
 import { Button } from '#/components/ui/button';
 import {
   TimecodeMarkdown,
   stripInlineTimecodes,
 } from '#/components/TimecodeMarkdown';
+import { z } from 'zod';
 import { SectionTimecodeEditor } from '#/components/SectionTimecodeEditor';
 import { VideoChat } from '#/components/VideoChat';
+import { ViewTabs } from '#/components/ViewTabs';
+import { ReadablePane } from '#/components/ReadablePane';
 import {
   GenerationModeSelect,
   GenerationModeOptions,
@@ -57,7 +60,14 @@ type LoaderData =
   | { status: 'failed'; video: StrapiVideo; error?: string }
   | { status: 'unshared' };
 
+// View the left pane is showing. `summary` = structured notes (sections,
+// takeaways, verdict). `read` = long-form article version.
+const LearnSearchSchema = z.object({
+  view: z.enum(['summary', 'read']).optional(),
+});
+
 export const Route = createFileRoute('/learn/$videoId')({
+  validateSearch: LearnSearchSchema,
   loader: async ({ params }): Promise<LoaderData> => {
     const video = await getVideoByVideoId({ data: { videoId: params.videoId } });
     if (!video) return { status: 'unshared' };
@@ -157,6 +167,12 @@ function SummaryView({
   videoId,
 }: Readonly<{ video: StrapiVideo; videoId: string }>) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const search = Route.useSearch();
+  const navigate = Route.useNavigate();
+  const view = search.view ?? 'summary';
+  const setView = (next: 'summary' | 'read') => {
+    void navigate({ search: { view: next === 'summary' ? undefined : next } });
+  };
 
   const seekTo = (seconds: number) => {
     const iframe = iframeRef.current;
@@ -192,193 +208,22 @@ function SummaryView({
           clean full-height line. */}
       <div className="grid min-h-[calc(100vh-4rem)] lg:grid-cols-[6fr_4fr] lg:items-stretch">
         <div className="min-w-0 bg-[var(--bg-subtle)] px-6 py-10 sm:px-10 sm:py-14 lg:px-14">
-          <header className="mb-10">
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--line)] bg-[var(--card)] px-3 py-1 text-xs font-medium text-[var(--ink-muted)]">
-              <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent)]" />
-              Summary
-            </span>
-            <h1 className="display-title mt-5 text-3xl leading-[1.1] text-[var(--ink)] sm:text-5xl">
-              {video.summaryTitle ?? video.videoTitle ?? 'Video summary'}
-            </h1>
-            {video.summaryDescription && (
-              <p className="mt-4 text-base leading-relaxed text-[var(--ink-soft)] sm:text-lg">
-                {video.summaryDescription}
-              </p>
-            )}
-            {(video.videoTitle ?? video.videoAuthor) && (
-              <p className="mt-3 text-xs leading-relaxed text-[var(--ink-muted)]">
-                Based on{' '}
-                {video.videoTitle && (
-                  <span className="font-medium text-[var(--ink)]">{video.videoTitle}</span>
-                )}
-                {video.videoAuthor && (
-                  <>
-                    {video.videoTitle ? ' by ' : ''}
-                    <span className="font-medium text-[var(--ink)]">{video.videoAuthor}</span>
-                  </>
-                )}
-              </p>
-            )}
-          </header>
-          {video.watchVerdict && video.verdictSummary && (
-            <section
-              className={`mb-10 rounded-2xl border p-5 sm:p-6 ${VERDICT_PANEL[video.watchVerdict]}`}
-            >
-              <div className="flex items-center gap-2">
-                <span
-                  className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[0.65rem] font-semibold uppercase tracking-wider ${VERDICT_BADGE[video.watchVerdict]}`}
-                >
-                  {VERDICT_LABEL[video.watchVerdict]}
-                </span>
-                <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--ink-muted)]">
-                  Should I watch this?
-                </h2>
-              </div>
-              <p className="mt-3 text-base font-medium leading-relaxed text-[var(--ink)]">
-                {video.verdictSummary}
-              </p>
-              {video.verdictReason && (
-                <p className="mt-2 text-sm leading-relaxed text-[var(--ink-soft)]">
-                  {video.verdictReason}
-                </p>
-              )}
-            </section>
-          )}
-          {video.summaryOverview && (
-            <section className="mb-10">
-              <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--ink-muted)]">
-                Overview
-              </h2>
-              <TimecodeMarkdown
-                onSeek={seekTo}
-                className="chat-md mt-4 text-base leading-relaxed text-[var(--ink-soft)]"
-              >
-                {video.summaryOverview}
-              </TimecodeMarkdown>
-            </section>
-          )}
+          <div className="mb-6">
+            <ViewTabs
+              active={view}
+              tabs={[
+                { id: 'summary', label: 'Summary' },
+                { id: 'read', label: 'Read' },
+              ]}
+              onChange={setView}
+            />
+          </div>
 
-          {video.keyTakeaways && video.keyTakeaways.length > 0 && (
-            <section className="mb-10">
-              <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--ink-muted)]">
-                Key takeaways
-              </h2>
-              <ul className="mt-4 grid gap-2.5">
-                {video.keyTakeaways.map((t) => (
-                  <li
-                    key={t.id}
-                    className="flex items-start gap-3 rounded-xl border border-[var(--line)] bg-[var(--card)] px-4 py-3 text-sm leading-relaxed text-[var(--ink-soft)]"
-                  >
-                    <span className="mt-[0.4rem] h-1.5 w-1.5 flex-none rounded-full bg-[var(--accent)]" />
-                    <TimecodeMarkdown
-                      onSeek={seekTo}
-                      className="chat-md min-w-0 flex-1"
-                    >
-                      {t.text}
-                    </TimecodeMarkdown>
-                  </li>
-                ))}
-              </ul>
-            </section>
+          {view === 'read' ? (
+            <ReadablePane video={video} />
+          ) : (
+            <SummaryContent video={video} seekTo={seekTo} iframeRef={iframeRef} />
           )}
-
-          {video.sections && video.sections.length > 0 && (
-            <section className="mb-10">
-              <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--ink-muted)]">
-                Walkthrough
-              </h2>
-              <div className="mt-4 grid gap-3">
-                {/* Sort chronologically by timeSec (deterministic grounding
-                    re-anchors these to real transcript moments, which may
-                    not be in the model's narrative order). Sections with
-                    no timeSec sink to the bottom. */}
-                {[...video.sections]
-                  .sort((a, b) => {
-                    const aT = typeof a.timeSec === 'number' ? a.timeSec : Number.MAX_SAFE_INTEGER;
-                    const bT = typeof b.timeSec === 'number' ? b.timeSec : Number.MAX_SAFE_INTEGER;
-                    return aT - bT;
-                  })
-                  .map((s) => {
-                  const hasTime = typeof s.timeSec === 'number';
-                  return (
-                    <article
-                      key={s.id}
-                      className="rounded-2xl border border-[var(--line)] bg-[var(--card)] p-5 sm:p-6"
-                    >
-                      <header className="flex items-start justify-between gap-3">
-                        <h3 className="flex-1 text-base font-semibold leading-snug text-[var(--ink)]">
-                          {s.heading}
-                        </h3>
-                        {hasTime && (
-                          <SectionTimecodeEditor
-                            documentId={video.documentId}
-                            sectionId={s.id}
-                            timeSec={s.timeSec as number}
-                            iframeRef={iframeRef}
-                            onSeek={seekTo}
-                          />
-                        )}
-                      </header>
-                      <TimecodeMarkdown
-                        onSeek={seekTo}
-                        className="chat-md mt-3 text-sm leading-relaxed text-[var(--ink-soft)]"
-                      >
-                        {stripInlineTimecodes(s.body)}
-                      </TimecodeMarkdown>
-                    </article>
-                  );
-                })}
-              </div>
-            </section>
-          )}
-
-          {video.actionSteps && video.actionSteps.length > 0 && (
-            <section className="mb-10">
-              <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--ink-muted)]">
-                Your plan
-              </h2>
-              <p className="mt-2 text-sm text-[var(--ink-muted)]">
-                Concrete things to try this week, based on the video.
-              </p>
-              <ol className="mt-5 grid gap-3">
-                {video.actionSteps.map((step, i) => (
-                  <li
-                    key={step.id}
-                    className="flex gap-4 rounded-2xl border border-[var(--line)] bg-[var(--card)] p-5 sm:p-6"
-                  >
-                    <span className="flex h-8 w-8 flex-none items-center justify-center rounded-full bg-[var(--ink)] text-sm font-bold text-[var(--cream)]">
-                      {i + 1}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <h3 className="text-base font-semibold leading-snug text-[var(--ink)]">
-                        {step.title}
-                      </h3>
-                      <TimecodeMarkdown
-                        onSeek={seekTo}
-                        className="chat-md mt-1.5 text-sm leading-relaxed text-[var(--ink-soft)]"
-                      >
-                        {step.body}
-                      </TimecodeMarkdown>
-                    </div>
-                  </li>
-                ))}
-              </ol>
-            </section>
-          )}
-
-          <footer className="mt-12 border-t border-[var(--line)] pt-5 text-xs text-[var(--ink-muted)]">
-            <h3 className="mb-3 text-sm font-medium text-[var(--ink)]">
-              Generation mode
-            </h3>
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <p className="max-w-xl">
-                Auto-generated{video.aiModel ? ` by ${video.aiModel}` : ''}. Summaries are AI-
-                produced and may miss nuance — treat them as reading notes, not a replacement
-                for the video itself.
-              </p>
-              <RegenerateButton videoId={video.youtubeVideoId} />
-            </div>
-          </footer>
         </div>
 
         {/* Right column — video pinned at top edge-to-edge, chat filling
@@ -438,6 +283,197 @@ function formatElapsed(ms: number | null): string | null {
   if (s < 60) return `${s}s`;
   const m = Math.floor(s / 60);
   return `${m}m ${s % 60}s`;
+}
+
+// The structured-notes view of a video: title/description, verdict block,
+// overview, takeaways, walkthrough sections (with timecode chips), action
+// steps, and the generation-mode footer with regenerate. Rendered as the
+// `summary` tab in the learn page's left pane.
+function SummaryContent({
+  video,
+  seekTo,
+  iframeRef,
+}: Readonly<{
+  video: StrapiVideo;
+  seekTo: (seconds: number) => void;
+  iframeRef: React.RefObject<HTMLIFrameElement | null>;
+}>) {
+  return (
+    <>
+      <header className="mb-10">
+        <h1 className="display-title text-3xl leading-[1.1] text-[var(--ink)] sm:text-5xl">
+          {video.summaryTitle ?? video.videoTitle ?? 'Video summary'}
+        </h1>
+        {video.summaryDescription && (
+          <p className="mt-4 text-base leading-relaxed text-[var(--ink-soft)] sm:text-lg">
+            {video.summaryDescription}
+          </p>
+        )}
+        {(video.videoTitle ?? video.videoAuthor) && (
+          <p className="mt-3 text-xs leading-relaxed text-[var(--ink-muted)]">
+            Based on{' '}
+            {video.videoTitle && (
+              <span className="font-medium text-[var(--ink)]">{video.videoTitle}</span>
+            )}
+            {video.videoAuthor && (
+              <>
+                {video.videoTitle ? ' by ' : ''}
+                <span className="font-medium text-[var(--ink)]">{video.videoAuthor}</span>
+              </>
+            )}
+          </p>
+        )}
+      </header>
+      {video.watchVerdict && video.verdictSummary && (
+        <section
+          className={`mb-10 rounded-2xl border p-5 sm:p-6 ${VERDICT_PANEL[video.watchVerdict]}`}
+        >
+          <div className="flex items-center gap-2">
+            <span
+              className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[0.65rem] font-semibold uppercase tracking-wider ${VERDICT_BADGE[video.watchVerdict]}`}
+            >
+              {VERDICT_LABEL[video.watchVerdict]}
+            </span>
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--ink-muted)]">
+              Should I watch this?
+            </h2>
+          </div>
+          <p className="mt-3 text-base font-medium leading-relaxed text-[var(--ink)]">
+            {video.verdictSummary}
+          </p>
+          {video.verdictReason && (
+            <p className="mt-2 text-sm leading-relaxed text-[var(--ink-soft)]">
+              {video.verdictReason}
+            </p>
+          )}
+        </section>
+      )}
+      {video.summaryOverview && (
+        <section className="mb-10">
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--ink-muted)]">
+            Overview
+          </h2>
+          <TimecodeMarkdown
+            onSeek={seekTo}
+            className="chat-md mt-4 text-base leading-relaxed text-[var(--ink-soft)]"
+          >
+            {video.summaryOverview}
+          </TimecodeMarkdown>
+        </section>
+      )}
+      {video.keyTakeaways && video.keyTakeaways.length > 0 && (
+        <section className="mb-10">
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--ink-muted)]">
+            Key takeaways
+          </h2>
+          <ul className="mt-4 grid gap-2.5">
+            {video.keyTakeaways.map((t) => (
+              <li
+                key={t.id}
+                className="flex items-start gap-3 rounded-xl border border-[var(--line)] bg-[var(--card)] px-4 py-3 text-sm leading-relaxed text-[var(--ink-soft)]"
+              >
+                <span className="mt-[0.4rem] h-1.5 w-1.5 flex-none rounded-full bg-[var(--accent)]" />
+                <TimecodeMarkdown onSeek={seekTo} className="chat-md min-w-0 flex-1">
+                  {t.text}
+                </TimecodeMarkdown>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {video.sections && video.sections.length > 0 && (
+        <section className="mb-10">
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--ink-muted)]">
+            Walkthrough
+          </h2>
+          <div className="mt-4 grid gap-3">
+            {[...video.sections]
+              .sort((a, b) => {
+                const aT = typeof a.timeSec === 'number' ? a.timeSec : Number.MAX_SAFE_INTEGER;
+                const bT = typeof b.timeSec === 'number' ? b.timeSec : Number.MAX_SAFE_INTEGER;
+                return aT - bT;
+              })
+              .map((s) => {
+                const hasTime = typeof s.timeSec === 'number';
+                return (
+                  <article
+                    key={s.id}
+                    className="rounded-2xl border border-[var(--line)] bg-[var(--card)] p-5 sm:p-6"
+                  >
+                    <header className="flex items-start justify-between gap-3">
+                      <h3 className="flex-1 text-base font-semibold leading-snug text-[var(--ink)]">
+                        {s.heading}
+                      </h3>
+                      {hasTime && (
+                        <SectionTimecodeEditor
+                          documentId={video.documentId}
+                          sectionId={s.id}
+                          timeSec={s.timeSec as number}
+                          iframeRef={iframeRef}
+                          onSeek={seekTo}
+                        />
+                      )}
+                    </header>
+                    <TimecodeMarkdown
+                      onSeek={seekTo}
+                      className="chat-md mt-3 text-sm leading-relaxed text-[var(--ink-soft)]"
+                    >
+                      {stripInlineTimecodes(s.body)}
+                    </TimecodeMarkdown>
+                  </article>
+                );
+              })}
+          </div>
+        </section>
+      )}
+      {video.actionSteps && video.actionSteps.length > 0 && (
+        <section className="mb-10">
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--ink-muted)]">
+            Your plan
+          </h2>
+          <p className="mt-2 text-sm text-[var(--ink-muted)]">
+            Concrete things to try this week, based on the video.
+          </p>
+          <ol className="mt-5 grid gap-3">
+            {video.actionSteps.map((step, i) => (
+              <li
+                key={step.id}
+                className="flex gap-4 rounded-2xl border border-[var(--line)] bg-[var(--card)] p-5 sm:p-6"
+              >
+                <span className="flex h-8 w-8 flex-none items-center justify-center rounded-full bg-[var(--ink)] text-sm font-bold text-[var(--cream)]">
+                  {i + 1}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <h3 className="text-base font-semibold leading-snug text-[var(--ink)]">
+                    {step.title}
+                  </h3>
+                  <TimecodeMarkdown
+                    onSeek={seekTo}
+                    className="chat-md mt-1.5 text-sm leading-relaxed text-[var(--ink-soft)]"
+                  >
+                    {step.body}
+                  </TimecodeMarkdown>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
+      <footer className="mt-12 border-t border-[var(--line)] pt-5 text-xs text-[var(--ink-muted)]">
+        <h3 className="mb-3 text-sm font-medium text-[var(--ink)]">
+          Generation mode
+        </h3>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <p className="max-w-xl">
+            Auto-generated{video.aiModel ? ` by ${video.aiModel}` : ''}. Summaries are AI-
+            produced and may miss nuance — treat them as reading notes, not a replacement
+            for the video itself.
+          </p>
+          <RegenerateButton videoId={video.youtubeVideoId} />
+        </div>
+      </footer>
+    </>
+  );
 }
 
 function PendingState({

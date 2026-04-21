@@ -1,10 +1,13 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createFileRoute, Link, useRouter } from '@tanstack/react-router';
 import { z } from 'zod';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Button } from '#/components/ui/button';
 import { DigestChat } from '#/components/DigestChat';
 import {
   generateDigest,
+  generateDigestArticle,
   saveDigestAsNote,
   type GenerateDigestResult,
 } from '#/data/server-functions/digest';
@@ -93,6 +96,11 @@ function DigestReport({
     videoThumbnailUrl: v.videoThumbnailUrl,
   }));
 
+  // Which view is currently active. Toggling to 'article' lazily
+  // generates the long-form markdown post via the LLM and keeps the
+  // result in state — subsequent tab switches are instant.
+  const [view, setView] = useState<'digest' | 'article'>('digest');
+
   return (
     <main className="min-h-[calc(100vh-4rem)]">
       {/* 6fr/4fr split mirroring the learn page. Left column holds the
@@ -100,7 +108,81 @@ function DigestReport({
           while the left column scrolls. Both extend edge-to-edge on lg+. */}
       <div className="grid min-h-[calc(100vh-4rem)] lg:grid-cols-[6fr_4fr] lg:items-stretch">
         <div className="min-w-0 bg-[var(--bg-subtle)] px-6 py-10 sm:px-10 sm:py-14 lg:px-14">
-          <header className="mb-10">
+          <DigestViewTabs active={view} onChange={setView} />
+
+          {view === 'article' ? (
+            <DigestArticleView videos={videos} />
+          ) : (
+            <DigestStructuredView digest={digest} sources={sources} videos={videos} />
+          )}
+        </div>
+
+        <aside className="flex min-h-0 flex-col bg-[var(--card)] lg:sticky lg:top-16 lg:max-h-[calc(100vh-4rem)] lg:border-l lg:border-[var(--line)]">
+          <DigestChat
+            videos={videos}
+            className="min-h-[480px] flex-1 px-6 py-6 sm:px-8"
+          />
+        </aside>
+      </div>
+    </main>
+  );
+}
+
+function DigestViewTabs({
+  active,
+  onChange,
+}: Readonly<{
+  active: 'digest' | 'article';
+  onChange: (v: 'digest' | 'article') => void;
+}>) {
+  const tabClass = (isActive: boolean) =>
+    `inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition ${
+      isActive
+        ? 'border-[var(--line)] bg-[var(--card)] text-[var(--ink-muted)]'
+        : 'border-transparent bg-transparent text-[var(--ink-muted)] hover:border-[var(--line)] hover:bg-[var(--card)] hover:text-[var(--ink)]'
+    }`;
+  return (
+    <div className="mb-8 inline-flex items-center gap-1 rounded-full border border-[var(--line)] bg-[var(--bg-subtle)] p-0.5">
+      <button
+        type="button"
+        onClick={() => onChange('digest')}
+        className={tabClass(active === 'digest')}
+      >
+        <span
+          className={`h-1.5 w-1.5 rounded-full ${
+            active === 'digest' ? 'bg-[var(--accent)]' : 'bg-[var(--ink-muted)]/30'
+          }`}
+        />
+        Digest
+      </button>
+      <button
+        type="button"
+        onClick={() => onChange('article')}
+        className={tabClass(active === 'article')}
+      >
+        <span
+          className={`h-1.5 w-1.5 rounded-full ${
+            active === 'article' ? 'bg-[var(--accent)]' : 'bg-[var(--ink-muted)]/30'
+          }`}
+        />
+        Article
+      </button>
+    </div>
+  );
+}
+
+function DigestStructuredView({
+  digest,
+  sources,
+  videos,
+}: Readonly<{
+  digest: Digest;
+  sources: DigestSourceVideo[];
+  videos: StrapiVideo[];
+}>) {
+  return (
+    <>
+      <header className="mb-10">
           <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--line)] bg-[var(--card)] px-3 py-1 text-xs font-medium text-[var(--ink-muted)]">
             <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent)]" />
             Cross-video digest
@@ -309,18 +391,128 @@ function DigestReport({
           </div>
         </section>
 
-          <DigestActionBar digest={digest} videos={videos} />
-        </div>
-
-        <aside className="flex min-h-0 flex-col bg-[var(--card)] lg:sticky lg:top-16 lg:max-h-[calc(100vh-4rem)] lg:border-l lg:border-[var(--line)]">
-          <DigestChat
-            videos={videos}
-            className="min-h-[480px] flex-1 px-6 py-6 sm:px-8"
-          />
-        </aside>
-      </div>
-    </main>
+      <DigestActionBar digest={digest} videos={videos} />
+    </>
   );
+}
+
+function DigestArticleView({
+  videos,
+}: Readonly<{ videos: StrapiVideo[] }>) {
+  const videoIds = videos.map((v) => v.youtubeVideoId);
+  const [article, setArticle] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  // Lazy generate on mount. Result lives in component state — tab toggle
+  // back and forth stays instant; only a hard refresh re-runs the LLM.
+  const run = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await generateDigestArticle({
+        data: { videoIds },
+      });
+      if (result.status === 'error') {
+        setError(result.error);
+        return;
+      }
+      setArticle(result.article);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Article generation failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Kick off generation the first time this view mounts.
+  useLazyRun(article, loading, error, run);
+
+  const copy = async () => {
+    if (!article) return;
+    try {
+      await navigator.clipboard.writeText(article);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setCopied(false);
+    }
+  };
+
+  if (loading && !article) {
+    return (
+      <div className="py-20 text-center">
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--line)] bg-[var(--card)] px-3 py-1 text-xs font-medium text-[var(--ink-muted)]">
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--accent)]" />
+          Writing
+        </span>
+        <h2 className="display-title mt-5 text-2xl text-[var(--ink)]">
+          Writing your article…
+        </h2>
+        <p className="mt-3 text-sm text-[var(--ink-muted)]">
+          Synthesizing a long-form piece across {videos.length} videos.
+          Usually 15–30 seconds.
+        </p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="py-20 text-center">
+        <h2 className="display-title text-2xl text-[var(--ink)]">
+          Couldn&apos;t write the article
+        </h2>
+        <p className="mt-4 text-sm text-destructive">{error}</p>
+        <div className="mt-6">
+          <Button variant="outline" onClick={run}>
+            Try again
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!article) return null;
+
+  return (
+    <>
+      <article className="prose-article mx-auto max-w-2xl">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{article}</ReactMarkdown>
+      </article>
+      <section className="sticky bottom-4 z-10 mt-8 rounded-2xl border border-[var(--line)] bg-[var(--card)] p-4 shadow-[0_4px_16px_rgba(9,9,11,0.06)]">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" onClick={copy}>
+            {copied ? 'Copied' : 'Copy markdown'}
+          </Button>
+          <Button variant="outline" size="sm" onClick={run} disabled={loading}>
+            {loading ? 'Regenerating…' : 'Regenerate'}
+          </Button>
+        </div>
+      </section>
+    </>
+  );
+}
+
+// Kick off the generation the first time an article view is rendered in
+// a given session. Guards against re-running during state updates.
+function useLazyRun(
+  article: string | null,
+  loading: boolean,
+  error: string | null,
+  run: () => Promise<void>,
+) {
+  // Use a ref to only run once per mount, independent of React strict-mode
+  // double-invocation.
+  const triggered = useRef(false);
+  useEffect(() => {
+    if (triggered.current) return;
+    if (article !== null || loading || error !== null) return;
+    triggered.current = true;
+    void run();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 }
 
 function SourceChips({

@@ -2,6 +2,7 @@ import { createServerFn } from '@tanstack/react-start';
 import { z } from 'zod';
 import {
   generateDigestByIds,
+  generateDigestArticleByIds,
   DIGEST_MAX_VIDEOS,
   DIGEST_MIN_VIDEOS,
   type Digest,
@@ -35,6 +36,25 @@ export const generateDigest = createServerFn({ method: 'POST' })
     const result = await generateDigestByIds(data.videoIds);
     if (!result.success) return { status: 'error', error: result.error };
     return { status: 'ok', digest: result.digest, videos: result.videos };
+  });
+
+// =============================================================================
+// Generate digest article (flowing long-form markdown post — like reading
+// mode but for the cross-video digest). Ephemeral, lazy.
+// =============================================================================
+
+export type GenerateDigestArticleResult =
+  | { status: 'ok'; article: string; videos: StrapiVideo[] }
+  | { status: 'error'; error: string };
+
+export const generateDigestArticle = createServerFn({ method: 'POST' })
+  .inputValidator((data: z.input<typeof GenerateDigestSchema>) =>
+    GenerateDigestSchema.parse(data),
+  )
+  .handler(async ({ data }): Promise<GenerateDigestArticleResult> => {
+    const result = await generateDigestArticleByIds(data.videoIds);
+    if (!result.success) return { status: 'error', error: result.error };
+    return { status: 'ok', article: result.article, videos: result.videos };
   });
 
 // =============================================================================

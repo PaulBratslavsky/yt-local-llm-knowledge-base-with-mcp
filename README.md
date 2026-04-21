@@ -255,6 +255,8 @@ The `server/` and `client/` directories are independent git repos; the monorepo 
 
 ## License
 
-MIT. Built by Paul @ [Strapi](https://strapi.io).
+GNU GPL v3 or later. See [LICENSE](./LICENSE) for the full text.
+
+Built by Paul @ [Strapi](https://strapi.io).
 # yt-local-llm-knowledge-base
 # yt-local-llm-knowledge-base-with-mcp

@@ -590,6 +590,12 @@ export interface ApiVideoVideo extends Struct.CollectionTypeSchema {
       Schema.Attribute.Private;
     notes: Schema.Attribute.RichText;
     publishedAt: Schema.Attribute.DateTime;
+    readableArticle: Schema.Attribute.RichText;
+    readableArticleGeneratedAt: Schema.Attribute.DateTime;
+    readableArticleModel: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 100;
+      }>;
     sections: Schema.Attribute.Component<'content.section', true>;
     summaryDescription: Schema.Attribute.Text &
       Schema.Attribute.SetMinMaxLength<{

@@ -99,6 +99,9 @@ export type StrapiVideo = {
   watchVerdict: WatchVerdict | null;
   verdictSummary: string | null;
   verdictReason: string | null;
+  readableArticle: string | null;
+  readableArticleGeneratedAt: string | null;
+  readableArticleModel: string | null;
   summaryGeneratedAt: string | null;
   aiModel: string | null;
   transcriptSegments: unknown | null;

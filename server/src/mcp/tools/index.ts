@@ -24,6 +24,7 @@ import { listUntaggedTool } from './list-untagged';
 import { crossSearchTranscriptsTool } from './cross-search-transcripts';
 import { libraryStatsTool } from './library-stats';
 import { generateDigestTool } from './generate-digest';
+import { getReadableArticleTool } from './get-readable-article';
 
 let registered = false;
 
@@ -57,4 +58,5 @@ export function registerAllTools(): void {
   registerTool(crossSearchTranscriptsTool);
   registerTool(libraryStatsTool);
   registerTool(generateDigestTool);
+  registerTool(getReadableArticleTool);
 }
