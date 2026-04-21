@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { createFileRoute, Link, useRouter } from '@tanstack/react-router';
+import { createFileRoute, useRouter } from '@tanstack/react-router';
 import { Button } from '#/components/ui/button';
 import {
   TimecodeMarkdown,
@@ -10,10 +10,8 @@ import { SectionTimecodeEditor } from '#/components/SectionTimecodeEditor';
 import { VideoChat } from '#/components/VideoChat';
 import { ViewTabs } from '#/components/ViewTabs';
 import { ReadablePane } from '#/components/ReadablePane';
-import {
-  GenerationModeSelect,
-  GenerationModeOptions,
-} from '#/components/GenerationModeSelect';
+import { NotesPane } from '#/components/NotesPane';
+import { GenerationModeSelect } from '#/components/GenerationModeSelect';
 import {
   clearSummaryFailure,
   getGenerationProgress,
@@ -60,10 +58,12 @@ type LoaderData =
   | { status: 'failed'; video: StrapiVideo; error?: string }
   | { status: 'unshared' };
 
-// View the left pane is showing. `summary` = structured notes (sections,
-// takeaways, verdict). `read` = long-form article version.
+// View the left pane is showing.
+//   `summary` = structured summary (sections, takeaways, verdict).
+//   `read`    = long-form article version.
+//   `notes`   = saved notes for this video (chat summaries, MCP entries, manual).
 const LearnSearchSchema = z.object({
-  view: z.enum(['summary', 'read']).optional(),
+  view: z.enum(['summary', 'read', 'notes']).optional(),
 });
 
 export const Route = createFileRoute('/learn/$videoId')({
@@ -170,9 +170,12 @@ function SummaryView({
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
   const view = search.view ?? 'summary';
-  const setView = (next: 'summary' | 'read') => {
+  const setView = (next: 'summary' | 'read' | 'notes') => {
     void navigate({ search: { view: next === 'summary' ? undefined : next } });
   };
+  // Bumped when VideoChat saves a note, so NotesPane refetches without
+  // needing its own event wiring or a page reload.
+  const [notesRefreshKey, setNotesRefreshKey] = useState(0);
 
   const seekTo = (seconds: number) => {
     const iframe = iframeRef.current;
@@ -214,6 +217,7 @@ function SummaryView({
               tabs={[
                 { id: 'summary', label: 'Summary' },
                 { id: 'read', label: 'Read' },
+                { id: 'notes', label: 'Notes' },
               ]}
               onChange={setView}
             />
@@ -221,6 +225,12 @@ function SummaryView({
 
           {view === 'read' ? (
             <ReadablePane video={video} />
+          ) : view === 'notes' ? (
+            <NotesPane
+              videoDocumentId={video.documentId}
+              onSeek={seekTo}
+              refreshKey={notesRefreshKey}
+            />
           ) : (
             <SummaryContent video={video} seekTo={seekTo} iframeRef={iframeRef} />
           )}
@@ -246,6 +256,7 @@ function SummaryView({
           <VideoChat
             videoId={videoId}
             onSeek={seekTo}
+            onNoteCreated={() => setNotesRefreshKey((k) => k + 1)}
             className="min-h-[360px] flex-1 px-6 py-6 sm:px-8"
           />
         </aside>

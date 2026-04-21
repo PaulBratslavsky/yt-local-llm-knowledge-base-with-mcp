@@ -5,6 +5,7 @@ import { Accordion } from 'radix-ui';
 import { buildMarkdownComponents, stripInlineTimecodes } from './TimecodeMarkdown';
 import { Button } from '#/components/ui/button';
 import { getChatResponseEvidence } from '#/data/server-functions/videos';
+import { summarizeToNote } from '#/data/server-functions/notes';
 import type { EvidenceCitation } from '#/lib/services/transcript';
 
 export type ToolCallRecord = {
@@ -30,6 +31,9 @@ type Message = {
 type Props = {
   videoId: string;
   onSeek: (seconds: number) => void;
+  /** Called after a conversation is successfully saved as a note, so the
+   * parent can refresh any note-list UI that's currently open. */
+  onNoteCreated?: (noteDocumentId: string) => void;
   className?: string;
 };
 
@@ -154,11 +158,13 @@ function parseSseEventBlock(block: string): StreamEvent | null {
   }
 }
 
-export function VideoChat({ videoId, onSeek, className }: Readonly<Props>) {
+export function VideoChat({ videoId, onSeek, onNoteCreated, className }: Readonly<Props>) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [summarizing, setSummarizing] = useState(false);
+  const [summaryMsg, setSummaryMsg] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -170,6 +176,28 @@ export function VideoChat({ videoId, onSeek, className }: Readonly<Props>) {
     if (pending) return;
     setMessages([]);
     setError(null);
+    setSummaryMsg(null);
+  };
+
+  const summarize = async () => {
+    if (pending || summarizing) return;
+    setSummarizing(true);
+    setSummaryMsg(null);
+    const payload = messages
+      .filter((m) => m.content && m.content.trim().length > 0)
+      .map((m) => ({ role: m.role, content: m.content }));
+    const res = await summarizeToNote({
+      data: { videoIds: [videoId], messages: payload, source: 'chat' },
+    });
+    setSummarizing(false);
+    if (res.status === 'ok') {
+      setSummaryMsg('Saved to notes.');
+      onNoteCreated?.(res.noteDocumentId);
+      // Clear the banner after a beat so it doesn't linger.
+      window.setTimeout(() => setSummaryMsg(null), 2500);
+    } else {
+      setSummaryMsg(`Save failed: ${res.error}`);
+    }
   };
 
   const sendPrompt = async (promptText: string) => {
@@ -282,15 +310,28 @@ export function VideoChat({ videoId, onSeek, className }: Readonly<Props>) {
           </p>
         </div>
         {messages.length > 0 && (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={clear}
-            disabled={pending}
-          >
-            Clear
-          </Button>
+          <div className="flex shrink-0 items-center gap-2">
+            {messages.filter((m) => m.content.trim().length > 0).length >= 2 && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void summarize()}
+                disabled={pending || summarizing}
+              >
+                {summarizing ? 'Saving…' : 'Summarize to note'}
+              </Button>
+            )}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={clear}
+              disabled={pending || summarizing}
+            >
+              Clear
+            </Button>
+          </div>
         )}
       </header>
 
@@ -328,6 +369,15 @@ export function VideoChat({ videoId, onSeek, className }: Readonly<Props>) {
           <div ref={bottomRef} />
         </div>
       </div>
+
+      {summaryMsg && (
+        <div
+          role="status"
+          className="mb-3 rounded-lg border border-[var(--line)] bg-[var(--bg-subtle)] px-3 py-2 text-xs text-[var(--ink-muted)]"
+        >
+          {summaryMsg}
+        </div>
+      )}
 
       {error && (
         <div

@@ -40,6 +40,13 @@ export default function Header() {
             Feed
           </Link>
           <Link
+            to="/digests"
+            className="nav-link text-sm"
+            activeProps={{ className: 'nav-link is-active text-sm' }}
+          >
+            Digests
+          </Link>
+          <Link
             to="/about"
             className="nav-link text-sm"
             activeProps={{ className: 'nav-link is-active text-sm' }}

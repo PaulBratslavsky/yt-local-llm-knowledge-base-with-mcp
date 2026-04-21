@@ -44,15 +44,23 @@
       "type": "text",
       "maxLength": 500
     },
-    "notes": {
-      "type": "richtext",
-      "description": "Free-form user notes for this video, stored as Markdown. Edited via the Tiptap editor on the learn page; the Strapi admin panel's built-in markdown editor works as a fallback."
-    },
     "tags": {
       "type": "relation",
       "relation": "manyToMany",
       "target": "api::tag.tag",
       "inversedBy": "videos"
+    },
+    "digests": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::digest.digest",
+      "mappedBy": "videos"
+    },
+    "notes": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::note.note",
+      "mappedBy": "videos"
     },
     "summaryStatus": {
       "type": "enumeration",

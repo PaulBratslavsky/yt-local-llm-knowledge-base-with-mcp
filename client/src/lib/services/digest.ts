@@ -28,11 +28,13 @@ export const DIGEST_MIN_VIDEOS = 2;
 export const DigestSchema = z.object({
   title: z
     .string()
-    .describe('Short punchy title for the digest. MAX 200 characters.'),
+    .describe(
+      'Specific, descriptive title that names the actual topic this digest covers — e.g. "Rust async runtimes compared" or "The agent-oversight debate". MUST be specific to the content. NEVER use generic placeholder titles like "Cross-Video Digest", "Cross-Video Knowledge Digest", "Multi-Video Summary", "Knowledge Digest", "Video Digest", "Video Summary", or similar. Someone reading only the title should understand what the digest is about without any other context. MAX 200 characters.',
+    ),
   description: z
     .string()
     .describe(
-      'One-sentence subtitle summarizing what the digest covers across the selected videos. MAX 400 characters.',
+      'One-sentence subtitle summarizing the specific substance covered, not a generic "synthesis of N videos" boilerplate. Name the topic. MAX 400 characters.',
     ),
   overallTheme: z
     .string()
@@ -278,6 +280,8 @@ const DIGEST_SYSTEM = [
   ' • No marketing fluff. No sentence-length filler. Be specific.',
   '',
   'TITLE FORMAT — Every `title` field (on sharedThemes, contradictions.topic, etc.) must be a real, natural-English phrase a human would understand on its own. Examples of GOOD titles: "Multi-agent coordination protocols", "Trust and authentication", "Sandboxed execution environments", "Human-in-the-loop oversight". Examples of BAD titles (NEVER use): "uniqueInsights_Video1", "Theme 1", "sharedTheme1", "video1_insight", or any string containing underscores, camelCase, or iteration numbers. Titles are READ BY A PERSON, not consumed as identifiers.',
+  '',
+  'TOP-LEVEL TITLE — The top-level `title` field is the name of THIS specific digest. It MUST name the actual topic, not describe the format. BAD (never emit): "Cross-Video Digest", "Cross-Video Knowledge Digest", "Multi-Video Summary", "Knowledge Digest", "Video Digest", "Video Summary", "Research Roundup". GOOD: describe the substance — e.g. "The case for building AI agents in Rust", "Why product teams keep misusing RLHF", "Three takes on transformer interpretability". Similarly, `description` names the substance in one sentence, not "a synthesis of N videos".',
 ].join('\n');
 
 // Detect when the model returned a schema-key-shaped string instead of a

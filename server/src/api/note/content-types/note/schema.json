@@ -5,27 +5,37 @@
     "singularName": "note",
     "pluralName": "notes",
     "displayName": "Note",
-    "description": "Short MCP-authored note attached to a video. Distinct from Video.notes (which is the user's rich-text scratchpad) — this is an append-only list of small observations that an external MCP client (e.g. Claude Desktop) can leave for later reference."
+    "description": "Freeform markdown note attached to one or more videos. Sources: `chat` (summarized from an in-app conversation), `digest-chat` (summarized from a /digest cross-video conversation), `mcp` (written by an external MCP client like Claude Desktop), `manual` (user-authored scratchpad). Many-to-many with Video so cross-video chat summaries show up under each source video."
   },
   "options": {
     "draftAndPublish": false
   },
   "pluginOptions": {},
   "attributes": {
-    "video": {
-      "type": "relation",
-      "relation": "manyToOne",
-      "target": "api::video.video"
+    "title": {
+      "type": "string",
+      "maxLength": 200
     },
     "body": {
-      "type": "text",
+      "type": "richtext",
+      "required": true
+    },
+    "source": {
+      "type": "enumeration",
+      "enum": ["chat", "digest-chat", "mcp", "manual"],
       "required": true,
-      "maxLength": 4000
+      "default": "manual"
     },
     "author": {
       "type": "string",
       "maxLength": 120,
-      "description": "Free-form author label — typically the MCP client name (e.g. \"claude-desktop\")."
+      "description": "Free-form author label — typically the MCP client name (e.g. \"claude-desktop\") or \"chat\"/\"you\" for in-app notes."
+    },
+    "videos": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::video.video",
+      "inversedBy": "notes"
     }
   }
 }

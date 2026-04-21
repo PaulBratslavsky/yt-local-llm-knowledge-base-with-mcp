@@ -16,7 +16,6 @@ import {
   fetchTranscriptByVideoIdService,
   fetchVideoByVideoIdService,
   type StrapiTranscript,
-  type StrapiVideo,
 } from '#/lib/services/videos';
 import {
   chunkForSummary,

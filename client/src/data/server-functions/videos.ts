@@ -9,7 +9,6 @@ import {
   markSummaryPendingService,
   searchTagsService,
   updateSectionTimecodeService,
-  updateVideoNotesService,
   type PaginatedVideos,
   type StrapiTag,
   type StrapiVideo,
@@ -279,23 +278,6 @@ export const updateSectionTimecode = createServerFn({ method: 'POST' })
   )
   .handler(async ({ data }): Promise<{ success: true } | { success: false; error: string }> => {
     return await updateSectionTimecodeService(data);
-  });
-
-// Persist the user's markdown notes on a Video. Called from the Tiptap
-// editor on the learn page (autosave on idle). The field is a Strapi
-// `richtext` so the admin panel's built-in markdown editor also works
-// as a manual fallback.
-const UpdateVideoNotesSchema = z.object({
-  documentId: z.string().min(1),
-  notes: z.string().max(200_000),
-});
-
-export const updateVideoNotes = createServerFn({ method: 'POST' })
-  .inputValidator((data: z.input<typeof UpdateVideoNotesSchema>) =>
-    UpdateVideoNotesSchema.parse(data),
-  )
-  .handler(async ({ data }): Promise<{ success: true } | { success: false; error: string }> => {
-    return await updateVideoNotesService(data);
   });
 
 export const clearSummaryFailure = createServerFn({ method: 'POST' })

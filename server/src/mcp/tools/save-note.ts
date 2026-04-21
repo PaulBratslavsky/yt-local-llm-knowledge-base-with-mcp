@@ -1,13 +1,25 @@
-// Attach a short note to a video. Append-only — use the Strapi admin panel
-// or a future MCP tool to edit/delete. Notes are stored on the Note
-// content type (api::note.note) with a many-to-one relation to Video.
+// Attach a markdown note to a video. Append-only — use the Strapi admin
+// panel or a future MCP tool to edit/delete. Notes live on api::note.note
+// with a many-to-many relation to Video (so a note can span multiple
+// videos if written against a cross-video conversation).
 
 import { z } from 'zod';
 import type { ToolDef } from '../registry';
 
 const schema = z.object({
-  videoId: z.string().min(1).describe('youtubeVideoId or Video documentId.'),
-  body: z.string().min(1).max(4000).describe('The note body. Markdown is fine; rendered in the admin UI.'),
+  videoId: z
+    .string()
+    .min(1)
+    .describe('youtubeVideoId or Video documentId.'),
+  body: z
+    .string()
+    .min(1)
+    .describe('The note body. Markdown — rendered as rich text in the app.'),
+  title: z
+    .string()
+    .max(200)
+    .optional()
+    .describe('Optional short heading for the note.'),
   author: z
     .string()
     .max(120)
@@ -17,9 +29,10 @@ const schema = z.object({
 
 export const saveNoteTool: ToolDef<z.infer<typeof schema>> = {
   name: 'saveNote',
-  description: 'Attach a short note (markdown) to a video. Use this to capture frontier-model observations so they\'re visible later from the app. Append-only — one tool call = one new note.',
+  description:
+    "Attach a markdown note to a video. Use this to capture frontier-model observations so they're visible later from the app. Append-only — one tool call = one new note.",
   schema,
-  execute: async ({ videoId, body, author }, { strapi }) => {
+  execute: async ({ videoId, body, title, author }, { strapi }) => {
     let video = (await strapi.documents('api::video.video').findFirst({
       filters: { youtubeVideoId: { $eq: videoId } },
     })) as { documentId: string } | null;
@@ -35,9 +48,11 @@ export const saveNoteTool: ToolDef<z.infer<typeof schema>> = {
     const noteDocuments = strapi.documents('api::note.note' as never);
     const note = (await noteDocuments.create({
       data: {
-        video: video.documentId,
+        title: title ?? null,
         body,
+        source: 'mcp',
         author: author ?? 'mcp',
+        videos: [video.documentId],
       } as never,
     })) as { documentId: string };
 

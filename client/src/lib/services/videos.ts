@@ -1,4 +1,5 @@
 import { STRAPI_URL, STRAPI_API_TOKEN } from '#/lib/env';
+import type { StoredTranscriptIndex } from './transcript';
 
 // Build request headers with the optional bearer token. Server-side only.
 function strapiHeaders(extra?: Record<string, string>): Record<string, string> {
@@ -89,7 +90,6 @@ export type StrapiVideo = {
   videoAuthor: string | null;
   videoThumbnailUrl: string | null;
   caption: string | null;
-  notes: string | null;
   createdAt: string;
   tags: StrapiTag[] | null;
   summaryStatus: SummaryStatus;
@@ -104,7 +104,7 @@ export type StrapiVideo = {
   readableArticleModel: string | null;
   summaryGeneratedAt: string | null;
   aiModel: string | null;
-  transcriptSegments: unknown | null;
+  transcriptSegments: StoredTranscriptIndex | null;
   keyTakeaways: StrapiTakeaway[] | null;
   sections: StrapiSection[] | null;
   actionSteps: StrapiActionStep[] | null;
@@ -311,7 +311,7 @@ export type UpdateVideoSummaryInput = {
   verdictSummary: string;
   verdictReason: string;
   aiModel: string;
-  transcriptSegments?: unknown;
+  transcriptSegments?: StoredTranscriptIndex;
   keyTakeaways: Array<{ text: string }>;
   sections: Array<{ timeSec?: number; heading: string; body: string }>;
   actionSteps: Array<{ title: string; body: string }>;
@@ -351,25 +351,6 @@ export async function markSummaryFailedService(documentId: string): Promise<void
   }).catch(() => {
     // Best-effort — the chat UI will show the error via its own retry path.
   });
-}
-
-// Update the free-form markdown notes on a Video row. The user's personal
-// thoughts / annotations layered on top of the AI summary — persisted so
-// they survive regenerations and show in the Strapi admin for inspection.
-export async function updateVideoNotesService(input: {
-  documentId: string;
-  notes: string;
-}): Promise<{ success: true } | { success: false; error: string }> {
-  const res = await fetch(`${STRAPI_URL}/api/videos/${input.documentId}`, {
-    method: 'PUT',
-    headers: strapiHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ data: { notes: input.notes } }),
-  });
-  if (!res.ok) {
-    await handleFetchError(res, 'updateVideoNotesService');
-    return { success: false, error: `Strapi error ${res.status}` };
-  }
-  return { success: true };
 }
 
 // Manually set the timeSec of a single section on a Video row. Strapi's

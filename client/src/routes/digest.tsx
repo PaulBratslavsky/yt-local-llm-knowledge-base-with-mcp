@@ -1,16 +1,17 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { createFileRoute, Link, useRouter } from '@tanstack/react-router';
 import { z } from 'zod';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Button } from '#/components/ui/button';
 import { DigestChat } from '#/components/DigestChat';
+import { generateDigestArticle } from '#/data/server-functions/digest';
 import {
-  generateDigest,
-  generateDigestArticle,
-  saveDigestAsNote,
-  type GenerateDigestResult,
-} from '#/data/server-functions/digest';
+  saveDigest,
+  loadDigest,
+  type LoadDigestResult,
+} from '#/data/server-functions/digests';
+import type { StrapiDigest } from '#/lib/services/digests';
 import {
   resolveVideoTitle,
   type Digest,
@@ -30,12 +31,15 @@ const DigestSearchSchema = z.object({
 export const Route = createFileRoute('/digest')({
   validateSearch: DigestSearchSchema,
   loaderDeps: ({ search }) => ({ videos: search.videos }),
-  loader: async ({ deps }): Promise<GenerateDigestResult> => {
+  loader: async ({ deps }): Promise<LoadDigestResult> => {
     const videoIds = deps.videos
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean);
-    return await generateDigest({ data: { videoIds } });
+    // loadDigest: cache-first. Checks for a saved digest matching this
+    // video set and short-circuits to the persisted structured data when
+    // found; falls back to a fresh LLM synthesis on miss.
+    return await loadDigest({ data: { videoIds } });
   },
   component: DigestPage,
   pendingComponent: DigestPending,
@@ -81,13 +85,24 @@ function DigestPage() {
     );
   }
 
-  return <DigestReport digest={result.digest} videos={result.videos} />;
+  return (
+    <DigestReport
+      digest={result.digest}
+      videos={result.videos}
+      initialSavedDigest={result.savedDigest}
+    />
+  );
 }
 
 function DigestReport({
   digest,
   videos,
-}: Readonly<{ digest: Digest; videos: StrapiVideo[] }>) {
+  initialSavedDigest,
+}: Readonly<{
+  digest: Digest;
+  videos: StrapiVideo[];
+  initialSavedDigest: StrapiDigest | null;
+}>) {
   const sources: DigestSourceVideo[] = videos.map((v) => ({
     documentId: v.documentId,
     youtubeVideoId: v.youtubeVideoId,
@@ -96,10 +111,19 @@ function DigestReport({
     videoThumbnailUrl: v.videoThumbnailUrl,
   }));
 
-  // Which view is currently active. Toggling to 'article' lazily
-  // generates the long-form markdown post via the LLM and keeps the
-  // result in state — subsequent tab switches are instant.
+  // Which view is currently active.
   const [view, setView] = useState<'digest' | 'article'>('digest');
+
+  // Article + saved-row state seeded from the loader. Loader already
+  // checked for a cached digest — if one exists, `initialSavedDigest`
+  // carries it and its articleMarkdown (if present) seeds `article` so
+  // the Article tab renders cached without regenerating.
+  const [savedDigest, setSavedDigest] = useState<StrapiDigest | null>(
+    initialSavedDigest,
+  );
+  const [article, setArticle] = useState<string | null>(
+    initialSavedDigest?.articleMarkdown ?? null,
+  );
 
   return (
     <main className="min-h-[calc(100vh-4rem)]">
@@ -111,9 +135,23 @@ function DigestReport({
           <DigestViewTabs active={view} onChange={setView} />
 
           {view === 'article' ? (
-            <DigestArticleView videos={videos} />
+            <DigestArticleView
+              digest={digest}
+              videos={videos}
+              article={article}
+              savedDigest={savedDigest}
+              onArticleGenerated={setArticle}
+              onSaved={setSavedDigest}
+            />
           ) : (
-            <DigestStructuredView digest={digest} sources={sources} videos={videos} />
+            <DigestStructuredView
+              digest={digest}
+              sources={sources}
+              videos={videos}
+              article={article}
+              savedDigest={savedDigest}
+              onSaved={setSavedDigest}
+            />
           )}
         </div>
 
@@ -175,10 +213,19 @@ function DigestStructuredView({
   digest,
   sources,
   videos,
+  article,
+  savedDigest,
+  onSaved,
 }: Readonly<{
   digest: Digest;
   sources: DigestSourceVideo[];
   videos: StrapiVideo[];
+  /** Markdown article for these videos if already generated — included on
+   * save so we don't lose it. Null when the user hasn't opened the Article
+   * tab yet and no saved row had one cached. */
+  article: string | null;
+  savedDigest: StrapiDigest | null;
+  onSaved: (saved: StrapiDigest | null) => void;
 }>) {
   return (
     <>
@@ -391,46 +438,172 @@ function DigestStructuredView({
           </div>
         </section>
 
-      <DigestActionBar digest={digest} videos={videos} />
+      <DigestActionBar
+        digest={digest}
+        videos={videos}
+        article={article}
+        savedDigest={savedDigest}
+        onSaved={onSaved}
+      />
     </>
   );
 }
 
+// Mirrors ReadablePane for the video reader: explicit click-to-generate,
+// auto-persists to the Digest row on generation, renders markdown + a
+// regenerate affordance once the article exists. No lazy-on-mount — the
+// user opts in.
 function DigestArticleView({
+  digest,
   videos,
-}: Readonly<{ videos: StrapiVideo[] }>) {
-  const videoIds = videos.map((v) => v.youtubeVideoId);
-  const [article, setArticle] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  article,
+  savedDigest,
+  onArticleGenerated,
+  onSaved,
+}: Readonly<{
+  digest: Digest;
+  videos: StrapiVideo[];
+  /** Seeded from a previously-saved digest row, or populated after a fresh
+   * generation. When non-null we're in the "rendered" state. */
+  article: string | null;
+  savedDigest: StrapiDigest | null;
+  onArticleGenerated: (markdown: string) => void;
+  onSaved: (saved: StrapiDigest) => void;
+}>) {
+  if (!article) {
+    return (
+      <DigestArticleGenerate
+        digest={digest}
+        videos={videos}
+        savedDigest={savedDigest}
+        onArticleGenerated={onArticleGenerated}
+        onSaved={onSaved}
+      />
+    );
+  }
+  return (
+    <DigestArticleRendered
+      digest={digest}
+      videos={videos}
+      article={article}
+      savedDigest={savedDigest}
+      onArticleGenerated={onArticleGenerated}
+      onSaved={onSaved}
+    />
+  );
+}
 
-  // Lazy generate on mount. Result lives in component state — tab toggle
-  // back and forth stays instant; only a hard refresh re-runs the LLM.
-  const run = async () => {
-    setLoading(true);
+async function runGenerateAndSave(input: {
+  digest: Digest;
+  videos: StrapiVideo[];
+  savedDigest: StrapiDigest | null;
+  onArticleGenerated: (md: string) => void;
+  onSaved: (saved: StrapiDigest) => void;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const videoIds = input.videos.map((v) => v.youtubeVideoId);
+  const result = await generateDigestArticle({ data: { videoIds } });
+  if (result.status === 'error') return { ok: false, error: result.error };
+  input.onArticleGenerated(result.article);
+
+  // Upsert the saved digest with the new article. This also saves the
+  // structured digest metadata if it hasn't been saved before — consistent
+  // with the video reader, where generating auto-persists.
+  const saved = await saveDigest({
+    data: {
+      digest: input.digest,
+      youtubeVideoIds: videoIds,
+      articleMarkdown: result.article,
+    },
+  });
+  if (saved.status === 'ok') {
+    input.onSaved({
+      ...(input.savedDigest ?? ({} as StrapiDigest)),
+      documentId: saved.digestDocumentId,
+      articleMarkdown: result.article,
+    } as StrapiDigest);
+  }
+  return { ok: true };
+}
+
+function DigestArticleGenerate({
+  digest,
+  videos,
+  savedDigest,
+  onArticleGenerated,
+  onSaved,
+}: Readonly<{
+  digest: Digest;
+  videos: StrapiVideo[];
+  savedDigest: StrapiDigest | null;
+  onArticleGenerated: (md: string) => void;
+  onSaved: (saved: StrapiDigest) => void;
+}>) {
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const kickoff = async () => {
+    if (running) return;
+    setRunning(true);
     setError(null);
     try {
-      const result = await generateDigestArticle({
-        data: { videoIds },
+      const res = await runGenerateAndSave({
+        digest,
+        videos,
+        savedDigest,
+        onArticleGenerated,
+        onSaved,
       });
-      if (result.status === 'error') {
-        setError(result.error);
-        return;
-      }
-      setArticle(result.article);
+      if (!res.ok) setError(res.error);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Article generation failed');
     } finally {
-      setLoading(false);
+      setRunning(false);
     }
   };
 
-  // Kick off generation the first time this view mounts.
-  useLazyRun(article, loading, error, run);
+  return (
+    <section className="rounded-2xl border border-[var(--line)] bg-[var(--card)] p-8 text-center sm:p-10">
+      <h2 className="display-title text-2xl text-[var(--ink)] sm:text-3xl">
+        Read this digest as an article
+      </h2>
+      <p className="mx-auto mt-4 max-w-md text-sm leading-relaxed text-[var(--ink-muted)]">
+        Turns the {videos.length}-video synthesis into a single long-form
+        post — one coherent essay instead of a structured report. Cached
+        once generated.
+      </p>
+      {error && (
+        <div className="mx-auto mt-5 max-w-md rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+          {error}
+        </div>
+      )}
+      <div className="mt-8 flex justify-center">
+        <Button onClick={kickoff} disabled={running} size="pill">
+          {running ? 'Generating…' : 'Generate article'}
+        </Button>
+      </div>
+    </section>
+  );
+}
+
+function DigestArticleRendered({
+  digest,
+  videos,
+  article,
+  savedDigest,
+  onArticleGenerated,
+  onSaved,
+}: Readonly<{
+  digest: Digest;
+  videos: StrapiVideo[];
+  article: string;
+  savedDigest: StrapiDigest | null;
+  onArticleGenerated: (md: string) => void;
+  onSaved: (saved: StrapiDigest) => void;
+}>) {
+  const [regenerating, setRegenerating] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const copy = async () => {
-    if (!article) return;
     try {
       await navigator.clipboard.writeText(article);
       setCopied(true);
@@ -440,41 +613,28 @@ function DigestArticleView({
     }
   };
 
-  if (loading && !article) {
-    return (
-      <div className="py-20 text-center">
-        <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--line)] bg-[var(--card)] px-3 py-1 text-xs font-medium text-[var(--ink-muted)]">
-          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--accent)]" />
-          Writing
-        </span>
-        <h2 className="display-title mt-5 text-2xl text-[var(--ink)]">
-          Writing your article…
-        </h2>
-        <p className="mt-3 text-sm text-[var(--ink-muted)]">
-          Synthesizing a long-form piece across {videos.length} videos.
-          Usually 15–30 seconds.
-        </p>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="py-20 text-center">
-        <h2 className="display-title text-2xl text-[var(--ink)]">
-          Couldn&apos;t write the article
-        </h2>
-        <p className="mt-4 text-sm text-destructive">{error}</p>
-        <div className="mt-6">
-          <Button variant="outline" onClick={run}>
-            Try again
-          </Button>
-        </div>
-      </div>
-    );
-  }
-
-  if (!article) return null;
+  const regenerate = async () => {
+    if (regenerating) return;
+    if (
+      !globalThis.confirm(
+        'Regenerate the article? The current one will be replaced.',
+      )
+    ) {
+      return;
+    }
+    setRegenerating(true);
+    try {
+      await runGenerateAndSave({
+        digest,
+        videos,
+        savedDigest,
+        onArticleGenerated,
+        onSaved,
+      });
+    } finally {
+      setRegenerating(false);
+    }
+  };
 
   return (
     <>
@@ -486,33 +646,18 @@ function DigestArticleView({
           <Button variant="outline" size="sm" onClick={copy}>
             {copied ? 'Copied' : 'Copy markdown'}
           </Button>
-          <Button variant="outline" size="sm" onClick={run} disabled={loading}>
-            {loading ? 'Regenerating…' : 'Regenerate'}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={regenerate}
+            disabled={regenerating}
+          >
+            {regenerating ? 'Regenerating…' : 'Regenerate article'}
           </Button>
         </div>
       </section>
     </>
   );
-}
-
-// Kick off the generation the first time an article view is rendered in
-// a given session. Guards against re-running during state updates.
-function useLazyRun(
-  article: string | null,
-  loading: boolean,
-  error: string | null,
-  run: () => Promise<void>,
-) {
-  // Use a ref to only run once per mount, independent of React strict-mode
-  // double-invocation.
-  const triggered = useRef(false);
-  useEffect(() => {
-    if (triggered.current) return;
-    if (article !== null || loading || error !== null) return;
-    triggered.current = true;
-    void run();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 }
 
 function SourceChips({
@@ -578,15 +723,26 @@ function ThemeBlock({
   );
 }
 
-// Actions: copy the digest as markdown, save into a source video's notes,
-// or regenerate (just re-invalidate the loader — same URL, fresh call).
+// Actions: copy the digest as markdown, save to the Digest collection
+// (one row per unique video set, upserted by videoSetKey so re-saving the
+// same selection updates in place), or regenerate (re-invalidate the
+// loader — same URL, fresh call).
 function DigestActionBar({
   digest,
   videos,
-}: Readonly<{ digest: Digest; videos: StrapiVideo[] }>) {
+  article,
+  savedDigest,
+  onSaved,
+}: Readonly<{
+  digest: Digest;
+  videos: StrapiVideo[];
+  article: string | null;
+  savedDigest: StrapiDigest | null;
+  onSaved: (saved: StrapiDigest | null) => void;
+}>) {
   const router = useRouter();
   const [copied, setCopied] = useState(false);
-  const [savingTo, setSavingTo] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
 
   const markdown = digestToMarkdown(digest);
@@ -601,21 +757,41 @@ function DigestActionBar({
     }
   };
 
-  const save = async (videoDocumentId: string) => {
-    setSavingTo(videoDocumentId);
+  const save = async () => {
+    setSaving(true);
     setSaveMsg(null);
-    const res = await saveDigestAsNote({
-      data: { videoDocumentId, markdown },
+    const res = await saveDigest({
+      data: {
+        digest,
+        youtubeVideoIds: videos.map((v) => v.youtubeVideoId),
+        articleMarkdown: article ?? undefined,
+      },
     });
-    setSavingTo(null);
-    setSaveMsg(
-      res.status === 'ok' ? 'Saved to video notes.' : `Save failed: ${res.error}`,
-    );
+    setSaving(false);
+    if (res.status === 'ok') {
+      setSaveMsg(res.created ? 'Saved.' : 'Updated saved digest.');
+      // Optimistic: mark the row as saved so the button label flips
+      // without waiting for a re-fetch.
+      onSaved({
+        ...(savedDigest ?? ({} as StrapiDigest)),
+        documentId: res.digestDocumentId,
+        articleMarkdown: article ?? savedDigest?.articleMarkdown ?? null,
+      } as StrapiDigest);
+      window.setTimeout(() => setSaveMsg(null), 2500);
+    } else {
+      setSaveMsg(`Save failed: ${res.error}`);
+    }
   };
 
   const regenerate = () => {
     router.invalidate();
   };
+
+  const saveLabel = saving
+    ? 'Saving…'
+    : savedDigest
+      ? 'Update saved digest'
+      : 'Save digest';
 
   return (
     <section className="sticky bottom-4 z-10 mt-4 rounded-2xl border border-[var(--line)] bg-[var(--card)] p-4 shadow-[0_4px_16px_rgba(9,9,11,0.06)]">
@@ -623,28 +799,9 @@ function DigestActionBar({
         <Button variant="outline" size="sm" onClick={copy}>
           {copied ? 'Copied' : 'Copy markdown'}
         </Button>
-        <div className="relative">
-          <details className="group">
-            <summary className="inline-flex cursor-pointer items-center rounded-md border border-[var(--line)] bg-[var(--card)] px-3 py-1.5 text-xs font-medium text-[var(--ink)] transition hover:bg-[var(--bg-subtle)]">
-              Save as note on…
-            </summary>
-            <div className="absolute bottom-full left-0 mb-2 min-w-[240px] rounded-md border border-[var(--line)] bg-[var(--card)] p-1 shadow-lg">
-              {videos.map((v) => (
-                <button
-                  key={v.documentId}
-                  type="button"
-                  onClick={() => save(v.documentId)}
-                  disabled={savingTo !== null}
-                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-[var(--ink)] transition hover:bg-[var(--bg-subtle)] disabled:opacity-50"
-                >
-                  <span className="truncate">
-                    {v.videoTitle ?? v.youtubeVideoId}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </details>
-        </div>
+        <Button variant="outline" size="sm" onClick={save} disabled={saving}>
+          {saveLabel}
+        </Button>
         <Button variant="outline" size="sm" onClick={regenerate}>
           Regenerate
         </Button>

@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as NewPostRouteImport } from './routes/new-post'
 import { Route as FeedRouteImport } from './routes/feed'
+import { Route as DigestsRouteImport } from './routes/digests'
 import { Route as DigestRouteImport } from './routes/digest'
 import { Route as AboutRouteImport } from './routes/about'
 import { Route as IndexRouteImport } from './routes/index'
@@ -27,6 +28,11 @@ const NewPostRoute = NewPostRouteImport.update({
 const FeedRoute = FeedRouteImport.update({
   id: '/feed',
   path: '/feed',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DigestsRoute = DigestsRouteImport.update({
+  id: '/digests',
+  path: '/digests',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DigestRoute = DigestRouteImport.update({
@@ -69,6 +75,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/about': typeof AboutRoute
   '/digest': typeof DigestRoute
+  '/digests': typeof DigestsRoute
   '/feed': typeof FeedRoute
   '/new-post': typeof NewPostRoute
   '/api/chat': typeof ApiChatRoute
@@ -80,6 +87,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/about': typeof AboutRoute
   '/digest': typeof DigestRoute
+  '/digests': typeof DigestsRoute
   '/feed': typeof FeedRoute
   '/new-post': typeof NewPostRoute
   '/api/chat': typeof ApiChatRoute
@@ -92,6 +100,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/about': typeof AboutRoute
   '/digest': typeof DigestRoute
+  '/digests': typeof DigestsRoute
   '/feed': typeof FeedRoute
   '/new-post': typeof NewPostRoute
   '/api/chat': typeof ApiChatRoute
@@ -105,6 +114,7 @@ export interface FileRouteTypes {
     | '/'
     | '/about'
     | '/digest'
+    | '/digests'
     | '/feed'
     | '/new-post'
     | '/api/chat'
@@ -116,6 +126,7 @@ export interface FileRouteTypes {
     | '/'
     | '/about'
     | '/digest'
+    | '/digests'
     | '/feed'
     | '/new-post'
     | '/api/chat'
@@ -127,6 +138,7 @@ export interface FileRouteTypes {
     | '/'
     | '/about'
     | '/digest'
+    | '/digests'
     | '/feed'
     | '/new-post'
     | '/api/chat'
@@ -139,6 +151,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AboutRoute: typeof AboutRoute
   DigestRoute: typeof DigestRoute
+  DigestsRoute: typeof DigestsRoute
   FeedRoute: typeof FeedRoute
   NewPostRoute: typeof NewPostRoute
   ApiChatRoute: typeof ApiChatRoute
@@ -161,6 +174,13 @@ declare module '@tanstack/react-router' {
       path: '/feed'
       fullPath: '/feed'
       preLoaderRoute: typeof FeedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/digests': {
+      id: '/digests'
+      path: '/digests'
+      fullPath: '/digests'
+      preLoaderRoute: typeof DigestsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/digest': {
@@ -219,6 +239,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AboutRoute: AboutRoute,
   DigestRoute: DigestRoute,
+  DigestsRoute: DigestsRoute,
   FeedRoute: FeedRoute,
   NewPostRoute: NewPostRoute,
   ApiChatRoute: ApiChatRoute,

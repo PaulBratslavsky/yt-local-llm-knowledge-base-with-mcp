@@ -430,10 +430,80 @@ export interface AdminUser extends Struct.CollectionTypeSchema {
   };
 }
 
+export interface ApiDigestDigest extends Struct.CollectionTypeSchema {
+  collectionName: 'digests';
+  info: {
+    description: 'Saved cross-video digest \u2014 structured synthesis across 2\u20135 videos. Renders with full interactivity from the decomposed components; `articleMarkdown` is the optional long-form prose variant for reading.';
+    displayName: 'Digest';
+    pluralName: 'digests';
+    singularName: 'digest';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    articleMarkdown: Schema.Attribute.RichText;
+    bottomLine: Schema.Attribute.Text &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 800;
+      }>;
+    contradictions: Schema.Attribute.Component<
+      'content.digest-contradiction',
+      true
+    >;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    description: Schema.Attribute.Text &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 400;
+      }>;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::digest.digest'
+    > &
+      Schema.Attribute.Private;
+    model: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 100;
+      }>;
+    overallTheme: Schema.Attribute.RichText;
+    publishedAt: Schema.Attribute.DateTime;
+    sharedThemes: Schema.Attribute.Component<
+      'content.digest-shared-theme',
+      true
+    >;
+    title: Schema.Attribute.String &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 200;
+      }>;
+    uniqueInsights: Schema.Attribute.Component<
+      'content.digest-unique-insight',
+      true
+    >;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    videos: Schema.Attribute.Relation<'manyToMany', 'api::video.video'>;
+    videoSetKey: Schema.Attribute.String &
+      Schema.Attribute.Required &
+      Schema.Attribute.Unique &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 500;
+      }>;
+    viewingOrder: Schema.Attribute.Component<
+      'content.digest-viewing-order',
+      true
+    >;
+  };
+}
+
 export interface ApiNoteNote extends Struct.CollectionTypeSchema {
   collectionName: 'notes';
   info: {
-    description: "Short MCP-authored note attached to a video. Distinct from Video.notes (which is the user's rich-text scratchpad) \u2014 this is an append-only list of small observations that an external MCP client (e.g. Claude Desktop) can leave for later reference.";
+    description: 'Freeform markdown note attached to one or more videos. Sources: `chat` (summarized from an in-app conversation), `digest-chat` (summarized from a /digest cross-video conversation), `mcp` (written by an external MCP client like Claude Desktop), `manual` (user-authored scratchpad). Many-to-many with Video so cross-video chat summaries show up under each source video.';
     displayName: 'Note';
     pluralName: 'notes';
     singularName: 'note';
@@ -446,11 +516,7 @@ export interface ApiNoteNote extends Struct.CollectionTypeSchema {
       Schema.Attribute.SetMinMaxLength<{
         maxLength: 120;
       }>;
-    body: Schema.Attribute.Text &
-      Schema.Attribute.Required &
-      Schema.Attribute.SetMinMaxLength<{
-        maxLength: 4000;
-      }>;
+    body: Schema.Attribute.RichText & Schema.Attribute.Required;
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
@@ -458,10 +524,19 @@ export interface ApiNoteNote extends Struct.CollectionTypeSchema {
     localizations: Schema.Attribute.Relation<'oneToMany', 'api::note.note'> &
       Schema.Attribute.Private;
     publishedAt: Schema.Attribute.DateTime;
+    source: Schema.Attribute.Enumeration<
+      ['chat', 'digest-chat', 'mcp', 'manual']
+    > &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<'manual'>;
+    title: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 200;
+      }>;
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
-    video: Schema.Attribute.Relation<'manyToOne', 'api::video.video'>;
+    videos: Schema.Attribute.Relation<'manyToMany', 'api::video.video'>;
   };
 }
 
@@ -584,11 +659,12 @@ export interface ApiVideoVideo extends Struct.CollectionTypeSchema {
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
+    digests: Schema.Attribute.Relation<'manyToMany', 'api::digest.digest'>;
     keyTakeaways: Schema.Attribute.Component<'content.takeaway', true>;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<'oneToMany', 'api::video.video'> &
       Schema.Attribute.Private;
-    notes: Schema.Attribute.RichText;
+    notes: Schema.Attribute.Relation<'manyToMany', 'api::note.note'>;
     publishedAt: Schema.Attribute.DateTime;
     readableArticle: Schema.Attribute.RichText;
     readableArticleGeneratedAt: Schema.Attribute.DateTime;
@@ -1167,6 +1243,7 @@ declare module '@strapi/strapi' {
       'admin::transfer-token': AdminTransferToken;
       'admin::transfer-token-permission': AdminTransferTokenPermission;
       'admin::user': AdminUser;
+      'api::digest.digest': ApiDigestDigest;
       'api::note.note': ApiNoteNote;
       'api::tag.tag': ApiTagTag;
       'api::transcript.transcript': ApiTranscriptTranscript;

@@ -1,10 +1,24 @@
-import type { AnyFieldApi } from '@tanstack/react-form';
 import { Input } from '#/components/ui/input';
 import { Label } from '#/components/ui/label';
 import { cn } from '#/lib/utils';
 
+// Minimal slice of TanStack's FieldApi we actually use. Typing against
+// `AnyFieldApi` from @tanstack/react-form trips TS variance checks on
+// FormListeners<any, any, ...> when concrete form value types get passed
+// in — happens regardless of form generics, because the listener params
+// are contravariant.
+type FieldSlice = {
+  name: string;
+  state: {
+    value: string | undefined;
+    meta: { errors: unknown[]; isTouched: boolean };
+  };
+  handleChange: (value: string) => void;
+  handleBlur: () => void;
+};
+
 type FieldTextProps = {
-  field: AnyFieldApi;
+  field: FieldSlice;
   label: string;
   type?: React.HTMLInputTypeAttribute;
   placeholder?: string;

@@ -128,12 +128,22 @@ export default {
       'api::transcript.transcript.findOne',
       'api::transcript.transcript.create',
       'api::transcript.transcript.update',
-      // Note is MCP-authored (see mcp/tools/save-note.ts). Public reads
-      // let the client render notes in the UI; write actions stay
-      // admin-only so the app can't accidentally create notes without
-      // going through the MCP tool.
+      // Note: MCP-authored (save-note.ts) + in-app chat summaries and
+      // user scratchpad from the Notes tab. Client writes directly via
+      // the Strapi REST API now — the old "reads-only" stance was from
+      // when only Claude Desktop could write notes.
       'api::note.note.find',
       'api::note.note.findOne',
+      'api::note.note.create',
+      'api::note.note.update',
+      'api::note.note.delete',
+      // Digest is a saved cross-video synthesis. Client creates, reads,
+      // and deletes from the /digest page; no MCP write path (yet).
+      'api::digest.digest.find',
+      'api::digest.digest.findOne',
+      'api::digest.digest.create',
+      'api::digest.digest.update',
+      'api::digest.digest.delete',
     ];
 
     try {
