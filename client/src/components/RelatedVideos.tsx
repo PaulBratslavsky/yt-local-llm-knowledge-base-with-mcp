@@ -44,17 +44,19 @@ export function RelatedVideos({ videoId, limit = 6 }: Readonly<Props>) {
 
   return (
     <section className="mt-16 border-t border-[var(--line)] pt-8">
-      <header className="mb-5 flex items-end justify-between gap-3">
-        <div>
-          <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--ink-muted)]">
-            Related videos
-          </h2>
-          <p className="mt-1 text-xs text-[var(--ink-muted)]">
-            Semantically closest in your library.
-          </p>
-        </div>
+      <header className="mb-5">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--ink-muted)]">
+          Related videos
+        </h2>
+        <p className="mt-1 text-xs text-[var(--ink-muted)]">
+          Semantically closest in your library.
+        </p>
       </header>
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      {/* Two columns instead of three — the learn page's left pane is ~60%
+          of the viewport and narrower than the feed, so three cards get
+          squeezed. Stacked thumbnail + title + meta reads much better at
+          this width than the side-by-side compact layout. */}
+      <div className="grid gap-4 sm:grid-cols-2">
         {state.results.map((r) => (
           <RelatedCard key={r.documentId} item={r} />
         ))}
@@ -68,28 +70,30 @@ function RelatedCard({ item }: Readonly<{ item: RelatedVideo }>) {
     <Link
       to="/learn/$videoId"
       params={{ videoId: item.youtubeVideoId }}
-      className="group flex gap-3 rounded-2xl border border-[var(--line)] bg-[var(--card)] p-3 no-underline transition hover:border-[var(--line-strong)]"
+      className="group flex flex-col overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--card)] no-underline transition hover:border-[var(--line-strong)]"
     >
       {item.videoThumbnailUrl ? (
-        <img
-          src={item.videoThumbnailUrl}
-          alt={item.videoTitle ?? item.youtubeVideoId}
-          className="h-16 w-24 flex-none rounded-lg object-cover"
-        />
+        <div className="aspect-video w-full overflow-hidden bg-[var(--bg-subtle)]">
+          <img
+            src={item.videoThumbnailUrl}
+            alt={item.videoTitle ?? item.youtubeVideoId}
+            className="h-full w-full object-cover transition group-hover:scale-[1.02]"
+          />
+        </div>
       ) : (
         <span
           aria-hidden="true"
-          className="h-16 w-24 flex-none rounded-lg bg-[var(--bg-subtle)]"
+          className="aspect-video w-full bg-[var(--bg-subtle)]"
         />
       )}
-      <div className="min-w-0 flex-1">
-        <h3 className="line-clamp-2 text-sm font-medium text-[var(--ink)] transition group-hover:text-[var(--accent)]">
+      <div className="flex flex-1 flex-col gap-2 p-4">
+        <h3 className="line-clamp-2 text-sm font-medium leading-snug text-[var(--ink)] transition group-hover:text-[var(--accent)]">
           {item.videoTitle ?? item.youtubeVideoId}
         </h3>
-        <div className="mt-1 flex items-center gap-2 text-[0.65rem] text-[var(--ink-muted)]">
-          {item.videoAuthor && (
-            <span className="truncate">{item.videoAuthor}</span>
-          )}
+        <div className="mt-auto flex items-center justify-between gap-2 text-[0.65rem] text-[var(--ink-muted)]">
+          <span className="truncate">
+            {item.videoAuthor ?? '—'}
+          </span>
           <span className="tabular-nums">
             {(item.score * 100).toFixed(0)}% similar
           </span>

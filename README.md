@@ -1,6 +1,6 @@
 # YT Knowledge Base
 
-A local-first, single-user knowledge base for YouTube videos. Paste a URL, get a structured AI summary with timestamped sections — then chat with the transcript, search the web for extra context, and add your own notes.
+A local-first, single-user knowledge base for YouTube videos. Paste a URL, get a structured AI summary with timestamped sections — then chat with the transcript, synthesize across videos, save conversations as markdown notes, and find semantically related videos.
 
 No accounts. No cloud AI. Runs entirely on your machine against a local [Ollama](https://ollama.com) instance and a local [Strapi](https://strapi.io) DB.
 
@@ -8,10 +8,13 @@ No accounts. No cloud AI. Runs entirely on your machine against a local [Ollama]
 
 ## Highlights
 
-- **Local-first by design** — [Ollama](https://ollama.com) for inference, [Strapi](https://strapi.io) (SQLite) for storage, YouTube captions fetched in-process via [youtubei.js](https://github.com/LuanRT/YouTube.js). Zero cloud dependencies.
+- **Local-first by design** — [Ollama](https://ollama.com) for inference + embeddings, [Strapi](https://strapi.io) (SQLite) for storage, YouTube captions fetched in-process via [youtubei.js](https://github.com/LuanRT/YouTube.js). Zero cloud dependencies.
 - **Grounded citations, not guesses** — section timecodes are recovered deterministically from the transcript via BM25, not invented by the model. Chat responses ship with an expandable "Sources" panel showing the transcript text behind each citation.
 - **Agentic chat** — streaming chat over [TanStack AI](https://tanstack.com/ai/latest) with a built-in `web_search` tool. Force-trigger with `/web <query>` when you want external context.
-- **Frontier-model bridge via MCP** — Strapi exposes an [MCP server](https://modelcontextprotocol.io) at `/api/mcp` so you can drive the knowledge base from Claude Desktop / Claude Code / Cursor with a bigger model when you need one. 14 tools covering transcripts, videos, tags, notes — defined once in Strapi, no duplication with the in-app chat. See [`docs/mcp.md`](./docs/mcp.md).
+- **Cross-video digests** — synthesize 2–5 videos into structured themes, contradictions, unique insights, and a long-form article. Saved digests are upserted by a deterministic `videoSetKey` so re-saving the same selection updates in place instead of duplicating.
+- **Notes that stick** — "Summarize to note" turns a chat conversation into a markdown note attached to the video. MCP clients (Claude Desktop, etc.) can also leave notes. Every note is markdown; every note renders timecode chips back into the player.
+- **Semantic discovery** — per-video embeddings from the summary layer power "Related videos" on the learn page and library-wide semantic search on the feed. Same `embeddings.ts` infra ready to layer onto transcript chunks for moment-level search.
+- **Frontier-model bridge via MCP** — Strapi exposes an [MCP server](https://modelcontextprotocol.io) at `/api/mcp` so you can drive the knowledge base from Claude Desktop / Claude Code / Cursor with a bigger model when you need one. Tools cover transcripts, videos, tags, notes — defined once in Strapi, no duplication with the in-app chat. See [`docs/mcp.md`](./docs/mcp.md).
 - **Handles long videos** — map-reduce summary pipeline kicks in past ~25K tokens. Transcript caching means regeneration never re-hits YouTube.
 - **Fully TanStack stack** — [TanStack Start](https://tanstack.com/start) (Vite + React 19) + [TanStack Router](https://tanstack.com/router) + TanStack AI + [Tailwind v4](https://tailwindcss.com).
 
@@ -23,7 +26,8 @@ No accounts. No cloud AI. Runs entirely on your machine against a local [Ollama]
 |---|---|
 | Client | [TanStack Start](https://tanstack.com/start), React 19, [Tailwind v4](https://tailwindcss.com), [Radix UI](https://www.radix-ui.com) |
 | AI (in-app) | [TanStack AI](https://tanstack.com/ai/latest) + `@tanstack/ai-ollama` |
-| Model | Any Ollama model — default `gemma4-kb:latest` (custom [Gemma 4](https://ollama.com/library/gemma4) Modelfile, Q4) |
+| Chat/summary model | Any Ollama chat model — default `gemma4-kb:latest` (custom [Gemma 4](https://ollama.com/library/gemma4) Modelfile, Q4) |
+| Embedding model | [`nomic-embed-text`](https://ollama.com/library/nomic-embed-text) via Ollama (768-dim, ~137MB). One vector per video; cosine similarity in-memory |
 | Backend | [Strapi 5](https://strapi.io) (SQLite for dev, Postgres-ready) |
 | MCP server | [`@modelcontextprotocol/sdk`](https://github.com/modelcontextprotocol/sdk) Streamable HTTP transport at `/api/mcp`, auth via Strapi API tokens |
 | Transcripts | [youtubei.js](https://github.com/LuanRT/YouTube.js) directly against YouTube caption tracks |
@@ -38,8 +42,13 @@ No accounts. No cloud AI. Runs entirely on your machine against a local [Ollama]
 # 1. Install everything + copy .env files
 yarn setup
 
-# 2. Pull a model (or bring your own)
-ollama pull gemma4-kb:latest   # or gemma3, llama3.2, qwen2.5 — any chat-capable
+# 2. Pull the models.
+#    Two models by default: a chat/summary model and an embedding model.
+#    The embedding model is small (~137MB) and powers related-videos +
+#    library semantic search. Skipping it just hides those features;
+#    summaries/chat still work.
+ollama pull gemma4-kb:latest   # chat/summary (or gemma3, llama3.2, qwen2.5 — any chat-capable)
+ollama pull nomic-embed-text   # embeddings  (override with OLLAMA_EMBEDDING_MODEL)
 
 # 3. (Optional) Load example videos so the feed isn't empty on first run.
 #    Reads server/seed-data/seed.tar.gz. Only run BEFORE starting Strapi —
@@ -77,11 +86,13 @@ flowchart TD
     C6 --> C7["6. save summary + chunks to Video row"]
 ```
 
-### The three entities
+### The entities
 
 - **Transcript** — immutable, per YouTube videoId. Caption segments + duration + title/author. Created once per video; reused across regenerations.
-- **Video** — your instance. Holds the AI summary, sections, takeaways, action steps, BM25 retrieval index, and your own notes. Links to Transcript.
+- **Video** — your instance. Holds the AI summary, sections, takeaways, action steps, BM25 retrieval index, and a topical embedding. Many-to-many with Tag, Digest, and Note.
 - **Tag** — user-created labels. Lowercase-normalized automatically.
+- **Note** — markdown entry attached to one or more videos. Four sources: `chat` (summarized from an in-app conversation), `digest-chat` (summarized from a cross-video digest chat), `mcp` (written by an external MCP client), `manual` (user-authored scratchpad).
+- **Digest** — structured cross-video synthesis, stored as first-class Strapi components (`sharedThemes`, `uniqueInsights`, `contradictions`, `viewingOrder`, `bottomLine` + `overallTheme`). Optionally carries a long-form `articleMarkdown`. Upserted by `videoSetKey` so the same source-video selection updates one row instead of duplicating.
 
 ### The chat path
 
@@ -120,6 +131,28 @@ e.g. `/web tanstack ai documentation`. The tool call is visible as an expandable
 
 ### Manual timecode override
 **Right-click** any walkthrough section's timecode chip → popover opens with an editable `mm:ss` field + "Use current video time" button (pulled from the YouTube player via IFrame API). Overrides persist on the Video row.
+
+### Read as article
+On any `/learn/$videoId` page, toggle the **Read** tab. Turns the transcript into a clean long-form markdown blog post — filler, sponsor reads, and tangents stripped. Long videos go through a map-reduce pipeline. Generated on-demand on first click, then cached on the Video row.
+
+### Cross-video digests
+1. On `/feed`, click **Create digest** and pick 2–5 videos (summaries required).
+2. Land on `/digest?videos=A,B,C` — the synthesis runs immediately (shared themes, unique insights, contradictions, viewing order, bottom line).
+3. Toggle **Article** for a long-form prose version (click-to-generate).
+4. Click **Save digest** — persists to the `api::digest.digest` collection with structured Strapi components.
+5. Revisits of the same URL hit the saved row instead of re-running the LLM. Regenerate resets in place.
+
+Saved digests live at `/digests` with full-text search (`title` + `description`) and pagination.
+
+### Notes
+From any video chat, click **Summarize to note** — the conversation + full transcript get synthesized into a markdown note attached to the video, written in personal-note voice with preserved `[mm:ss]` timecode chips. The **Notes** tab on the learn page lists every note for that video (chat summaries, digest-chat summaries, MCP-authored notes, manual entries) with delete affordance.
+
+### Related videos + semantic search
+- **Related videos** — bottom of any learn page, thumbnail grid of the semantically closest entries in the library. Cosine over the per-video topical embedding.
+- **Semantic search on the feed** — toggle search mode from **Keyword** (default) to **Semantic** on `/feed`. Query gets embedded, ranked by similarity to each video's topical embedding. Hybrid intent: "find videos about X" → semantic; "find videos mentioning 'Ollama'" → keyword. Per-result `NN%` similarity chips.
+
+### Settings
+`/settings` is the home for app-level infrastructure. Currently hosts the **Semantic embeddings** panel: total/current/stale/missing counts, backfill buttons scoped to `missing`, `stale`, or `all`. Concurrency 3; safe to run anytime.
 
 ---
 
@@ -177,6 +210,8 @@ Full walkthrough (Claude Code, Cursor, MCP Inspector, auth rotation) in [`docs/m
 | `OLLAMA_BASE_URL` | `http://localhost:11434/v1` | Ollama endpoint (the `/v1` suffix is stripped for the TanStack AI adapter, but kept for env-file portability) |
 | `OLLAMA_MODEL` | `gemma4-kb:latest` | Summary generation model |
 | `OLLAMA_CHAT_MODEL` | *(inherits `OLLAMA_MODEL`)* | Separate model for chat Q&A if you want one |
+| `OLLAMA_EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model for related-videos + semantic search. Any Ollama embedding model works — swap + bump `EMBEDDING_VERSION` to force reindex. |
+| `EMBEDDING_VERSION` | `1` | Compound invalidation key alongside `OLLAMA_EMBEDDING_MODEL`. Bump when the text-builder in `client/src/lib/services/embeddings.ts` changes (different fields concatenated, different ordering). Any stored `embeddingVersion` that doesn't match is flagged stale. |
 | `MAP_CONCURRENCY` | `1` | Parallel map-step chunks on long videos. Bump to 2-4 if you have RAM headroom. Must match `OLLAMA_NUM_PARALLEL` on the server side. |
 | `TRANSCRIPT_PROXY_URL` | *(empty)* | Residential proxy for the YouTube caption fetch — only needed if your IP hits a bot wall |
 
@@ -221,8 +256,15 @@ For `APP_KEYS`, generate four and comma-separate them.
 ### All generation is background + cached
 `generateVideoSummary` runs as a fire-and-forget task after a share or regenerate. A single `generationInflight` Set in the server function module dedupes concurrent triggers. If generation fails after the transcript is saved, the next retry starts from AI generation — **YouTube is never re-hit** unless you pass `forceRefetch`.
 
-### Chat uses BM25, not embeddings
-Embeddings would add a model download + vector storage for limited benefit on single-video Q&A where the whole transcript fits in local-model context. BM25 + contextual retrieval + reciprocal rank fusion across rewritten queries delivers solid top-k without the operational overhead. See `client/src/lib/services/transcript.ts`.
+### Two retrieval layers, one app
+- **Chat retrieval = BM25.** Single-video Q&A where the whole transcript fits in the local model's context budget doesn't need dense embeddings. BM25 + contextual retrieval + reciprocal rank fusion across rewritten queries delivers solid top-k without the operational overhead. See `client/src/lib/services/transcript.ts`.
+- **Cross-video discovery = embeddings.** Related-videos (learn page) and library-wide semantic search (`/feed` in Semantic mode) both cosine-rank the per-video topical embedding (title + summary overview + takeaways + section headings + tags). One vector per video, stored as JSON on the Video row — no pgvector, no vector DB. At personal-KB scale (<1000 videos) an in-memory cosine scan runs in ~1–2 ms. See `client/src/lib/services/embeddings.ts`. Both layers use the same Ollama instance with different models (`OLLAMA_MODEL` for chat, `OLLAMA_EMBEDDING_MODEL` for vectors).
+
+### Digest upsert by videoSetKey
+A digest's identity is *the set of source videos it synthesizes*, not a serial ID. Every save computes `videoSetKey = sort(youtubeVideoIds).join(',')` and upserts on that key — re-saving the same `/digest?videos=A,B` URL updates the existing row in place instead of creating duplicates. The loader also checks this key first, so revisiting a saved digest URL renders the cached structured data without re-running the LLM. Regenerate is explicit.
+
+### Embedding invalidation
+Stored vectors carry two invalidation keys: `embeddingModel` (the Ollama model that produced them) and `embeddingVersion` (the text-builder's schema version). A mismatch against either current-env value flags the vector stale; `/settings` offers one-click backfill for missing/stale/all. Graduating to a larger embedding model, or changing what fields feed the embedder, is a two-line env change followed by one click.
 
 ### Timecodes are deterministic, not model-generated
 The model is explicitly instructed NOT to emit timecodes in its output. After generation, each section runs through BM25 against the transcript chunks; the top match's real caption-segment start becomes the section's `timeSec`. Same pattern is used in chat to ground every `[mm:ss]` the model does emit, with drift flagged in the Sources accordion.
@@ -258,5 +300,3 @@ The `server/` and `client/` directories are independent git repos; the monorepo 
 GNU GPL v3 or later. See [LICENSE](./LICENSE) for the full text.
 
 Built by Paul @ [Strapi](https://strapi.io).
-# yt-local-llm-knowledge-base
-# yt-local-llm-knowledge-base-with-mcp
