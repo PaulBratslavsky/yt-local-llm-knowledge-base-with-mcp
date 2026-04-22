@@ -8,7 +8,7 @@ import {
   type RetrievedPassage,
 } from '#/lib/services/ask-library';
 import { buildLibraryTools } from '#/lib/services/library-tools';
-import { OLLAMA_HOST, OLLAMA_CHAT_MODEL as CHAT_MODEL } from '#/lib/env';
+import { OLLAMA_HOST, OLLAMA_SYNTHESIS_MODEL as CHAT_MODEL } from '#/lib/env';
 
 // Streaming library-QA endpoint. Parallels /api/chat in shape:
 //   - AG-UI style SSE (TEXT_MESSAGE_CONTENT + [DONE])
@@ -105,10 +105,19 @@ export const Route = createFileRoute('/api/ask')({
           passages.map((p) => p.video.documentId),
         ).size;
         // Pool = retrieval output (all candidates available for load_passages).
-        // Seed = what actually lands in the initial prompt (2 anchors per video).
-        const seedAnchors = Math.min(passages.length, uniqueVideoCount * 2);
+        // Seed = what actually lands in the initial prompt. formatSeedForPrompt
+        // shows up to SEED_ANCHORS_PER_VIDEO top passages per video; videos
+        // with fewer candidate passages contribute fewer anchors.
+        const SEED_ANCHORS_PER_VIDEO = 3;
+        const perVideoCount = new Map<string, number>();
+        let seedAnchors = 0;
+        for (const p of passages) {
+          const seen = perVideoCount.get(p.video.documentId) ?? 0;
+          if (seen < SEED_ANCHORS_PER_VIDEO) seedAnchors++;
+          perVideoCount.set(p.video.documentId, seen + 1);
+        }
         console.log(
-          `[${new Date().toISOString().slice(11, 23)}] [ask] "${question}" → pool: ${uniqueVideoCount} videos / ${passages.length} passages · seed: ${seedAnchors} anchors → synthesizing`,
+          `[${new Date().toISOString().slice(11, 23)}] [ask/${CHAT_MODEL}] "${question}" → pool: ${uniqueVideoCount} videos / ${passages.length} passages · seed: ${seedAnchors} anchors → synthesizing`,
         );
 
         const userPrompt = [
@@ -141,10 +150,13 @@ export const Route = createFileRoute('/api/ask')({
 
         // Build a combined stream: one CITATIONS frame up front, then
         // the normal chat SSE stream. Both follow the AG-UI-ish shape
-        // the client already knows from /api/chat.
+        // the client already knows from /api/chat. The `model` field is
+        // informational — the client UI ignores it, but the eval
+        // harness captures it so reports record which model answered.
         const citationsFrame = `data: ${JSON.stringify({
           type: 'CITATIONS',
           citations: passages.map(toCitationPayload),
+          model: CHAT_MODEL,
         })}\n\n`;
 
         const baseResponse = toServerSentEventsResponse(stream);

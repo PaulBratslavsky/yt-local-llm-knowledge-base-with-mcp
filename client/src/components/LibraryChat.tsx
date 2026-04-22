@@ -48,7 +48,7 @@ function LibraryChatFAB({ onClick }: Readonly<{ onClick: () => void }>) {
       onClick={onClick}
       aria-label="Ask your library"
       title="Ask your library (⌘K / Ctrl K)"
-      className="fixed bottom-6 right-6 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-[var(--ink)] text-[var(--card)] shadow-[0_8px_24px_rgba(9,9,11,0.25)] transition hover:bg-[var(--ink-soft)]"
+      className="fixed bottom-6 left-6 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-[var(--ink)] text-[var(--card)] shadow-[0_8px_24px_rgba(9,9,11,0.25)] transition hover:bg-[var(--ink-soft)]"
     >
       <svg
         viewBox="0 0 24 24"

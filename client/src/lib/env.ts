@@ -27,6 +27,12 @@ const OLLAMA_HOST = OLLAMA_BASE_URL.replace(/\/v1\/?$/, '');
 
 const OLLAMA_MODEL = readEnv('OLLAMA_MODEL') ?? 'gemma4-kb:latest';
 const OLLAMA_CHAT_MODEL = readEnv('OLLAMA_CHAT_MODEL') ?? OLLAMA_MODEL;
+// Library-wide synthesis (/api/ask) can optionally point at a bigger
+// model than the per-video chat default. Falls back to OLLAMA_CHAT_MODEL
+// so unset = same as today. Recommended overrides for RAG quality:
+// `qwen2.5:7b-instruct`, `llama3.1:8b-instruct-q4_K_M`, `gemma2:9b`.
+const OLLAMA_SYNTHESIS_MODEL =
+  readEnv('OLLAMA_SYNTHESIS_MODEL') ?? OLLAMA_CHAT_MODEL;
 const OLLAMA_EMBEDDING_MODEL =
   readEnv('OLLAMA_EMBEDDING_MODEL') ?? 'nomic-embed-text';
 
@@ -57,7 +63,7 @@ const EMBEDDING_VERSION = 2;
 const PASSAGE_EMBEDDING_VERSION = 3;
 
 const MAP_CONCURRENCY = (() => {
-  const parsed = parseInt(readEnv('MAP_CONCURRENCY') ?? '1', 10);
+  const parsed = Number.parseInt(readEnv('MAP_CONCURRENCY') ?? '1', 10);
   if (!Number.isFinite(parsed) || parsed < 1) return 1;
   return Math.min(parsed, 4);
 })();
@@ -90,6 +96,7 @@ export {
   OLLAMA_HOST,
   OLLAMA_MODEL,
   OLLAMA_CHAT_MODEL,
+  OLLAMA_SYNTHESIS_MODEL,
   OLLAMA_EMBEDDING_MODEL,
   EMBEDDING_VERSION,
   PASSAGE_EMBEDDING_VERSION,
