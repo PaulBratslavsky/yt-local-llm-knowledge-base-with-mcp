@@ -21,6 +21,7 @@ import { Route as VideoDocumentIdRouteImport } from './routes/video.$documentId'
 import { Route as LearnVideoIdRouteImport } from './routes/learn.$videoId'
 import { Route as ApiDigestChatRouteImport } from './routes/api.digest-chat'
 import { Route as ApiChatRouteImport } from './routes/api.chat'
+import { Route as ApiAskRouteImport } from './routes/api.ask'
 
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
@@ -82,6 +83,11 @@ const ApiChatRoute = ApiChatRouteImport.update({
   path: '/api/chat',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiAskRoute = ApiAskRouteImport.update({
+  id: '/api/ask',
+  path: '/api/ask',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -92,6 +98,7 @@ export interface FileRoutesByFullPath {
   '/new-post': typeof NewPostRoute
   '/search': typeof SearchRoute
   '/settings': typeof SettingsRoute
+  '/api/ask': typeof ApiAskRoute
   '/api/chat': typeof ApiChatRoute
   '/api/digest-chat': typeof ApiDigestChatRoute
   '/learn/$videoId': typeof LearnVideoIdRoute
@@ -106,6 +113,7 @@ export interface FileRoutesByTo {
   '/new-post': typeof NewPostRoute
   '/search': typeof SearchRoute
   '/settings': typeof SettingsRoute
+  '/api/ask': typeof ApiAskRoute
   '/api/chat': typeof ApiChatRoute
   '/api/digest-chat': typeof ApiDigestChatRoute
   '/learn/$videoId': typeof LearnVideoIdRoute
@@ -121,6 +129,7 @@ export interface FileRoutesById {
   '/new-post': typeof NewPostRoute
   '/search': typeof SearchRoute
   '/settings': typeof SettingsRoute
+  '/api/ask': typeof ApiAskRoute
   '/api/chat': typeof ApiChatRoute
   '/api/digest-chat': typeof ApiDigestChatRoute
   '/learn/$videoId': typeof LearnVideoIdRoute
@@ -137,6 +146,7 @@ export interface FileRouteTypes {
     | '/new-post'
     | '/search'
     | '/settings'
+    | '/api/ask'
     | '/api/chat'
     | '/api/digest-chat'
     | '/learn/$videoId'
@@ -151,6 +161,7 @@ export interface FileRouteTypes {
     | '/new-post'
     | '/search'
     | '/settings'
+    | '/api/ask'
     | '/api/chat'
     | '/api/digest-chat'
     | '/learn/$videoId'
@@ -165,6 +176,7 @@ export interface FileRouteTypes {
     | '/new-post'
     | '/search'
     | '/settings'
+    | '/api/ask'
     | '/api/chat'
     | '/api/digest-chat'
     | '/learn/$videoId'
@@ -180,6 +192,7 @@ export interface RootRouteChildren {
   NewPostRoute: typeof NewPostRoute
   SearchRoute: typeof SearchRoute
   SettingsRoute: typeof SettingsRoute
+  ApiAskRoute: typeof ApiAskRoute
   ApiChatRoute: typeof ApiChatRoute
   ApiDigestChatRoute: typeof ApiDigestChatRoute
   LearnVideoIdRoute: typeof LearnVideoIdRoute
@@ -272,6 +285,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiChatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/ask': {
+      id: '/api/ask'
+      path: '/api/ask'
+      fullPath: '/api/ask'
+      preLoaderRoute: typeof ApiAskRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -284,6 +304,7 @@ const rootRouteChildren: RootRouteChildren = {
   NewPostRoute: NewPostRoute,
   SearchRoute: SearchRoute,
   SettingsRoute: SettingsRoute,
+  ApiAskRoute: ApiAskRoute,
   ApiChatRoute: ApiChatRoute,
   ApiDigestChatRoute: ApiDigestChatRoute,
   LearnVideoIdRoute: LearnVideoIdRoute,

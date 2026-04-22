@@ -1228,7 +1228,7 @@ function extractLatestUserQuery(messages: ChatMessage[]): string {
 // phrasings that capture the same intent with different vocabulary. The
 // original is always included — rewrites augment, never replace. Failures
 // fall back to the original query alone so retrieval still happens.
-async function rewriteQuery(
+export async function rewriteQuery(
   videoId: string,
   original: string,
 ): Promise<string[]> {

@@ -1,9 +1,12 @@
 import { HeadContent, Scripts, createRootRoute } from '@tanstack/react-router'
 import { TanStackRouterDevtoolsPanel } from '@tanstack/react-router-devtools'
 import { TanStackDevtools } from '@tanstack/react-devtools'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { useState } from 'react'
 import Footer from '../components/Footer'
 import Header from '../components/Header'
 import { BottomNav } from '../components/BottomNav'
+import { LibraryChat } from '../components/LibraryChat'
 
 import appCss from '../styles.css?url'
 
@@ -22,6 +25,21 @@ export const Route = createRootRoute({
 })
 
 function RootDocument({ children }: Readonly<{ children: React.ReactNode }>) {
+  // One QueryClient per app lifetime. Kept in state (not module-level)
+  // so hot reload doesn't recreate it mid-session and wipe the cache.
+  // Defaults: no auto-refetch; most of our data is fetched via route
+  // loaders, useQuery/useMutation here is opt-in where it fits.
+  const [queryClient] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          queries: {
+            refetchOnWindowFocus: false,
+            staleTime: 60_000,
+          },
+        },
+      }),
+  )
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
@@ -32,14 +50,17 @@ function RootDocument({ children }: Readonly<{ children: React.ReactNode }>) {
         suppressHydrationWarning
         className="font-sans antialiased wrap-anywhere selection:bg-[rgba(124,176,105,0.3)]"
       >
-        <Header />
-        {children}
-        <Footer />
-        <BottomNav />
-        <TanStackDevtools
-          config={{ position: 'bottom-right' }}
-          plugins={[{ name: 'Tanstack Router', render: <TanStackRouterDevtoolsPanel /> }]}
-        />
+        <QueryClientProvider client={queryClient}>
+          <Header />
+          {children}
+          <Footer />
+          <BottomNav />
+          <LibraryChat />
+          <TanStackDevtools
+            config={{ position: 'bottom-right' }}
+            plugins={[{ name: 'Tanstack Router', render: <TanStackRouterDevtoolsPanel /> }]}
+          />
+        </QueryClientProvider>
         <Scripts />
       </body>
     </html>
