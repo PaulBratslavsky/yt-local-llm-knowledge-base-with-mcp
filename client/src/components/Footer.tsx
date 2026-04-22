@@ -67,6 +67,12 @@ export default function Footer() {
             >
               About
             </Link>
+            <Link
+              to="/settings"
+              className="text-[var(--ink-soft)] no-underline hover:text-[var(--ink)]"
+            >
+              Settings
+            </Link>
           </div>
           <div className="flex flex-col gap-2">
             <span className="text-xs font-semibold uppercase tracking-wide text-[var(--ink-muted)]">

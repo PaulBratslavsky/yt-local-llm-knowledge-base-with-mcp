@@ -660,6 +660,12 @@ export interface ApiVideoVideo extends Struct.CollectionTypeSchema {
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
     digests: Schema.Attribute.Relation<'manyToMany', 'api::digest.digest'>;
+    embeddingGeneratedAt: Schema.Attribute.DateTime;
+    embeddingModel: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 100;
+      }>;
+    embeddingVersion: Schema.Attribute.Integer;
     keyTakeaways: Schema.Attribute.Component<'content.takeaway', true>;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<'oneToMany', 'api::video.video'> &
@@ -677,6 +683,7 @@ export interface ApiVideoVideo extends Struct.CollectionTypeSchema {
       Schema.Attribute.SetMinMaxLength<{
         maxLength: 500;
       }>;
+    summaryEmbedding: Schema.Attribute.JSON;
     summaryGeneratedAt: Schema.Attribute.DateTime;
     summaryOverview: Schema.Attribute.RichText;
     summaryStatus: Schema.Attribute.Enumeration<

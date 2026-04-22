@@ -27,6 +27,14 @@ const OLLAMA_HOST = OLLAMA_BASE_URL.replace(/\/v1\/?$/, '');
 
 const OLLAMA_MODEL = readEnv('OLLAMA_MODEL') ?? 'gemma4-kb:latest';
 const OLLAMA_CHAT_MODEL = readEnv('OLLAMA_CHAT_MODEL') ?? OLLAMA_MODEL;
+const OLLAMA_EMBEDDING_MODEL =
+  readEnv('OLLAMA_EMBEDDING_MODEL') ?? 'nomic-embed-text';
+
+// Bump this when the text-builder in `embeddings.ts` changes (different fields
+// concatenated, different ordering, etc.). Stored `embeddingVersion` on a Video
+// != this → the vector is stale and must be recomputed. Used alongside
+// `embeddingModel` as a compound invalidation key.
+const EMBEDDING_VERSION = 1;
 
 const MAP_CONCURRENCY = (() => {
   const parsed = parseInt(readEnv('MAP_CONCURRENCY') ?? '1', 10);
@@ -62,5 +70,7 @@ export {
   OLLAMA_HOST,
   OLLAMA_MODEL,
   OLLAMA_CHAT_MODEL,
+  OLLAMA_EMBEDDING_MODEL,
+  EMBEDDING_VERSION,
   MAP_CONCURRENCY,
 };

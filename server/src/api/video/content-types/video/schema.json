@@ -111,6 +111,22 @@
     "transcriptSegments": {
       "type": "json"
     },
+    "summaryEmbedding": {
+      "type": "json",
+      "description": "Topical embedding computed from title + overview + takeaways + section headings + tags. number[] — opaque to the admin; used for relatedVideos and library semantic search."
+    },
+    "embeddingModel": {
+      "type": "string",
+      "maxLength": 100,
+      "description": "Ollama model that produced summaryEmbedding. Compound invalidation key with embeddingVersion — stored != current ⇒ stale ⇒ recompute."
+    },
+    "embeddingVersion": {
+      "type": "integer",
+      "description": "Version of the text-building logic that produced summaryEmbedding. Bumped when the set of fields fed into the embedder changes."
+    },
+    "embeddingGeneratedAt": {
+      "type": "datetime"
+    },
     "keyTakeaways": {
       "type": "component",
       "repeatable": true,

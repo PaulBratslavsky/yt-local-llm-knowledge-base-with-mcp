@@ -105,6 +105,10 @@ export type StrapiVideo = {
   summaryGeneratedAt: string | null;
   aiModel: string | null;
   transcriptSegments: StoredTranscriptIndex | null;
+  summaryEmbedding: number[] | null;
+  embeddingModel: string | null;
+  embeddingVersion: number | null;
+  embeddingGeneratedAt: string | null;
   keyTakeaways: StrapiTakeaway[] | null;
   sections: StrapiSection[] | null;
   actionSteps: StrapiActionStep[] | null;
@@ -191,6 +195,41 @@ function detailQueryParams(): URLSearchParams {
   params.set('populate[actionSteps]', 'true');
   params.set('populate[transcript]', 'true');
   return params;
+}
+
+// Lightweight listing used by embedding-dependent features (backfill,
+// relatedVideos, semantic search). Pulls the fields needed to rebuild the
+// embedding text + the existing vector for comparison — nothing else.
+// Paginates internally so one call returns every eligible row.
+export async function listAllVideosForEmbeddingService(): Promise<StrapiVideo[]> {
+  const pageSize = 100;
+  const all: StrapiVideo[] = [];
+  for (let page = 1; page <= 50; page += 1) {
+    const params = new URLSearchParams();
+    params.set('populate[tags]', 'true');
+    params.set('populate[keyTakeaways]', 'true');
+    params.set('populate[sections]', 'true');
+    params.set('filters[summaryStatus][$eq]', 'generated');
+    params.set('sort', 'createdAt:desc');
+    params.set('pagination[page]', String(page));
+    params.set('pagination[pageSize]', String(pageSize));
+    params.set('pagination[withCount]', 'true');
+    const res = await fetch(`${STRAPI_URL}/api/videos?${params.toString()}`, {
+      headers: strapiHeaders(),
+    });
+    if (!res.ok) {
+      await handleFetchError(res, 'listAllVideosForEmbeddingService');
+      break;
+    }
+    const json = (await res.json()) as {
+      data: StrapiVideo[];
+      meta?: { pagination?: { pageCount?: number } };
+    };
+    all.push(...json.data);
+    const pageCount = json.meta?.pagination?.pageCount ?? 1;
+    if (page >= pageCount) break;
+  }
+  return all;
 }
 
 export async function fetchVideoByDocumentIdService(
@@ -341,6 +380,36 @@ export async function updateVideoSummaryService(
   }
   const json = (await res.json()) as { data: StrapiVideo };
   return { success: true, video: json.data };
+}
+
+// Dedicated writer for embedding fields. Keeping this isolated from the
+// summary write path lets the embedding layer evolve (different storage,
+// pgvector migration, tier-2 passage-level vectors) without touching
+// summary code.
+export async function updateVideoEmbeddingService(input: {
+  documentId: string;
+  embedding: number[];
+  model: string;
+  version: number;
+  generatedAt: string;
+}): Promise<{ success: true } | { success: false; error: string }> {
+  const res = await fetch(`${STRAPI_URL}/api/videos/${input.documentId}`, {
+    method: 'PUT',
+    headers: strapiHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({
+      data: {
+        summaryEmbedding: input.embedding,
+        embeddingModel: input.model,
+        embeddingVersion: input.version,
+        embeddingGeneratedAt: input.generatedAt,
+      },
+    }),
+  });
+  if (!res.ok) {
+    await handleFetchError(res, 'updateVideoEmbeddingService');
+    return { success: false, error: `Strapi error ${res.status}` };
+  }
+  return { success: true };
 }
 
 export async function markSummaryFailedService(documentId: string): Promise<void> {

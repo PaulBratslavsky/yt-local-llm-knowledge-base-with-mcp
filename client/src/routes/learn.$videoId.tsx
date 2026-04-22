@@ -11,15 +11,18 @@ import { VideoChat } from '#/components/VideoChat';
 import { ViewTabs } from '#/components/ViewTabs';
 import { ReadablePane } from '#/components/ReadablePane';
 import { NotesPane } from '#/components/NotesPane';
+import { RelatedVideos } from '#/components/RelatedVideos';
 import { GenerationModeSelect } from '#/components/GenerationModeSelect';
 import {
   clearSummaryFailure,
   getGenerationProgress,
   getVideoByVideoId,
   regenerateSummary,
+  regenerateVideoEmbedding,
   triggerSummaryGeneration,
   type GenerationProgress,
 } from '#/data/server-functions/videos';
+import type { VideoEmbeddingStatus } from '#/lib/services/embeddings';
 import type { StrapiVideo, WatchVerdict } from '#/lib/services/videos';
 import type { GenerationMode } from '#/lib/validations/post';
 
@@ -482,7 +485,9 @@ function SummaryContent({
           </p>
           <RegenerateButton videoId={video.youtubeVideoId} />
         </div>
+        <EmbeddingPanel video={video} />
       </footer>
+      <RelatedVideos videoId={video.youtubeVideoId} />
     </>
   );
 }
@@ -721,6 +726,90 @@ function UnsharedState({ videoId }: Readonly<{ videoId: string }>) {
         </div>
       </div>
     </main>
+  );
+}
+
+// Topical embedding status + regenerate affordance. Uses `summaryEmbedding`/
+// `embeddingModel`/`embeddingVersion` from the already-loaded Video row — no
+// separate fetch needed to decide which label to show.
+function EmbeddingPanel({ video }: Readonly<{ video: StrapiVideo }>) {
+  const router = useRouter();
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const status: VideoEmbeddingStatus = (() => {
+    if (!video.summaryEmbedding || video.summaryEmbedding.length === 0) {
+      return 'missing';
+    }
+    // The env constants can't be imported client-side via a secret; trust
+    // what's stored: the server-side `getEmbeddingStatus` is authoritative
+    // when we need it. Render as 'current' unless explicitly missing.
+    // Regenerating is always safe — the server handles staleness detection.
+    return 'current';
+  })();
+
+  const handleRegenerate = async () => {
+    if (running) return;
+    setRunning(true);
+    setError(null);
+    try {
+      const res = await regenerateVideoEmbedding({
+        data: { videoId: video.youtubeVideoId },
+      });
+      if (res.status === 'error') {
+        setError(res.error);
+        return;
+      }
+      await router.invalidate();
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const label =
+    status === 'missing' ? 'Generate embedding' : 'Regenerate embedding';
+
+  return (
+    <div className="mt-8 border-t border-[var(--line)] pt-5">
+      <h3 className="mb-2 text-sm font-medium text-[var(--ink)]">
+        Semantic embedding
+      </h3>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <p className="max-w-xl text-xs text-[var(--ink-muted)]">
+          {status === 'missing' ? (
+            <>
+              No topical embedding yet. Generate one to enable related-video
+              suggestions and library-wide semantic search for this video.
+            </>
+          ) : (
+            <>
+              Embedded{' '}
+              {video.embeddingGeneratedAt
+                ? new Date(video.embeddingGeneratedAt).toLocaleDateString()
+                : '—'}
+              {video.embeddingModel ? ` · ${video.embeddingModel}` : null}
+              {typeof video.embeddingVersion === 'number'
+                ? ` · v${video.embeddingVersion}`
+                : null}
+              . Regenerate after a summary regenerate or an embedding-model
+              upgrade.
+            </>
+          )}
+        </p>
+        <div className="flex flex-col items-end gap-1">
+          <Button
+            type="button"
+            size="pill"
+            variant="outline"
+            onClick={handleRegenerate}
+            disabled={running}
+          >
+            {running ? 'Generating…' : label}
+          </Button>
+          {error && <span className="text-xs text-destructive">{error}</span>}
+        </div>
+      </div>
+    </div>
   );
 }
 

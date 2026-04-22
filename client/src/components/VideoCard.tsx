@@ -107,6 +107,9 @@ type VideoCardProps = {
   eligible?: boolean;
   disabled?: boolean;
   onToggle?: () => void;
+  // Cosine similarity [0, 1] for the current query — only passed by the
+  // feed page in semantic-search mode. Omitted = no badge.
+  similarityScore?: number;
 };
 
 export function VideoCard({
@@ -116,6 +119,7 @@ export function VideoCard({
   eligible = true,
   disabled = false,
   onToggle,
+  similarityScore,
 }: Readonly<VideoCardProps>) {
   const src = `https://www.youtube-nocookie.com/embed/${video.youtubeVideoId}`;
   const pickable = selectable && eligible && !disabled;
@@ -141,6 +145,14 @@ export function VideoCard({
             Added {relativeTime(video.createdAt)}
           </span>
         </div>
+        {typeof similarityScore === 'number' && (
+          <span
+            className="inline-flex items-center rounded-full border border-[var(--line)] bg-[var(--bg-subtle)] px-2 py-0.5 text-[0.65rem] font-medium tabular-nums text-[var(--ink-muted)]"
+            title="Cosine similarity to your query"
+          >
+            {(similarityScore * 100).toFixed(0)}%
+          </span>
+        )}
         <SummaryStatusBadge video={video} />
         {selectable && (
           <button

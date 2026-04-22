@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as NewPostRouteImport } from './routes/new-post'
 import { Route as FeedRouteImport } from './routes/feed'
 import { Route as DigestsRouteImport } from './routes/digests'
@@ -20,6 +21,11 @@ import { Route as LearnVideoIdRouteImport } from './routes/learn.$videoId'
 import { Route as ApiDigestChatRouteImport } from './routes/api.digest-chat'
 import { Route as ApiChatRouteImport } from './routes/api.chat'
 
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const NewPostRoute = NewPostRouteImport.update({
   id: '/new-post',
   path: '/new-post',
@@ -78,6 +84,7 @@ export interface FileRoutesByFullPath {
   '/digests': typeof DigestsRoute
   '/feed': typeof FeedRoute
   '/new-post': typeof NewPostRoute
+  '/settings': typeof SettingsRoute
   '/api/chat': typeof ApiChatRoute
   '/api/digest-chat': typeof ApiDigestChatRoute
   '/learn/$videoId': typeof LearnVideoIdRoute
@@ -90,6 +97,7 @@ export interface FileRoutesByTo {
   '/digests': typeof DigestsRoute
   '/feed': typeof FeedRoute
   '/new-post': typeof NewPostRoute
+  '/settings': typeof SettingsRoute
   '/api/chat': typeof ApiChatRoute
   '/api/digest-chat': typeof ApiDigestChatRoute
   '/learn/$videoId': typeof LearnVideoIdRoute
@@ -103,6 +111,7 @@ export interface FileRoutesById {
   '/digests': typeof DigestsRoute
   '/feed': typeof FeedRoute
   '/new-post': typeof NewPostRoute
+  '/settings': typeof SettingsRoute
   '/api/chat': typeof ApiChatRoute
   '/api/digest-chat': typeof ApiDigestChatRoute
   '/learn/$videoId': typeof LearnVideoIdRoute
@@ -117,6 +126,7 @@ export interface FileRouteTypes {
     | '/digests'
     | '/feed'
     | '/new-post'
+    | '/settings'
     | '/api/chat'
     | '/api/digest-chat'
     | '/learn/$videoId'
@@ -129,6 +139,7 @@ export interface FileRouteTypes {
     | '/digests'
     | '/feed'
     | '/new-post'
+    | '/settings'
     | '/api/chat'
     | '/api/digest-chat'
     | '/learn/$videoId'
@@ -141,6 +152,7 @@ export interface FileRouteTypes {
     | '/digests'
     | '/feed'
     | '/new-post'
+    | '/settings'
     | '/api/chat'
     | '/api/digest-chat'
     | '/learn/$videoId'
@@ -154,6 +166,7 @@ export interface RootRouteChildren {
   DigestsRoute: typeof DigestsRoute
   FeedRoute: typeof FeedRoute
   NewPostRoute: typeof NewPostRoute
+  SettingsRoute: typeof SettingsRoute
   ApiChatRoute: typeof ApiChatRoute
   ApiDigestChatRoute: typeof ApiDigestChatRoute
   LearnVideoIdRoute: typeof LearnVideoIdRoute
@@ -162,6 +175,13 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/new-post': {
       id: '/new-post'
       path: '/new-post'
@@ -242,6 +262,7 @@ const rootRouteChildren: RootRouteChildren = {
   DigestsRoute: DigestsRoute,
   FeedRoute: FeedRoute,
   NewPostRoute: NewPostRoute,
+  SettingsRoute: SettingsRoute,
   ApiChatRoute: ApiChatRoute,
   ApiDigestChatRoute: ApiDigestChatRoute,
   LearnVideoIdRoute: LearnVideoIdRoute,

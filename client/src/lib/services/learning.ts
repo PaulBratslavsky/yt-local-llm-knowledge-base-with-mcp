@@ -1031,6 +1031,42 @@ export async function generateVideoSummary(
     return updated;
   }
   logPhase(videoId, 'db ✓ saved');
+
+  // Embed the new summary. Best-effort — failure here (Ollama down, model
+  // not pulled, empty content) logs and returns the summary successfully.
+  // The user can retry the embedding alone from the regenerate button on
+  // the learn page; no reason to fail the whole summary over it.
+  try {
+    const embStart = performance.now();
+    const { computeVideoEmbedding } = await import('#/lib/services/embeddings');
+    const { updateVideoEmbeddingService } = await import('#/lib/services/videos');
+    const computed = await computeVideoEmbedding(updated.video);
+    const saved = await updateVideoEmbeddingService({
+      documentId: updated.video.documentId,
+      embedding: computed.embedding,
+      model: computed.model,
+      version: computed.version,
+      generatedAt: computed.generatedAt,
+    });
+    if (!saved.success) {
+      logPhase(videoId, '⚠ embedding save failed', {
+        error: saved.error,
+        took: ms(embStart),
+      });
+    } else {
+      logPhase(videoId, 'embedding ✓ saved', {
+        dims: computed.embedding.length,
+        model: computed.model,
+        version: computed.version,
+        took: ms(embStart),
+      });
+    }
+  } catch (err) {
+    logPhase(videoId, '⚠ embedding skipped', {
+      error: err instanceof Error ? err.message : 'unknown',
+    });
+  }
+
   clearGenerationStep(videoId);
   logPhase(videoId, '✓ generation complete', { took: ms(runStart) });
   return { success: true, data: updated.video };

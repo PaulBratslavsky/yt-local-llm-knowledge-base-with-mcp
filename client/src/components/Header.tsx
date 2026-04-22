@@ -53,6 +53,13 @@ export default function Header() {
           >
             About
           </Link>
+          <Link
+            to="/settings"
+            className="nav-link text-sm"
+            activeProps={{ className: 'nav-link is-active text-sm' }}
+          >
+            Settings
+          </Link>
           {!onNewPost && (
             <Link
               to="/new-post"

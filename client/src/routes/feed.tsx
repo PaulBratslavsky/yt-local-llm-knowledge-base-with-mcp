@@ -3,36 +3,90 @@ import { createFileRoute, Link, useNavigate, useRouter } from '@tanstack/react-r
 import { z } from 'zod';
 import { VideoCard } from '#/components/VideoCard';
 import { Button } from '#/components/ui/button';
-import { getFeed } from '#/data/server-functions/videos';
+import {
+  getFeed,
+  semanticSearchVideos,
+  type SemanticHit,
+} from '#/data/server-functions/videos';
 import {
   DIGEST_MAX_VIDEOS,
   DIGEST_MIN_VIDEOS,
 } from '#/lib/services/digest';
+import type { StrapiVideo } from '#/lib/services/videos';
 
 const FeedSearchSchema = z.object({
   q: z.string().max(200).optional(),
   tag: z.string().max(80).optional(),
   page: z.number().int().min(1).max(1000).optional(),
+  mode: z.enum(['keyword', 'semantic']).optional(),
 });
+
+type SemanticResultShape = {
+  kind: 'semantic';
+  hits: SemanticHit[];
+  query: string;
+};
+
+type KeywordResultShape = {
+  kind: 'keyword';
+  result: {
+    videos: StrapiVideo[];
+    total: number;
+    page: number;
+    pageSize: number;
+    pageCount: number;
+  };
+};
+
+type FeedLoaderData = KeywordResultShape | SemanticResultShape;
 
 export const Route = createFileRoute('/feed')({
   validateSearch: FeedSearchSchema,
-  loaderDeps: ({ search }) => ({ q: search.q, tag: search.tag, page: search.page }),
-  loader: async ({ deps }) => {
+  loaderDeps: ({ search }) => ({
+    q: search.q,
+    tag: search.tag,
+    page: search.page,
+    mode: search.mode,
+  }),
+  loader: async ({ deps }): Promise<FeedLoaderData> => {
+    // Semantic mode requires a query. With no query the mode toggle is
+    // irrelevant — fall back to the normal feed listing.
+    if (deps.mode === 'semantic' && deps.q) {
+      const res = await semanticSearchVideos({
+        data: { query: deps.q, limit: 30 },
+      });
+      if (res.status === 'ok') {
+        return { kind: 'semantic', hits: res.hits, query: deps.q };
+      }
+      // On semantic failure (Ollama down, model missing), degrade to keyword.
+    }
     const result = await getFeed({
       data: { q: deps.q, tag: deps.tag, page: deps.page ?? 1, pageSize: 20 },
     });
-    return { result };
+    return { kind: 'keyword', result };
   },
   component: FeedPage,
   head: () => ({ meta: [{ title: 'Feed · YT Knowledge Base' }] }),
 });
 
 function FeedPage() {
-  const { result } = Route.useLoaderData();
+  const loaderData = Route.useLoaderData();
   const search = Route.useSearch();
   const navigate = useNavigate();
   const router = useRouter();
+
+  // Normalize both shapes (keyword paginated, semantic ranked) into a common
+  // list for the rest of the render. Pagination only exists for keyword.
+  const videos =
+    loaderData.kind === 'keyword'
+      ? loaderData.result.videos
+      : loaderData.hits.map((h) => h.video);
+  const scores =
+    loaderData.kind === 'semantic'
+      ? new Map(
+          loaderData.hits.map((h) => [h.video.documentId, h.score] as const),
+        )
+      : null;
 
   // Selection mode is page-local state. Switching tags/search keeps the
   // current selection because the component doesn't remount — only the
@@ -41,20 +95,18 @@ function FeedPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   // Poll the loader while any card is `pending` so summaries flip to
-  // "generated" on the feed without a manual refresh. Triggers on:
-  //   - a fresh ingest (the new row is pending until the background job
-  //     completes)
-  //   - regenerate from the card (the server function kicks off a job and
-  //     returns immediately; the card's status flips to pending)
-  // Cleared the moment nothing is pending anymore.
+  // "generated" on the feed without a manual refresh. Only relevant in
+  // keyword mode — semantic-search results always have generated summaries
+  // (the loader requires it).
   useEffect(() => {
-    const anyPending = result.videos.some((v) => v.summaryStatus === 'pending');
+    if (loaderData.kind !== 'keyword') return;
+    const anyPending = videos.some((v) => v.summaryStatus === 'pending');
     if (!anyPending) return;
     const id = globalThis.setInterval(() => {
       void router.invalidate();
     }, 3000);
     return () => globalThis.clearInterval(id);
-  }, [result.videos, router]);
+  }, [loaderData.kind, videos, router]);
 
   // Escape cancels selection mode, matching the intuitive pattern.
   useEffect(() => {
@@ -112,7 +164,7 @@ function FeedPage() {
             <br />
             <span className="text-[var(--ink-muted)]">summarized.</span>
           </h1>
-          {!selectionMode && result.videos.length > 0 && (
+          {!selectionMode && videos.length > 0 && (
             <Button
               size="pill"
               variant="outline"
@@ -124,7 +176,11 @@ function FeedPage() {
         </div>
       </header>
 
-      <SearchBar q={search.q ?? ''} tag={search.tag} />
+      <SearchBar
+        q={search.q ?? ''}
+        tag={search.tag}
+        mode={search.mode ?? 'keyword'}
+      />
 
       {search.tag && <ActiveTagPill tag={search.tag} />}
 
@@ -135,24 +191,44 @@ function FeedPage() {
         </div>
       )}
 
-      {result.videos.length === 0 ? (
-        <EmptyFeed q={search.q} tag={search.tag} />
+      {videos.length === 0 ? (
+        <EmptyFeed
+          q={search.q}
+          tag={search.tag}
+          mode={loaderData.kind === 'semantic' ? 'semantic' : 'keyword'}
+        />
       ) : (
         <>
           <div className="mb-4 flex items-center justify-between text-sm text-[var(--ink-muted)]">
-            <span>
-              {result.total} {result.total === 1 ? 'video' : 'videos'}
-            </span>
-            <span>
-              Page {result.page} of {Math.max(1, result.pageCount)}
-            </span>
+            {loaderData.kind === 'keyword' ? (
+              <>
+                <span>
+                  {loaderData.result.total}{' '}
+                  {loaderData.result.total === 1 ? 'video' : 'videos'}
+                </span>
+                <span>
+                  Page {loaderData.result.page} of{' '}
+                  {Math.max(1, loaderData.result.pageCount)}
+                </span>
+              </>
+            ) : (
+              <>
+                <span>
+                  {videos.length} semantic{' '}
+                  {videos.length === 1 ? 'match' : 'matches'} for
+                  &ldquo;{loaderData.query}&rdquo;
+                </span>
+                <span>Ranked by similarity</span>
+              </>
+            )}
           </div>
           <section className="grid items-start gap-5 sm:grid-cols-2 lg:grid-cols-3">
-            {result.videos.map((video) => {
+            {videos.map((video) => {
               const eligible = video.summaryStatus === 'generated';
               const isSelected = selected.has(video.youtubeVideoId);
               const atCap =
                 selected.size >= DIGEST_MAX_VIDEOS && !isSelected;
+              const score = scores?.get(video.documentId);
               return (
                 <VideoCard
                   key={video.documentId}
@@ -162,16 +238,19 @@ function FeedPage() {
                   eligible={eligible}
                   disabled={atCap}
                   onToggle={() => toggleSelected(video.youtubeVideoId)}
+                  similarityScore={score}
                 />
               );
             })}
           </section>
-          <Pagination
-            currentPage={result.page}
-            pageCount={result.pageCount}
-            q={search.q}
-            tag={search.tag}
-          />
+          {loaderData.kind === 'keyword' && (
+            <Pagination
+              currentPage={loaderData.result.page}
+              pageCount={loaderData.result.pageCount}
+              q={search.q}
+              tag={search.tag}
+            />
+          )}
         </>
       )}
 
@@ -222,21 +301,65 @@ function DigestSelectionBar({
   );
 }
 
-function SearchBar({ q, tag }: Readonly<{ q: string; tag?: string }>) {
+function SearchBar({
+  q,
+  tag,
+  mode,
+}: Readonly<{ q: string; tag?: string; mode: 'keyword' | 'semantic' }>) {
   return (
-    <form method="get" action="/feed" className="mb-6 flex flex-wrap gap-2">
-      <input
-        type="search"
-        name="q"
-        defaultValue={q}
-        placeholder="Search titles, channels, captions…"
-        className="h-10 min-w-0 flex-1 rounded-full border border-[var(--line)] bg-[var(--card)] px-4 text-sm text-[var(--ink)] placeholder:text-[var(--ink-muted)] focus:border-[var(--line-strong)] focus:outline-none"
-      />
-      {tag && <input type="hidden" name="tag" value={tag} />}
-      <Button type="submit" size="pill">
-        Search
-      </Button>
+    <form method="get" action="/feed" className="mb-6 grid gap-2">
+      <div className="flex flex-wrap gap-2">
+        <input
+          type="search"
+          name="q"
+          defaultValue={q}
+          placeholder={
+            mode === 'semantic'
+              ? 'Describe what you\'re looking for…'
+              : 'Search titles, channels, captions…'
+          }
+          className="h-10 min-w-0 flex-1 rounded-full border border-[var(--line)] bg-[var(--card)] px-4 text-sm text-[var(--ink)] placeholder:text-[var(--ink-muted)] focus:border-[var(--line-strong)] focus:outline-none"
+        />
+        {tag && <input type="hidden" name="tag" value={tag} />}
+        <Button type="submit" size="pill">
+          Search
+        </Button>
+      </div>
+      <SearchModeToggle mode={mode} />
     </form>
+  );
+}
+
+function SearchModeToggle({ mode }: Readonly<{ mode: 'keyword' | 'semantic' }>) {
+  return (
+    <div className="flex items-center gap-2 text-xs text-[var(--ink-muted)]">
+      <span>Mode:</span>
+      <label className="inline-flex cursor-pointer items-center gap-1">
+        <input
+          type="radio"
+          name="mode"
+          value="keyword"
+          defaultChecked={mode === 'keyword'}
+          className="accent-[var(--accent)]"
+        />
+        <span>Keyword</span>
+      </label>
+      <label className="inline-flex cursor-pointer items-center gap-1">
+        <input
+          type="radio"
+          name="mode"
+          value="semantic"
+          defaultChecked={mode === 'semantic'}
+          className="accent-[var(--accent)]"
+        />
+        <span>
+          Semantic{' '}
+          <span className="text-[var(--ink-muted)]">
+            (embeddings · meaning-based)
+          </span>
+        </span>
+      </label>
+    </div>
   );
 }
 
@@ -288,8 +411,17 @@ function Pagination({
   );
 }
 
-function EmptyFeed({ q, tag }: Readonly<{ q?: string; tag?: string }>) {
+function EmptyFeed({
+  q,
+  tag,
+  mode,
+}: Readonly<{
+  q?: string;
+  tag?: string;
+  mode: 'keyword' | 'semantic';
+}>) {
   const filtered = Boolean(q || tag);
+  const semanticEmpty = mode === 'semantic' && Boolean(q);
   return (
     <section className="mx-auto max-w-lg rounded-2xl border border-[var(--line)] bg-[var(--card)] p-10 text-center">
       <p className="text-xs font-medium uppercase tracking-wide text-[var(--ink-muted)]">
@@ -299,9 +431,11 @@ function EmptyFeed({ q, tag }: Readonly<{ q?: string; tag?: string }>) {
         {filtered ? 'Try a different search.' : 'Share the first video.'}
       </h2>
       <p className="mt-3 text-sm text-[var(--ink-soft)]">
-        {filtered
-          ? 'Or clear the filter to see everything.'
-          : 'Paste a YouTube URL to seed the knowledge base. The AI summary runs in the background.'}
+        {semanticEmpty
+          ? 'Nothing in the library clears the similarity threshold. Try different wording, or switch to keyword mode.'
+          : filtered
+            ? 'Or clear the filter to see everything.'
+            : 'Paste a YouTube URL to seed the knowledge base. The AI summary runs in the background.'}
       </p>
       <div className="mt-6 flex justify-center gap-2">
         {filtered ? (

@@ -5,14 +5,25 @@ import {
   fetchFeedService,
   fetchVideoByDocumentIdService,
   fetchVideoByVideoIdService,
+  listAllVideosForEmbeddingService,
   markSummaryFailedService,
   markSummaryPendingService,
   searchTagsService,
   updateSectionTimecodeService,
+  updateVideoEmbeddingService,
   type PaginatedVideos,
   type StrapiTag,
   type StrapiVideo,
 } from '#/lib/services/videos';
+import {
+  computeVideoEmbedding,
+  cosineSimilarity,
+  embedText,
+  embeddingStatus,
+  CURRENT_EMBEDDING_MODEL,
+  CURRENT_EMBEDDING_VERSION,
+  type VideoEmbeddingStatus,
+} from '#/lib/services/embeddings';
 import {
   fetchYouTubeMeta,
   generateVideoSummary,
@@ -460,6 +471,367 @@ export const getChatResponseEvidence = createServerFn({ method: 'POST' })
       data.responseText,
       video.transcriptSegments.bm25,
     );
+  });
+
+// =============================================================================
+// Embeddings
+//
+// - `getEmbeddingStatus` — quick check for the UI (missing / stale / current)
+//   without pulling the full vector.
+// - `regenerateVideoEmbedding` — recompute + persist, used by the button on
+//   the learn page when the embedding is missing or stale.
+// =============================================================================
+
+const VideoIdOnlySchema = z.object({
+  videoId: z.string().min(1).max(64),
+});
+
+export type EmbeddingStatusResult =
+  | {
+      status: VideoEmbeddingStatus;
+      generatedAt: string | null;
+      model: string | null;
+      version: number | null;
+      currentModel: string;
+      currentVersion: number;
+    }
+  | { status: 'error'; error: string };
+
+export const getEmbeddingStatus = createServerFn({ method: 'GET' })
+  .inputValidator((data: z.input<typeof VideoIdOnlySchema>) =>
+    VideoIdOnlySchema.parse(data),
+  )
+  .handler(async ({ data }): Promise<EmbeddingStatusResult> => {
+    const video = await fetchVideoByVideoIdService(data.videoId);
+    if (!video) return { status: 'error', error: 'Video not found' };
+    return {
+      status: embeddingStatus(video),
+      generatedAt: video.embeddingGeneratedAt,
+      model: video.embeddingModel,
+      version: video.embeddingVersion,
+      currentModel: CURRENT_EMBEDDING_MODEL,
+      currentVersion: CURRENT_EMBEDDING_VERSION,
+    };
+  });
+
+export type RegenerateEmbeddingResult =
+  | {
+      status: 'ok';
+      dims: number;
+      model: string;
+      version: number;
+      generatedAt: string;
+    }
+  | { status: 'error'; error: string };
+
+export const regenerateVideoEmbedding = createServerFn({ method: 'POST' })
+  .inputValidator((data: z.input<typeof VideoIdOnlySchema>) =>
+    VideoIdOnlySchema.parse(data),
+  )
+  .handler(async ({ data }): Promise<RegenerateEmbeddingResult> => {
+    const video = await fetchVideoByVideoIdService(data.videoId);
+    if (!video) return { status: 'error', error: 'Video not found' };
+    if (video.summaryStatus !== 'generated') {
+      return {
+        status: 'error',
+        error: 'Summary not ready — generate the summary before embedding.',
+      };
+    }
+    try {
+      const computed = await computeVideoEmbedding(video);
+      const saved = await updateVideoEmbeddingService({
+        documentId: video.documentId,
+        embedding: computed.embedding,
+        model: computed.model,
+        version: computed.version,
+        generatedAt: computed.generatedAt,
+      });
+      if (!saved.success) {
+        return { status: 'error', error: saved.error };
+      }
+      return {
+        status: 'ok',
+        dims: computed.embedding.length,
+        model: computed.model,
+        version: computed.version,
+        generatedAt: computed.generatedAt,
+      };
+    } catch (err) {
+      return {
+        status: 'error',
+        error: err instanceof Error ? err.message : 'Embedding failed',
+      };
+    }
+  });
+
+// =============================================================================
+// Embedding coverage — quick stats for the UI ("N/M videos embedded").
+// =============================================================================
+
+export type EmbeddingCoverage = {
+  total: number;
+  current: number;
+  stale: number;
+  missing: number;
+  currentModel: string;
+  currentVersion: number;
+};
+
+export const getEmbeddingCoverage = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<EmbeddingCoverage> => {
+    const videos = await listAllVideosForEmbeddingService();
+    let current = 0;
+    let stale = 0;
+    let missing = 0;
+    for (const v of videos) {
+      const s = embeddingStatus(v);
+      if (s === 'current') current += 1;
+      else if (s === 'stale') stale += 1;
+      else missing += 1;
+    }
+    return {
+      total: videos.length,
+      current,
+      stale,
+      missing,
+      currentModel: CURRENT_EMBEDDING_MODEL,
+      currentVersion: CURRENT_EMBEDDING_VERSION,
+    };
+  },
+);
+
+// =============================================================================
+// Backfill — walk videos and compute embeddings for anything that doesn't
+// have a current vector. `scope` controls which rows to touch:
+//   'missing' — only rows with no vector at all (default; safest)
+//   'stale'   — only rows whose model/version doesn't match current
+//   'all'     — 'missing' ∪ 'stale'
+//
+// Concurrency is bounded (3) — Ollama's /api/embeddings serializes anyway
+// and we don't want to overwhelm a laptop running Gemma + embeddings at
+// the same time.
+// =============================================================================
+
+const ReindexSchema = z.object({
+  scope: z.enum(['missing', 'stale', 'all']).default('missing'),
+});
+
+export type ReindexResult = {
+  status: 'ok';
+  scope: 'missing' | 'stale' | 'all';
+  total: number;
+  targeted: number;
+  succeeded: number;
+  failed: number;
+  errors: Array<{ youtubeVideoId: string; error: string }>;
+  tookMs: number;
+};
+
+export const reindexAllEmbeddings = createServerFn({ method: 'POST' })
+  .inputValidator((data: z.input<typeof ReindexSchema>) =>
+    ReindexSchema.parse(data),
+  )
+  .handler(async ({ data }): Promise<ReindexResult> => {
+    const started = performance.now();
+    const videos = await listAllVideosForEmbeddingService();
+
+    const candidates = videos.filter((v) => {
+      const s = embeddingStatus(v);
+      if (data.scope === 'missing') return s === 'missing';
+      if (data.scope === 'stale') return s === 'stale';
+      return s !== 'current';
+    });
+
+    const errors: Array<{ youtubeVideoId: string; error: string }> = [];
+    let succeeded = 0;
+    let cursor = 0;
+    const CONCURRENCY = 3;
+
+    const processOne = async (video: StrapiVideo) => {
+      try {
+        const computed = await computeVideoEmbedding(video);
+        const saved = await updateVideoEmbeddingService({
+          documentId: video.documentId,
+          embedding: computed.embedding,
+          model: computed.model,
+          version: computed.version,
+          generatedAt: computed.generatedAt,
+        });
+        if (!saved.success) {
+          errors.push({ youtubeVideoId: video.youtubeVideoId, error: saved.error });
+          return;
+        }
+        succeeded += 1;
+      } catch (err) {
+        errors.push({
+          youtubeVideoId: video.youtubeVideoId,
+          error: err instanceof Error ? err.message : 'embed failed',
+        });
+      }
+    };
+
+    const workers = Array.from({ length: CONCURRENCY }, async () => {
+      while (true) {
+        const i = cursor++;
+        if (i >= candidates.length) return;
+        await processOne(candidates[i]);
+      }
+    });
+    await Promise.all(workers);
+
+    return {
+      status: 'ok',
+      scope: data.scope,
+      total: videos.length,
+      targeted: candidates.length,
+      succeeded,
+      failed: errors.length,
+      errors,
+      tookMs: Math.round(performance.now() - started),
+    };
+  });
+
+// =============================================================================
+// relatedVideos — semantic neighbors for one video. In-memory cosine over all
+// current-vector rows in the library. Returns minimal video metadata + score.
+// =============================================================================
+
+const RelatedVideosSchema = z.object({
+  videoId: z.string().min(1).max(64),
+  limit: z.number().int().min(1).max(50).optional(),
+  minScore: z.number().min(-1).max(1).optional(),
+});
+
+export type RelatedVideo = {
+  documentId: string;
+  youtubeVideoId: string;
+  videoTitle: string | null;
+  videoAuthor: string | null;
+  videoThumbnailUrl: string | null;
+  score: number;
+};
+
+export type RelatedVideosResult =
+  | { status: 'ok'; results: RelatedVideo[]; reason?: undefined }
+  | {
+      status: 'ok';
+      results: [];
+      reason: 'target-missing-embedding' | 'no-candidates';
+    }
+  | { status: 'error'; error: string };
+
+export const relatedVideos = createServerFn({ method: 'GET' })
+  .inputValidator((data: z.input<typeof RelatedVideosSchema>) =>
+    RelatedVideosSchema.parse(data),
+  )
+  .handler(async ({ data }): Promise<RelatedVideosResult> => {
+    const target = await fetchVideoByVideoIdService(data.videoId);
+    if (!target) return { status: 'error', error: 'Video not found' };
+    if (embeddingStatus(target) !== 'current') {
+      return {
+        status: 'ok',
+        results: [],
+        reason: 'target-missing-embedding',
+      };
+    }
+    const targetVec = target.summaryEmbedding as number[];
+
+    const all = await listAllVideosForEmbeddingService();
+    const limit = data.limit ?? 6;
+    const minScore = data.minScore ?? 0.5;
+
+    const candidates = all.filter(
+      (v) =>
+        v.documentId !== target.documentId &&
+        embeddingStatus(v) === 'current' &&
+        Array.isArray(v.summaryEmbedding),
+    );
+
+    if (candidates.length === 0) {
+      return { status: 'ok', results: [], reason: 'no-candidates' };
+    }
+
+    const scored = candidates
+      .map((v) => ({
+        v,
+        score: cosineSimilarity(targetVec, v.summaryEmbedding as number[]),
+      }))
+      .filter((x) => x.score >= minScore)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit);
+
+    const results: RelatedVideo[] = scored.map(({ v, score }) => ({
+      documentId: v.documentId,
+      youtubeVideoId: v.youtubeVideoId,
+      videoTitle: v.videoTitle,
+      videoAuthor: v.videoAuthor,
+      videoThumbnailUrl: v.videoThumbnailUrl,
+      score,
+    }));
+
+    return { status: 'ok', results };
+  });
+
+// =============================================================================
+// semanticSearchVideos — library-wide semantic search. Same cosine path as
+// relatedVideos but seeded from an ad-hoc query string instead of a video.
+// =============================================================================
+
+const SemanticSearchSchema = z.object({
+  query: z.string().min(1).max(500),
+  limit: z.number().int().min(1).max(50).optional(),
+  minScore: z.number().min(-1).max(1).optional(),
+});
+
+// Hit = full Video row + similarity score. Returning the full row lets the
+// feed render its normal VideoCard with verdict/status unchanged.
+export type SemanticHit = { video: StrapiVideo; score: number };
+
+export type SemanticSearchResult =
+  | { status: 'ok'; hits: SemanticHit[] }
+  | { status: 'error'; error: string };
+
+export const semanticSearchVideos = createServerFn({ method: 'GET' })
+  .inputValidator((data: z.input<typeof SemanticSearchSchema>) =>
+    SemanticSearchSchema.parse(data),
+  )
+  .handler(async ({ data }): Promise<SemanticSearchResult> => {
+    let qVec: number[];
+    try {
+      qVec = await embedText(data.query);
+    } catch (err) {
+      return {
+        status: 'error',
+        error: err instanceof Error ? err.message : 'query embedding failed',
+      };
+    }
+
+    const all = await listAllVideosForEmbeddingService();
+    const limit = data.limit ?? 20;
+    const minScore = data.minScore ?? 0.35;
+
+    const candidates = all.filter(
+      (v) =>
+        embeddingStatus(v) === 'current' && Array.isArray(v.summaryEmbedding),
+    );
+
+    const hits = candidates
+      .map((video) => ({
+        video,
+        score: cosineSimilarity(qVec, video.summaryEmbedding as number[]),
+      }))
+      .filter((x) => x.score >= minScore)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit);
+
+    // Strip the embedding from the returned rows — the client doesn't need
+    // to ship 768-dim vectors in the JSON response, and it bloats the feed.
+    const lightened: SemanticHit[] = hits.map(({ video, score }) => ({
+      video: { ...video, summaryEmbedding: null },
+      score,
+    }));
+
+    return { status: 'ok', hits: lightened };
   });
 
 // =============================================================================
