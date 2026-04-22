@@ -218,7 +218,16 @@ function MessageRow({ message }: Readonly<{ message: ChatMessage }>) {
 }
 
 function AssistantMessage({ message }: Readonly<{ message: ChatMessage }>) {
-  const citations = message.citations ?? [];
+  const allCitations = message.citations ?? [];
+  // Show only citations the model actually referenced via [N] markers in
+  // the answer. Progressive retrieval means the candidate pool is ~15
+  // passages wide, but the model often cites only 2–6 of them — the
+  // disclosure should reflect what was used, not what was available.
+  const referenced = extractReferencedIndices(message.content);
+  const citations =
+    message.status === 'done' && referenced.size > 0
+      ? allCitations.filter((c) => referenced.has(c.index))
+      : allCitations;
   if (message.status === 'pending') {
     return (
       <div className="max-w-full">
@@ -257,7 +266,7 @@ function AssistantMessage({ message }: Readonly<{ message: ChatMessage }>) {
       {citations.length > 0 && message.status === 'done' && (
         <details className="mt-3 rounded-lg border border-[var(--line)] bg-[var(--bg-subtle)] p-3">
           <summary className="cursor-pointer text-xs font-medium text-[var(--ink-muted)]">
-            {citations.length} source {citations.length === 1 ? 'passage' : 'passages'}
+            {formatCitationSummary(citations)}
           </summary>
           <div className="mt-3 grid gap-2">
             {citations.map((c) => (
@@ -268,6 +277,21 @@ function AssistantMessage({ message }: Readonly<{ message: ChatMessage }>) {
       )}
     </div>
   );
+}
+
+// Collect the set of citation indices the model actually referenced
+// via `[N]` markers in the answer text. Used to trim the citations
+// disclosure down to what was used, instead of every candidate the
+// retriever surfaced.
+function extractReferencedIndices(text: string): Set<number> {
+  const seen = new Set<number>();
+  const re = /\[(\d+)\]/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const n = parseInt(m[1], 10);
+    if (!Number.isNaN(n)) seen.add(n);
+  }
+  return seen;
 }
 
 // Walk the streamed answer text and replace `[N]` markers with markdown
@@ -314,6 +338,12 @@ function CitationCard({ citation }: Readonly<{ citation: Citation }>) {
       </div>
     </Link>
   );
+}
+
+function formatCitationSummary(citations: Citation[]): string {
+  const videos = new Set(citations.map((c) => c.videoDocumentId)).size;
+  const passages = citations.length;
+  return `${videos} ${videos === 1 ? 'video' : 'videos'} · ${passages} ${passages === 1 ? 'passage' : 'passages'}`;
 }
 
 function formatMmss(sec: number): string {

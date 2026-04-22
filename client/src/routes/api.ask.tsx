@@ -3,10 +3,11 @@ import { chat, toServerSentEventsResponse } from '@tanstack/ai';
 import { createOllamaChat } from '@tanstack/ai-ollama';
 import {
   ASK_LIBRARY_SYSTEM,
-  formatPassagesForPrompt,
+  formatSeedForPrompt,
   retrievePassagesForQuery,
   type RetrievedPassage,
 } from '#/lib/services/ask-library';
+import { buildLibraryTools } from '#/lib/services/library-tools';
 import { OLLAMA_HOST, OLLAMA_CHAT_MODEL as CHAT_MODEL } from '#/lib/env';
 
 // Streaming library-QA endpoint. Parallels /api/chat in shape:
@@ -98,23 +99,38 @@ export const Route = createFileRoute('/api/ask')({
           });
         }
 
+        const uniqueVideoCount = new Set(
+          passages.map((p) => p.video.documentId),
+        ).size;
         console.log(
-          `[${new Date().toISOString().slice(11, 23)}] [ask] "${question}" → ${passages.length} passages → synthesizing`,
+          `[${new Date().toISOString().slice(11, 23)}] [ask] "${question}" → ${uniqueVideoCount} videos / ${passages.length} passages → synthesizing`,
         );
 
         const userPrompt = [
           `Question: ${question}`,
           '',
-          formatPassagesForPrompt(passages),
+          formatSeedForPrompt(passages),
         ].join('\n');
 
         const adapter = createOllamaChat(CHAT_MODEL, OLLAMA_HOST);
+        // Progressive retrieval: the model only sees #1 candidate's
+        // passages up-front. The `load_passages` tool (built per-request
+        // with the pool closed over) lets it expand to any of the 4
+        // remaining candidates. `search_library`, `get_video_details`,
+        // `list_videos_by_topic` stay as escape hatches.
+        //
+        // Reliability caveat: Gemma 4B tool-calling is probabilistic.
+        // The #1-candidate passages are the safety net — even if the
+        // model never calls load_passages, the answer is grounded in
+        // the single best source.
+        const tools = buildLibraryTools({ pool: passages });
         const stream = chat({
           adapter,
           messages: [
             { role: 'system', content: ASK_LIBRARY_SYSTEM },
             { role: 'user', content: userPrompt },
           ] as never,
+          tools,
           temperature: 0.2,
         });
 
