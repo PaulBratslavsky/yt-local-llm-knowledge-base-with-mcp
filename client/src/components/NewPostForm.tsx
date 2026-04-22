@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useForm } from '@tanstack/react-form';
 import { useRouter } from '@tanstack/react-router';
 import { Button } from '#/components/ui/button';
@@ -6,12 +6,17 @@ import { Label } from '#/components/ui/label';
 import { Textarea } from '#/components/ui/textarea';
 import { FieldText } from '#/components/forms/FieldText';
 import { GenerationModeSelect } from '#/components/GenerationModeSelect';
-import { shareVideo } from '#/data/server-functions/videos';
+import {
+  shareVideo,
+  suggestTagsForUrl,
+} from '#/data/server-functions/videos';
 import {
   ShareVideoFormSchema,
+  extractYouTubeVideoId,
   type GenerationMode,
   type ShareVideoFormValues,
 } from '#/lib/validations/post';
+import type { SuggestedTag } from '#/lib/services/embeddings';
 
 // Share-a-video form. Paste a YouTube URL, add an optional caption + tags.
 // The server function extracts the video id, fetches oEmbed metadata,
@@ -60,6 +65,23 @@ export function NewPostForm() {
     },
   });
 
+  // Append a tag to the comma-separated `tags` field. De-dupes case-
+  // insensitively. Reads the current tag string through the form state
+  // snapshot; the render subtree below subscribes for reactivity.
+  const addTag = (tag: string) => {
+    const current = form.state.values.tags;
+    const parts = current
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const exists = parts.some(
+      (p: string) => p.toLowerCase() === tag.toLowerCase(),
+    );
+    if (exists) return;
+    const next = [...parts, tag].join(', ');
+    form.setFieldValue('tags', next);
+  };
+
   return (
     <form
       onSubmit={(e) => {
@@ -100,16 +122,33 @@ export function NewPostForm() {
         </form.Field>
       </div>
 
-      <form.Field name="tags">
-        {(field) => (
-          <FieldText
-            field={field}
-            label="Tags (comma-separated)"
-            placeholder="ai, productivity, python"
-            disabled={form.state.isSubmitting}
-          />
-        )}
-      </form.Field>
+      <div className="grid gap-2">
+        <form.Field name="tags">
+          {(field) => (
+            <FieldText
+              field={field}
+              label="Tags (comma-separated)"
+              placeholder="ai, productivity, python"
+              disabled={form.state.isSubmitting}
+            />
+          )}
+        </form.Field>
+        <form.Subscribe
+          selector={(s: { values: { url: string; tags: string } }) => ({
+            url: s.values.url,
+            tags: s.values.tags,
+          })}
+        >
+          {({ url, tags }: { url: string; tags: string }) => (
+            <SuggestedTagsRow
+              url={url}
+              tagsValue={tags}
+              onAddTag={addTag}
+              disabled={form.state.isSubmitting}
+            />
+          )}
+        </form.Subscribe>
+      </div>
 
       <form.Field name="mode">
         {(field) => (
@@ -137,5 +176,95 @@ export function NewPostForm() {
         </Button>
       </div>
     </form>
+  );
+}
+
+// Debounced suggestion row. Calls `suggestTagsForUrl` 600ms after the URL
+// settles; quietly renders nothing when the library is empty, the URL
+// can't be parsed, or Ollama can't embed. Never blocks the form.
+function SuggestedTagsRow({
+  url,
+  tagsValue,
+  onAddTag,
+  disabled,
+}: Readonly<{
+  url: string;
+  tagsValue: string;
+  onAddTag: (tag: string) => void;
+  disabled: boolean;
+}>) {
+  const [state, setState] = useState<
+    | { kind: 'idle' }
+    | { kind: 'loading' }
+    | { kind: 'ready'; suggestions: SuggestedTag[] }
+  >({ kind: 'idle' });
+
+  useEffect(() => {
+    const videoId = extractYouTubeVideoId(url);
+    if (!videoId) {
+      setState({ kind: 'idle' });
+      return;
+    }
+    setState({ kind: 'loading' });
+    const handle = window.setTimeout(async () => {
+      const res = await suggestTagsForUrl({ data: { url } });
+      if (res.status !== 'ok') {
+        setState({ kind: 'ready', suggestions: [] });
+        return;
+      }
+      setState({ kind: 'ready', suggestions: res.suggestions });
+    }, 600);
+    return () => window.clearTimeout(handle);
+  }, [url]);
+
+  if (state.kind === 'idle') return null;
+  if (state.kind === 'loading') {
+    return (
+      <p className="text-xs text-[var(--ink-muted)]">
+        Looking for similar videos in your library…
+      </p>
+    );
+  }
+  if (state.suggestions.length === 0) return null;
+
+  const alreadyAdded = new Set(
+    tagsValue
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean),
+  );
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="text-xs text-[var(--ink-muted)]">
+        Suggested from similar videos:
+      </span>
+      <div className="flex flex-wrap gap-1.5">
+        {state.suggestions.map((s) => {
+          const added = alreadyAdded.has(s.name.toLowerCase());
+          return (
+            <button
+              key={s.slug}
+              type="button"
+              onClick={() => !added && onAddTag(s.name)}
+              disabled={disabled || added}
+              className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium transition ${
+                added
+                  ? 'border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent)] cursor-default'
+                  : 'border-[var(--line)] bg-[var(--bg-subtle)] text-[var(--ink-muted)] hover:border-[var(--line-strong)] hover:text-[var(--ink)]'
+              }`}
+              title={
+                added
+                  ? 'Already added'
+                  : `Add #${s.name} (${(s.score * 100).toFixed(0)}% confidence)`
+              }
+            >
+              {added ? '✓ ' : '+ '}
+              {s.name}
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }

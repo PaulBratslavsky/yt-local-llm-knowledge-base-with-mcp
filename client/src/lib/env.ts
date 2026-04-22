@@ -31,10 +31,30 @@ const OLLAMA_EMBEDDING_MODEL =
   readEnv('OLLAMA_EMBEDDING_MODEL') ?? 'nomic-embed-text';
 
 // Bump this when the text-builder in `embeddings.ts` changes (different fields
-// concatenated, different ordering, etc.). Stored `embeddingVersion` on a Video
-// != this → the vector is stale and must be recomputed. Used alongside
+// concatenated, different ordering, etc.) OR when the task prefix scheme
+// in `embedText` changes. Stored `embeddingVersion` on a Video != this →
+// the vector is stale and must be recomputed. Used alongside
 // `embeddingModel` as a compound invalidation key.
-const EMBEDDING_VERSION = 1;
+//
+// v2 — added `search_query: / search_document:` task prefixes for
+//      nomic-embed-text; old v1 vectors have no prefix and produce wrong
+//      similarity scores against query-side vectors (baseline ~0.5 for
+//      anything English).
+const EMBEDDING_VERSION = 2;
+
+// Separate invalidation key for passage embeddings (Tier 2 moment search).
+// Bump when the passage chunker's parameters change (target/max window size,
+// pause threshold, etc.), the task prefix scheme changes, or the set of
+// fields included per chunk changes.
+//
+// v2 — added `search_document:` prefix to chunk embeddings so cosine against
+//      prefixed queries produces meaningful scores.
+// v3 — Contextual Retrieval: every chunk's embed text now prepends a
+//      short `Video: / Channel: / Tags:` header so the vector carries the
+//      parent video's identity. Fixes proper-noun queries where the
+//      chunk itself uses pronouns ("the model", "this framework") and
+//      dense fails to associate the chunk with its subject.
+const PASSAGE_EMBEDDING_VERSION = 3;
 
 const MAP_CONCURRENCY = (() => {
   const parsed = parseInt(readEnv('MAP_CONCURRENCY') ?? '1', 10);
@@ -72,5 +92,6 @@ export {
   OLLAMA_CHAT_MODEL,
   OLLAMA_EMBEDDING_MODEL,
   EMBEDDING_VERSION,
+  PASSAGE_EMBEDDING_VERSION,
   MAP_CONCURRENCY,
 };

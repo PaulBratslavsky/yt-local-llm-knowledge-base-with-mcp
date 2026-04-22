@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as SearchRouteImport } from './routes/search'
 import { Route as NewPostRouteImport } from './routes/new-post'
 import { Route as FeedRouteImport } from './routes/feed'
 import { Route as DigestsRouteImport } from './routes/digests'
@@ -24,6 +25,11 @@ import { Route as ApiChatRouteImport } from './routes/api.chat'
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SearchRoute = SearchRouteImport.update({
+  id: '/search',
+  path: '/search',
   getParentRoute: () => rootRouteImport,
 } as any)
 const NewPostRoute = NewPostRouteImport.update({
@@ -84,6 +90,7 @@ export interface FileRoutesByFullPath {
   '/digests': typeof DigestsRoute
   '/feed': typeof FeedRoute
   '/new-post': typeof NewPostRoute
+  '/search': typeof SearchRoute
   '/settings': typeof SettingsRoute
   '/api/chat': typeof ApiChatRoute
   '/api/digest-chat': typeof ApiDigestChatRoute
@@ -97,6 +104,7 @@ export interface FileRoutesByTo {
   '/digests': typeof DigestsRoute
   '/feed': typeof FeedRoute
   '/new-post': typeof NewPostRoute
+  '/search': typeof SearchRoute
   '/settings': typeof SettingsRoute
   '/api/chat': typeof ApiChatRoute
   '/api/digest-chat': typeof ApiDigestChatRoute
@@ -111,6 +119,7 @@ export interface FileRoutesById {
   '/digests': typeof DigestsRoute
   '/feed': typeof FeedRoute
   '/new-post': typeof NewPostRoute
+  '/search': typeof SearchRoute
   '/settings': typeof SettingsRoute
   '/api/chat': typeof ApiChatRoute
   '/api/digest-chat': typeof ApiDigestChatRoute
@@ -126,6 +135,7 @@ export interface FileRouteTypes {
     | '/digests'
     | '/feed'
     | '/new-post'
+    | '/search'
     | '/settings'
     | '/api/chat'
     | '/api/digest-chat'
@@ -139,6 +149,7 @@ export interface FileRouteTypes {
     | '/digests'
     | '/feed'
     | '/new-post'
+    | '/search'
     | '/settings'
     | '/api/chat'
     | '/api/digest-chat'
@@ -152,6 +163,7 @@ export interface FileRouteTypes {
     | '/digests'
     | '/feed'
     | '/new-post'
+    | '/search'
     | '/settings'
     | '/api/chat'
     | '/api/digest-chat'
@@ -166,6 +178,7 @@ export interface RootRouteChildren {
   DigestsRoute: typeof DigestsRoute
   FeedRoute: typeof FeedRoute
   NewPostRoute: typeof NewPostRoute
+  SearchRoute: typeof SearchRoute
   SettingsRoute: typeof SettingsRoute
   ApiChatRoute: typeof ApiChatRoute
   ApiDigestChatRoute: typeof ApiDigestChatRoute
@@ -180,6 +193,13 @@ declare module '@tanstack/react-router' {
       path: '/settings'
       fullPath: '/settings'
       preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/search': {
+      id: '/search'
+      path: '/search'
+      fullPath: '/search'
+      preLoaderRoute: typeof SearchRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/new-post': {
@@ -262,6 +282,7 @@ const rootRouteChildren: RootRouteChildren = {
   DigestsRoute: DigestsRoute,
   FeedRoute: FeedRoute,
   NewPostRoute: NewPostRoute,
+  SearchRoute: SearchRoute,
   SettingsRoute: SettingsRoute,
   ApiChatRoute: ApiChatRoute,
   ApiDigestChatRoute: ApiDigestChatRoute,

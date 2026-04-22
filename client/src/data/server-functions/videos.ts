@@ -5,23 +5,31 @@ import {
   fetchFeedService,
   fetchVideoByDocumentIdService,
   fetchVideoByVideoIdService,
+  fetchTranscriptByVideoIdService,
   listAllVideosForEmbeddingService,
   markSummaryFailedService,
   markSummaryPendingService,
   searchTagsService,
   updateSectionTimecodeService,
   updateVideoEmbeddingService,
+  updateVideoPassagesService,
   type PaginatedVideos,
   type StrapiTag,
   type StrapiVideo,
 } from '#/lib/services/videos';
 import {
+  aggregateTagsFromNeighbors,
+  computePassageIndex,
   computeVideoEmbedding,
   cosineSimilarity,
   embedText,
   embeddingStatus,
+  passageStatus,
   CURRENT_EMBEDDING_MODEL,
   CURRENT_EMBEDDING_VERSION,
+  CURRENT_PASSAGE_VERSION,
+  type PassageStatus,
+  type SuggestedTag,
   type VideoEmbeddingStatus,
 } from '#/lib/services/embeddings';
 import {
@@ -33,9 +41,13 @@ import {
   type GenerationStep,
 } from '#/lib/services/learning';
 import {
+  buildBM25Index,
   extractCitationsWithEvidence,
   isStoredIndex,
+  searchBM25,
+  tokenize,
   type EvidenceCitation,
+  type TranscriptChunk,
 } from '#/lib/services/transcript';
 import {
   CreateVideoInputSchema,
@@ -614,6 +626,11 @@ export const getEmbeddingCoverage = createServerFn({ method: 'GET' }).handler(
 
 const ReindexSchema = z.object({
   scope: z.enum(['missing', 'stale', 'all']).default('missing'),
+  // When true, reindex every generated-summary video regardless of stored
+  // status. Bypasses the stale/missing gate. Used from the "Force reindex"
+  // button when the user suspects stored vectors are wrong despite being
+  // labeled current.
+  force: z.boolean().optional(),
 });
 
 export type ReindexResult = {
@@ -635,12 +652,14 @@ export const reindexAllEmbeddings = createServerFn({ method: 'POST' })
     const started = performance.now();
     const videos = await listAllVideosForEmbeddingService();
 
-    const candidates = videos.filter((v) => {
-      const s = embeddingStatus(v);
-      if (data.scope === 'missing') return s === 'missing';
-      if (data.scope === 'stale') return s === 'stale';
-      return s !== 'current';
-    });
+    const candidates = data.force
+      ? videos
+      : videos.filter((v) => {
+          const s = embeddingStatus(v);
+          if (data.scope === 'missing') return s === 'missing';
+          if (data.scope === 'stale') return s === 'stale';
+          return s !== 'current';
+        });
 
     const errors: Array<{ youtubeVideoId: string; error: string }> = [];
     let succeeded = 0;
@@ -720,6 +739,17 @@ export type RelatedVideosResult =
     }
   | { status: 'error'; error: string };
 
+// Hybrid related-videos: treat the target video as a "query" — its
+// topical text goes through BM25 to find candidates sharing exact rare
+// tokens (proper nouns like "Strapi", "Ollama", company names); its
+// embedding vector goes through cosine to find topically-similar
+// candidates. RRF-merge the two rankings.
+//
+// Why the dense-only version fails: "Strapi" embeds weakly in
+// nomic-embed-text (rare token → low contribution to the final vector),
+// so the target's vector is dominated by generic dev-tech semantics.
+// Other Strapi videos end up ranked below generic API/auth/tool videos.
+// BM25 catches the proper-noun overlap the dense path misses.
 export const relatedVideos = createServerFn({ method: 'GET' })
   .inputValidator((data: z.input<typeof RelatedVideosSchema>) =>
     RelatedVideosSchema.parse(data),
@@ -751,23 +781,152 @@ export const relatedVideos = createServerFn({ method: 'GET' })
       return { status: 'ok', results: [], reason: 'no-candidates' };
     }
 
-    const scored = candidates
-      .map((v) => ({
-        v,
-        score: cosineSimilarity(targetVec, v.summaryEmbedding as number[]),
-      }))
-      .filter((x) => x.score >= minScore)
+    // Dense order.
+    const cosineScores = candidates.map((v) =>
+      cosineSimilarity(targetVec, v.summaryEmbedding as number[]),
+    );
+    const denseOrder = cosineScores
+      .map((score, i) => ({ i, score }))
       .sort((a, b) => b.score - a.score)
-      .slice(0, limit);
+      .map((x) => x.i);
 
-    const results: RelatedVideo[] = scored.map(({ v, score }) => ({
-      documentId: v.documentId,
-      youtubeVideoId: v.youtubeVideoId,
-      videoTitle: v.videoTitle,
-      videoAuthor: v.videoAuthor,
-      videoThumbnailUrl: v.videoThumbnailUrl,
-      score,
+    // BM25 order — target's topical text as the "query" over the
+    // candidate corpus. Cap to the 15 highest-IDF terms: doc-as-query
+    // naturally expands to hundreds of tokens that dilute BM25 into
+    // noise. 15 keeps the target's most distinctive signals (product
+    // names, speakers, domain terms) and drops the generic dev-content
+    // shared with half the library.
+    const targetQuery = buildVideoSearchText(target);
+    const bm25Chunks: TranscriptChunk[] = candidates.map((v, i) => ({
+      id: i,
+      text: buildVideoSearchText(v),
+      startWord: 0,
+      timeSec: 0,
     }));
+    const bm25Index = buildBM25Index(bm25Chunks);
+    const bm25Hits = searchBM25(bm25Index, targetQuery, candidates.length, {
+      maxQueryTerms: 15,
+    });
+    const bm25Order = bm25Hits.map((c) => c.id);
+
+    // Two explicit boost signals that encode user-intuition-level
+    // relatedness, applied on top of cosine + BM25 RRF:
+    //
+    // 1. Tag overlap. Strongest signal — tags are user-curated
+    //    categorization. If the target is tagged "strapi" and a
+    //    candidate is too, that's the clearest "these are related".
+    //    Much more reliable than summary-level topical similarity,
+    //    which diffuses across every topic a target's summary touches.
+    //
+    // 2. Title-token overlap. Secondary signal, IDF-filtered to drop
+    //    generic words. Catches cases where tags aren't set — e.g.
+    //    a Qwen video and a Kimi video might both be un-tagged "LLM"
+    //    content and share "model" in title as their only common
+    //    indicator.
+    //
+    // Calibrated against typical RRF range (~0.05 top):
+    //   - tag boost 0.06/tag — strong enough to dominate cases where
+    //     the target's summary is topically diffuse (a tutorial target
+    //     shares "tutorial" vibe with many docs), pushing tag-matching
+    //     candidates clearly ahead of title-only matches
+    //   - title boost 0.015/token — softer, secondary signal
+    const TAG_BOOST_PER_TAG = 0.06;
+    const TITLE_BOOST_PER_TOKEN = 0.015;
+
+    const targetTags = new Set((target.tags ?? []).map((t) => t.slug));
+    const targetTitleTokens = new Set(
+      tokenize(target.videoTitle ?? '').filter((t) => {
+        const idf = bm25Index.idf[t];
+        return idf !== undefined && idf >= 1.5;
+      }),
+    );
+
+    // RRF merge.
+    const rrf = new Map<number, number>();
+    denseOrder.forEach((id, rank) => {
+      rrf.set(id, (rrf.get(id) ?? 0) + 1 / (rank + 1 + RRF_K));
+    });
+    bm25Order.forEach((id, rank) => {
+      rrf.set(id, (rrf.get(id) ?? 0) + BM25_WEIGHT / (rank + 1 + RRF_K));
+    });
+    // Apply tag-overlap boost per candidate.
+    const tagBoosts = new Map<number, { count: number; tags: string[] }>();
+    candidates.forEach((v, i) => {
+      if (targetTags.size === 0) return;
+      const candTags = (v.tags ?? []).map((t) => t.slug);
+      const matched: string[] = [];
+      for (const slug of candTags) {
+        if (targetTags.has(slug)) matched.push(slug);
+      }
+      if (matched.length > 0) {
+        rrf.set(i, (rrf.get(i) ?? 0) + matched.length * TAG_BOOST_PER_TAG);
+        tagBoosts.set(i, { count: matched.length, tags: matched });
+      }
+    });
+
+    // Apply title-token boost per candidate.
+    const titleBoosts = new Map<number, { count: number; tokens: string[] }>();
+    candidates.forEach((v, i) => {
+      if (targetTitleTokens.size === 0) return;
+      const candTitleTokens = new Set(tokenize(v.videoTitle ?? ''));
+      const matched: string[] = [];
+      for (const t of targetTitleTokens) {
+        if (candTitleTokens.has(t)) matched.push(t);
+      }
+      if (matched.length > 0) {
+        rrf.set(
+          i,
+          (rrf.get(i) ?? 0) + matched.length * TITLE_BOOST_PER_TOKEN,
+        );
+        titleBoosts.set(i, { count: matched.length, tokens: matched });
+      }
+    });
+
+    const preFilter = Array.from(rrf.entries())
+      .map(([i, rrfScore]) => ({ i, rrfScore, cosineScore: cosineScores[i] }))
+      .sort((a, b) => b.rrfScore - a.rrfScore);
+
+    // Diagnostic — same shape as the other hybrid server functions so we
+    // can spot "target's rare tokens got filtered and BM25 had nothing
+    // to work with" or similar failures in production data.
+    // eslint-disable-next-line no-console
+    console.log('[relatedVideos]', {
+      target: target.videoTitle,
+      candidates: candidates.length,
+      bm25Size: bm25Order.length,
+      targetTags: Array.from(targetTags),
+      targetTitleTokens: Array.from(targetTitleTokens),
+      denseTop10: denseOrder.slice(0, 10).map((i) => ({
+        title: candidates[i].videoTitle,
+        score: cosineScores[i].toFixed(3),
+      })),
+      bm25Top10: bm25Order.slice(0, 10).map((i) => ({
+        title: candidates[i].videoTitle,
+      })),
+      rrfTop10: preFilter.slice(0, 10).map((r) => ({
+        title: candidates[r.i].videoTitle,
+        cosine: r.cosineScore.toFixed(3),
+        rrf: r.rrfScore.toFixed(4),
+        tagBoost: tagBoosts.get(r.i) ?? null,
+        titleBoost: titleBoosts.get(r.i) ?? null,
+      })),
+    });
+
+    const results: RelatedVideo[] = preFilter
+      .filter((x) => x.cosineScore >= minScore)
+      .slice(0, limit)
+      .map(({ i, cosineScore }) => ({
+        documentId: candidates[i].documentId,
+        youtubeVideoId: candidates[i].youtubeVideoId,
+        videoTitle: candidates[i].videoTitle,
+        videoAuthor: candidates[i].videoAuthor,
+        videoThumbnailUrl: candidates[i].videoThumbnailUrl,
+        score: cosineScore,
+      }));
+
+    if (results.length === 0) {
+      return { status: 'ok', results: [], reason: 'no-candidates' };
+    }
 
     return { status: 'ok', results };
   });
@@ -791,6 +950,9 @@ export type SemanticSearchResult =
   | { status: 'ok'; hits: SemanticHit[] }
   | { status: 'error'; error: string };
 
+// Hybrid video search on the feed — same RRF pattern as passage search.
+// Without BM25, proper-noun queries ("MCP", "Strapi", "Qwen") rank
+// generic developer content above the videos actually about those tools.
 export const semanticSearchVideos = createServerFn({ method: 'GET' })
   .inputValidator((data: z.input<typeof SemanticSearchSchema>) =>
     SemanticSearchSchema.parse(data),
@@ -798,7 +960,7 @@ export const semanticSearchVideos = createServerFn({ method: 'GET' })
   .handler(async ({ data }): Promise<SemanticSearchResult> => {
     let qVec: number[];
     try {
-      qVec = await embedText(data.query);
+      qVec = await embedText(data.query, 'query');
     } catch (err) {
       return {
         status: 'error',
@@ -814,24 +976,510 @@ export const semanticSearchVideos = createServerFn({ method: 'GET' })
       (v) =>
         embeddingStatus(v) === 'current' && Array.isArray(v.summaryEmbedding),
     );
+    if (candidates.length === 0) return { status: 'ok', hits: [] };
 
-    const hits = candidates
-      .map((video) => ({
-        video,
-        score: cosineSimilarity(qVec, video.summaryEmbedding as number[]),
-      }))
-      .filter((x) => x.score >= minScore)
+    // Dense order: cosine against each video's summary embedding.
+    const cosineScores = candidates.map((v) =>
+      cosineSimilarity(qVec, v.summaryEmbedding as number[]),
+    );
+    const denseOrder = cosineScores
+      .map((score, i) => ({ i, score }))
       .sort((a, b) => b.score - a.score)
-      .slice(0, limit);
+      .map((x) => x.i);
 
-    // Strip the embedding from the returned rows — the client doesn't need
-    // to ship 768-dim vectors in the JSON response, and it bloats the feed.
-    const lightened: SemanticHit[] = hits.map(({ video, score }) => ({
-      video: { ...video, summaryEmbedding: null },
-      score,
+    // BM25 order: build a corpus from each video's topical surface
+    // (title + author + description + overview + takeaways + tags) —
+    // same bag of fields the embedding already sees. BM25 catches exact
+    // tokens in the title and surface text that dense can miss.
+    const bm25Chunks: TranscriptChunk[] = candidates.map((v, i) => ({
+      id: i,
+      text: buildVideoSearchText(v),
+      startWord: 0,
+      timeSec: 0,
     }));
+    const bm25Index = buildBM25Index(bm25Chunks);
+    const bm25Hits = searchBM25(bm25Index, data.query, candidates.length);
+    const bm25Order = bm25Hits.map((c) => c.id);
+
+    // RRF merge — same math as passage search.
+    const rrf = new Map<number, number>();
+    denseOrder.forEach((id, rank) => {
+      rrf.set(id, (rrf.get(id) ?? 0) + 1 / (rank + 1 + RRF_K));
+    });
+    bm25Order.forEach((id, rank) => {
+      rrf.set(id, (rrf.get(id) ?? 0) + BM25_WEIGHT / (rank + 1 + RRF_K));
+    });
+
+    const finalRanked = Array.from(rrf.entries())
+      .map(([i, rrfScore]) => ({ i, rrfScore, cosineScore: cosineScores[i] }))
+      .sort((a, b) => b.rrfScore - a.rrfScore);
+
+    // Diagnostic — top-10 from each retriever before the minScore filter.
+    // eslint-disable-next-line no-console
+    console.log('[semanticSearchVideos]', {
+      query: data.query,
+      candidates: candidates.length,
+      bm25Size: bm25Order.length,
+      denseTop10: denseOrder.slice(0, 10).map((i) => ({
+        title: candidates[i].videoTitle,
+        score: cosineScores[i].toFixed(3),
+      })),
+      bm25Top10: bm25Order.slice(0, 10).map((i) => ({
+        title: candidates[i].videoTitle,
+      })),
+      rrfTop10: finalRanked.slice(0, 10).map((r) => ({
+        title: candidates[r.i].videoTitle,
+        cosine: r.cosineScore.toFixed(3),
+        rrf: r.rrfScore.toFixed(4),
+      })),
+    });
+
+    const lightened: SemanticHit[] = finalRanked
+      .filter((x) => x.cosineScore >= minScore)
+      .slice(0, limit)
+      .map(({ i, cosineScore }) => ({
+        video: { ...candidates[i], summaryEmbedding: null },
+        score: cosineScore,
+      }));
 
     return { status: 'ok', hits: lightened };
+  });
+
+// Bag-of-fields text used for BM25 at the video level. Mirrors what the
+// embedding sees so keyword matches align with semantic matches.
+function buildVideoSearchText(v: StrapiVideo): string {
+  const parts: string[] = [];
+  if (v.videoTitle) parts.push(v.videoTitle);
+  if (v.videoAuthor) parts.push(v.videoAuthor);
+  if (v.summaryTitle && v.summaryTitle !== v.videoTitle) {
+    parts.push(v.summaryTitle);
+  }
+  if (v.summaryDescription) parts.push(v.summaryDescription);
+  if (v.summaryOverview) parts.push(v.summaryOverview);
+  if (v.keyTakeaways && v.keyTakeaways.length > 0) {
+    parts.push(v.keyTakeaways.map((t) => t.text).join(' '));
+  }
+  if (v.sections && v.sections.length > 0) {
+    parts.push(v.sections.map((s) => s.heading).join(' '));
+  }
+  if (v.tags && v.tags.length > 0) {
+    parts.push(v.tags.map((t) => t.name).join(' '));
+  }
+  return parts.join(' ');
+}
+
+// =============================================================================
+// Passage embeddings (Tier 2) — moment search across the library.
+// =============================================================================
+
+export type PassageCoverage = {
+  total: number;
+  current: number;
+  stale: number;
+  missing: number;
+  currentModel: string;
+  currentVersion: number;
+};
+
+export const getPassageCoverage = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<PassageCoverage> => {
+    const videos = await listAllVideosForEmbeddingService();
+    let current = 0;
+    let stale = 0;
+    let missing = 0;
+    for (const v of videos) {
+      const s = passageStatus(v.passageEmbeddings);
+      if (s === 'current') current += 1;
+      else if (s === 'stale') stale += 1;
+      else missing += 1;
+    }
+    return {
+      total: videos.length,
+      current,
+      stale,
+      missing,
+      currentModel: CURRENT_EMBEDDING_MODEL,
+      currentVersion: CURRENT_PASSAGE_VERSION,
+    };
+  },
+);
+
+const ReindexPassagesSchema = z.object({
+  scope: z.enum(['missing', 'stale', 'all']).default('missing'),
+  force: z.boolean().optional(),
+});
+
+export type ReindexPassagesResult = {
+  status: 'ok';
+  scope: 'missing' | 'stale' | 'all';
+  total: number;
+  targeted: number;
+  succeeded: number;
+  failed: number;
+  totalChunks: number;
+  errors: Array<{ youtubeVideoId: string; error: string }>;
+  tookMs: number;
+};
+
+export const reindexAllPassages = createServerFn({ method: 'POST' })
+  .inputValidator((data: z.input<typeof ReindexPassagesSchema>) =>
+    ReindexPassagesSchema.parse(data),
+  )
+  .handler(async ({ data }): Promise<ReindexPassagesResult> => {
+    const started = performance.now();
+    const videos = await listAllVideosForEmbeddingService();
+
+    const candidates = data.force
+      ? videos
+      : videos.filter((v) => {
+          const s: PassageStatus = passageStatus(v.passageEmbeddings);
+          if (data.scope === 'missing') return s === 'missing';
+          if (data.scope === 'stale') return s === 'stale';
+          return s !== 'current';
+        });
+
+    const errors: Array<{ youtubeVideoId: string; error: string }> = [];
+    let succeeded = 0;
+    let totalChunks = 0;
+
+    // Serial across videos — each video internally batches chunk embeds at
+    // concurrency 2. Parallel video-level would thrash Ollama for no gain.
+    for (const video of candidates) {
+      try {
+        const tx =
+          video.transcript ??
+          (await fetchTranscriptByVideoIdService(video.youtubeVideoId).catch(
+            () => null,
+          ));
+        const segments = tx?.rawSegments ?? [];
+        if (segments.length === 0) {
+          errors.push({
+            youtubeVideoId: video.youtubeVideoId,
+            error: 'no raw transcript segments — regenerate summary first',
+          });
+          continue;
+        }
+        const passages = await computePassageIndex({ video, segments });
+        if (passages.chunks.length === 0) {
+          errors.push({
+            youtubeVideoId: video.youtubeVideoId,
+            error: 'transcript produced no passages',
+          });
+          continue;
+        }
+        const saved = await updateVideoPassagesService({
+          documentId: video.documentId,
+          passageEmbeddings: passages,
+        });
+        if (!saved.success) {
+          errors.push({
+            youtubeVideoId: video.youtubeVideoId,
+            error: saved.error,
+          });
+          continue;
+        }
+        totalChunks += passages.chunks.length;
+        succeeded += 1;
+      } catch (err) {
+        errors.push({
+          youtubeVideoId: video.youtubeVideoId,
+          error: err instanceof Error ? err.message : 'passage embed failed',
+        });
+      }
+    }
+
+    return {
+      status: 'ok',
+      scope: data.scope,
+      total: videos.length,
+      targeted: candidates.length,
+      succeeded,
+      failed: errors.length,
+      totalChunks,
+      errors,
+      tookMs: Math.round(performance.now() - started),
+    };
+  });
+
+// =============================================================================
+// searchLibraryPassages — moment search. Embeds the query, cosine-ranks
+// every passage across every video with a current passage index. Returns
+// the top matches paired with minimal video metadata so the UI can render
+// "this moment at 4:32 in <video title>".
+// =============================================================================
+
+const SearchLibraryPassagesSchema = z.object({
+  query: z.string().min(1).max(500),
+  limit: z.number().int().min(1).max(50).optional(),
+  minScore: z.number().min(-1).max(1).optional(),
+});
+
+export type LibraryPassageHit = {
+  video: {
+    documentId: string;
+    youtubeVideoId: string;
+    videoTitle: string | null;
+    videoAuthor: string | null;
+    videoThumbnailUrl: string | null;
+  };
+  passage: {
+    text: string;
+    startSec: number;
+    endSec: number;
+    score: number;
+  };
+};
+
+export type SearchLibraryPassagesResult =
+  | { status: 'ok'; hits: LibraryPassageHit[] }
+  | { status: 'error'; error: string };
+
+// Hybrid passage search: dense cosine + BM25, merged with Reciprocal Rank
+// Fusion (RRF_K=60). Dense catches synonyms and intent; BM25 catches exact
+// rare tokens (proper nouns like "Qwen", "Kimi", "MCP") that dense vectors
+// systematically under-weight. Either alone fails on real user queries —
+// the combination is the standard retrieval pattern.
+const RRF_K = 60;
+// BM25 weight in the merge. Standard RRF uses 1:1. We bump BM25 because
+// exact-token matches for rare proper-noun queries are far more reliable
+// than dense similarity — and without the bump, the "what is qwen" case
+// still lets generic "what is X" cosine matches tie-break the Qwen-specific
+// result. 2.5x is the lowest value that consistently surfaces the proper-
+// noun video at rank 1 in our tests without over-boosting common terms.
+const BM25_WEIGHT = 2.5;
+
+export const searchLibraryPassages = createServerFn({ method: 'GET' })
+  .inputValidator((data: z.input<typeof SearchLibraryPassagesSchema>) =>
+    SearchLibraryPassagesSchema.parse(data),
+  )
+  .handler(async ({ data }): Promise<SearchLibraryPassagesResult> => {
+    let qVec: number[];
+    try {
+      qVec = await embedText(data.query, 'query');
+    } catch (err) {
+      return {
+        status: 'error',
+        error: err instanceof Error ? err.message : 'query embedding failed',
+      };
+    }
+
+    const all = await listAllVideosForEmbeddingService();
+    const limit = data.limit ?? 20;
+    const minScore = data.minScore ?? 0.4;
+
+    // Flatten every current passage into one corpus with a stable global
+    // index. The RRF merger uses these indices as join keys.
+    type FlatPassage = {
+      video: StrapiVideo;
+      text: string;
+      startSec: number;
+      endSec: number;
+      embedding: number[];
+    };
+    const flat: FlatPassage[] = [];
+    for (const v of all) {
+      const index = v.passageEmbeddings;
+      if (passageStatus(index) !== 'current' || !index) continue;
+      for (const p of index.chunks) {
+        flat.push({
+          video: v,
+          text: p.text,
+          startSec: p.startSec,
+          endSec: p.endSec,
+          embedding: p.embedding,
+        });
+      }
+    }
+    if (flat.length === 0) return { status: 'ok', hits: [] };
+
+    // Dense ranking — cosine against every passage. Store scores so we can
+    // render a meaningful "% match" in the UI after re-ranking.
+    const cosineScores = flat.map((p) => cosineSimilarity(qVec, p.embedding));
+    const denseOrder = cosineScores
+      .map((score, i) => ({ i, score }))
+      .sort((a, b) => b.score - a.score)
+      .map((x) => x.i);
+
+    // BM25 ranking — reuse the existing infra by adapting passages to the
+    // TranscriptChunk shape. `id` carries the global flat index so we can
+    // map BM25 results back to FlatPassage entries.
+    //
+    // The BM25 text includes the parent VIDEO's title + author, not just
+    // the passage text. Proper nouns like "Qwen" or "Kimi" often appear
+    // only in video titles — YouTube's auto-captions transcribe them
+    // phonetically wrong ("Quinn", "keemi") or the speaker shows them on
+    // screen without saying them. Without this, searching for "qwen"
+    // matches zero passages in the Qwen video itself.
+    const bm25Chunks: TranscriptChunk[] = flat.map((p, i) => {
+      const titleLine = [p.video.videoTitle, p.video.videoAuthor]
+        .filter(Boolean)
+        .join(' ');
+      return {
+        id: i,
+        text: titleLine ? `${titleLine}\n${p.text}` : p.text,
+        startWord: 0,
+        timeSec: p.startSec,
+      };
+    });
+    const bm25Index = buildBM25Index(bm25Chunks);
+    const bm25Hits = searchBM25(bm25Index, data.query, flat.length);
+    const bm25Order = bm25Hits.map((c) => c.id);
+
+    // RRF merge: sum 1/(rank+K) across the two rankings. A passage that
+    // appears only in one retriever still scores (half-credit); a passage
+    // strong in both wins comfortably.
+    const rrf = new Map<number, number>();
+    denseOrder.forEach((id, rank) => {
+      rrf.set(id, (rrf.get(id) ?? 0) + 1 / (rank + 1 + RRF_K));
+    });
+    bm25Order.forEach((id, rank) => {
+      rrf.set(id, (rrf.get(id) ?? 0) + BM25_WEIGHT / (rank + 1 + RRF_K));
+    });
+
+    const preFilter = Array.from(rrf.entries())
+      .map(([i, rrfScore]) => ({ i, rrfScore, cosineScore: cosineScores[i] }))
+      .sort((a, b) => b.rrfScore - a.rrfScore);
+
+    // Diagnostic — top-10 from each retriever and the RRF merge, before
+    // the minScore filter. Helps spot "BM25 found it, cosine didn't, and
+    // minScore killed it" and similar failures in production data.
+    // eslint-disable-next-line no-console
+    console.log('[searchLibraryPassages]', {
+      query: data.query,
+      passages: flat.length,
+      bm25Size: bm25Order.length,
+      denseTop10: denseOrder.slice(0, 10).map((i) => ({
+        title: flat[i].video.videoTitle,
+        start: flat[i].startSec,
+        score: cosineScores[i].toFixed(3),
+        text: flat[i].text.slice(0, 80),
+      })),
+      bm25Top10: bm25Order.slice(0, 10).map((i) => ({
+        title: flat[i].video.videoTitle,
+        start: flat[i].startSec,
+        text: flat[i].text.slice(0, 80),
+      })),
+      rrfTop10: preFilter.slice(0, 10).map((r) => ({
+        title: flat[r.i].video.videoTitle,
+        start: flat[r.i].startSec,
+        cosine: r.cosineScore.toFixed(3),
+        rrf: r.rrfScore.toFixed(4),
+      })),
+    });
+
+    // Build the final hits list. `score` shown in the UI is the cosine
+    // score (it's the familiar "% match" metric). RRF drives the ORDER;
+    // we still filter by minScore so pure-keyword matches with no
+    // semantic signal (cosine < minScore) don't leak in as noise.
+    //
+    // Per-video cap: MAX 2 passages per video in the final list. Without
+    // this, long-form videos saturate the top-10 with consecutive chunks
+    // about the same topic — crowding out diversity and hiding other
+    // relevant videos. The second pass below enforces the cap in rank
+    // order, preserving the best passage(s) from each video.
+    const PER_VIDEO_CAP = 2;
+    const perVideoCount = new Map<string, number>();
+    const capped = preFilter
+      .filter((x) => x.cosineScore >= minScore)
+      .filter((x) => {
+        const key = flat[x.i].video.documentId;
+        const count = perVideoCount.get(key) ?? 0;
+        if (count >= PER_VIDEO_CAP) return false;
+        perVideoCount.set(key, count + 1);
+        return true;
+      });
+
+    const ranked: LibraryPassageHit[] = capped
+      .slice(0, limit)
+      .map(({ i, cosineScore }) => {
+        const p = flat[i];
+        return {
+          video: {
+            documentId: p.video.documentId,
+            youtubeVideoId: p.video.youtubeVideoId,
+            videoTitle: p.video.videoTitle,
+            videoAuthor: p.video.videoAuthor,
+            videoThumbnailUrl: p.video.videoThumbnailUrl,
+          },
+          passage: {
+            text: p.text,
+            startSec: p.startSec,
+            endSec: p.endSec,
+            score: cosineScore,
+          },
+        };
+      });
+
+    return { status: 'ok', hits: ranked };
+  });
+
+// =============================================================================
+// Suggest tags at ingest — given a YouTube URL the user is about to share,
+// embed a lightweight description (title + author from oEmbed) and aggregate
+// tags from the K most semantically similar videos already in the library.
+//
+// Best-effort everywhere: any failure (Ollama down, empty library, oEmbed
+// rate-limited, URL can't be parsed) returns an empty suggestion list so
+// the form shows nothing rather than blocking or erroring.
+// =============================================================================
+
+const SuggestTagsSchema = z.object({
+  url: z.string().min(1).max(500),
+});
+
+export type SuggestTagsResult =
+  | { status: 'ok'; suggestions: SuggestedTag[] }
+  | { status: 'error'; error: string };
+
+export const suggestTagsForUrl = createServerFn({ method: 'GET' })
+  .inputValidator((data: z.input<typeof SuggestTagsSchema>) =>
+    SuggestTagsSchema.parse(data),
+  )
+  .handler(async ({ data }): Promise<SuggestTagsResult> => {
+    const videoId = extractYouTubeVideoId(data.url);
+    if (!videoId) return { status: 'ok', suggestions: [] };
+
+    // Lightweight metadata — oEmbed gives us title + author, enough to
+    // place the video in topic space before the full summary exists.
+    const meta = await fetchYouTubeMeta(videoId).catch(
+      () => ({ title: undefined, author: undefined }) as const,
+    );
+    const probeText = [meta.title, meta.author]
+      .filter(Boolean)
+      .join('\n')
+      .trim();
+    if (!probeText) return { status: 'ok', suggestions: [] };
+
+    let qVec: number[];
+    try {
+      qVec = await embedText(probeText, 'query');
+    } catch {
+      // Ollama down / embed model not pulled — silent fallback.
+      return { status: 'ok', suggestions: [] };
+    }
+
+    const all = await listAllVideosForEmbeddingService();
+    const candidates = all.filter(
+      (v) =>
+        v.youtubeVideoId !== videoId &&
+        embeddingStatus(v) === 'current' &&
+        Array.isArray(v.summaryEmbedding),
+    );
+    if (candidates.length === 0) return { status: 'ok', suggestions: [] };
+
+    const K = 5;
+    const MIN_NEIGHBOR_SCORE = 0.4;
+    const neighbors = candidates
+      .map((video) => ({
+        score: cosineSimilarity(qVec, video.summaryEmbedding as number[]),
+        tags: video.tags,
+      }))
+      .filter((n) => n.score >= MIN_NEIGHBOR_SCORE)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, K);
+
+    const suggestions = aggregateTagsFromNeighbors(neighbors, 5);
+    return { status: 'ok', suggestions };
   });
 
 // =============================================================================

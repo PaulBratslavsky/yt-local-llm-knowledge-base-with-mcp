@@ -671,6 +671,7 @@ export interface ApiVideoVideo extends Struct.CollectionTypeSchema {
     localizations: Schema.Attribute.Relation<'oneToMany', 'api::video.video'> &
       Schema.Attribute.Private;
     notes: Schema.Attribute.Relation<'manyToMany', 'api::note.note'>;
+    passageEmbeddings: Schema.Attribute.JSON;
     publishedAt: Schema.Attribute.DateTime;
     readableArticle: Schema.Attribute.RichText;
     readableArticleGeneratedAt: Schema.Attribute.DateTime;

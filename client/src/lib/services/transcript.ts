@@ -343,15 +343,36 @@ const STOPWORDS = new Set([
   'once',
 ]);
 
-function tokenize(input: string): string[] {
+export function tokenize(input: string): string[] {
   // Strip `[mm:ss]` / `[h:mm:ss]` markers before tokenizing. These exist
   // for the model's citation grounding (see annotateSpan) but would pollute
   // BM25 scoring if indexed as numeric tokens.
-  return input
-    .replace(/\[\d{1,2}:\d{2}(?::\d{2})?\]/g, ' ')
-    .toLowerCase()
-    .match(/[a-z0-9][a-z0-9'-]*/g)
-    ?.filter((t) => t.length > 1 && !STOPWORDS.has(t)) ?? [];
+  const base =
+    input
+      .replace(/\[\d{1,2}:\d{2}(?::\d{2})?\]/g, ' ')
+      .toLowerCase()
+      .match(/[a-z0-9][a-z0-9'-]*/g)
+      ?.filter((t) => t.length > 1 && !STOPWORDS.has(t)) ?? [];
+
+  // Expand mixed alpha-digit tokens to also emit their alpha-only prefix.
+  // "Qwen3.6" → "qwen3" + "qwen". "Gemma2" → "gemma2" + "gemma". "GPT-4"
+  // → "gpt-4" + "gpt". Without this, a query "qwen" finds zero documents
+  // whose title says "Qwen3" (or "Qwen 3.6", etc.) — a major recall hole
+  // for model/product names that incorporate version numbers.
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (t: string) => {
+    if (t.length > 1 && !STOPWORDS.has(t) && !seen.has(t)) {
+      out.push(t);
+      seen.add(t);
+    }
+  };
+  for (const t of base) {
+    push(t);
+    const alphaPrefix = t.match(/^[a-z]+/)?.[0];
+    if (alphaPrefix && alphaPrefix !== t) push(alphaPrefix);
+  }
+  return out;
 }
 
 export type BM25Index = {
@@ -413,24 +434,87 @@ export function buildBM25Index(
   return { tf, idf, lengths, avgLength, chunks };
 }
 
+// IDF threshold below which a query term is considered "too common to be
+// informative" and dropped from the BM25 query. Rationale: terms like
+// "what", "how", "this", "that" pass the stopword filter but appear in
+// a meaningful fraction of documents, so their IDF is small-to-moderate.
+//
+// 1.5 is the sweet spot empirically:
+//   - "what" in 15/45 docs ≈ IDF 1.09 → filtered ✓
+//   - "how" in similar ≈ filtered ✓
+//   - "strapi" in 7/45 ≈ IDF 1.81 → kept ✓ (was wrongly filtered at 2.0)
+//   - "agents" in 8/45 ≈ IDF 1.69 → kept ✓
+//   - Proper nouns in 2-3 docs easily clear it
+//
+// The threshold scales with corpus size — a term appearing in "~N/3 docs"
+// sits near IDF 1.0, so 1.5 roughly means "<20% of the corpus" at small
+// scale, moving toward "<10%" at large scale. Acceptable for our library.
+const BM25_MIN_QUERY_IDF = 1.5;
+
 export function searchBM25(
   index: BM25Index,
   query: string,
   topK: number,
+  opts?: { maxQueryTerms?: number },
 ): TranscriptChunk[] {
-  const queryTerms = Array.from(new Set(tokenize(query)));
+  // Count query-side term frequencies before dedup so we can weight by
+  // TF × IDF when capping. Essential for doc-as-query paths where a
+  // term like "strapi" appears 29 times in the target — that repetition
+  // is the signal of topical focus, and should dominate over one-off
+  // rare tokens that don't recur.
+  const rawTokens = tokenize(query);
+  const queryTf = new Map<string, number>();
+  for (const t of rawTokens) {
+    queryTf.set(t, (queryTf.get(t) ?? 0) + 1);
+  }
+
+  let queryTerms = Array.from(queryTf.keys()).filter((term) => {
+    const idf = index.idf[term];
+    return idf !== undefined && idf >= BM25_MIN_QUERY_IDF;
+  });
+
+  // Cap to the N most topically-important terms. Weight is TF(query) ×
+  // IDF(corpus) — rewards both rarity and repetition in the target.
+  // Critical for doc-as-query paths like `relatedVideos`: without this,
+  // a 6KB target video's text expands to hundreds of query terms, each
+  // matching *some* video in the corpus, turning BM25 into noise. Short
+  // user queries (1-3 tokens) naturally don't need capping — default
+  // is unlimited.
+  const maxTerms = opts?.maxQueryTerms;
+  if (maxTerms && queryTerms.length > maxTerms) {
+    queryTerms = queryTerms
+      .map((term) => ({
+        term,
+        weight: (queryTf.get(term) ?? 1) * (index.idf[term] ?? 0),
+      }))
+      .sort((a, b) => b.weight - a.weight)
+      .slice(0, maxTerms)
+      .map((x) => x.term);
+  }
+
   if (queryTerms.length === 0) return [];
 
+  // Weight each term's contribution by its query-side TF (dampened with
+  // log saturation so a term mentioned 29 times doesn't outright 29x its
+  // effect — that'd crush everything else). For short user queries
+  // (qtf=1), log(1+1) = log(2) ≈ 0.69 is a uniform damping that
+  // preserves standard BM25 behavior. For doc-as-query (qtf up to 30+),
+  // a term mentioned many times in the target gets a proportional boost
+  // that reflects its topical dominance, matching how a human would
+  // interpret "this video is ABOUT strapi" vs "this video mentions
+  // strapi once". Standard trick — see Robertson & Zaragoza (2009).
   const scores: number[] = new Array(index.chunks.length).fill(0);
   for (const term of queryTerms) {
     const idf = index.idf[term];
     if (!idf) continue;
+    const qtf = queryTf.get(term) ?? 1;
+    const qtfWeight = Math.log(1 + qtf);
     for (let i = 0; i < index.chunks.length; i++) {
       const f = index.tf[i][term];
       if (!f) continue;
       const dl = index.lengths[i];
       const norm = 1 - BM25_B + (BM25_B * dl) / (index.avgLength || 1);
-      scores[i] += idf * ((f * (BM25_K1 + 1)) / (f + BM25_K1 * norm));
+      scores[i] += qtfWeight * idf * ((f * (BM25_K1 + 1)) / (f + BM25_K1 * norm));
     }
   }
 
@@ -511,6 +595,104 @@ export function isStoredIndex(value: unknown): value is StoredTranscriptIndex {
 // "should we map-reduce?" decision without pulling in a tokenizer.
 export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
+}
+
+// -----------------------------------------------------------------------------
+// Passage chunker — fine-grained, time-based chunks for moment search.
+// Adapted from the strapi-plugin-ai-sdk-yt-embeddings `yt-chunker`. Groups
+// caption segments into ~60-second windows that respect natural pauses
+// (>1s gap between segments) and sentence boundaries; hard cap 90s, min 15s
+// so we don't emit micro-chunks for dense intros.
+//
+// Each output chunk carries real startSec/endSec derived from segment
+// timestamps (not wpm estimates), so a "jump to this moment" UI can seek
+// the player to the exact span that matched a query.
+//
+// Decoupled from `chunkForSummary` on purpose: summary chunks are huge
+// (~2500 words, tuned for map-reduce LLM calls); passage chunks are small
+// (~150 words, tuned for retrieval granularity). Different jobs.
+// -----------------------------------------------------------------------------
+
+export type PassageChunk = {
+  text: string;
+  startSec: number;
+  endSec: number;
+  chunkIndex: number;
+};
+
+const PASSAGE_TARGET_MS = 60_000;
+const PASSAGE_MAX_MS = 90_000;
+const PASSAGE_MIN_MS = 15_000;
+const PASSAGE_PAUSE_MS = 1_000;
+
+export function chunkForPassages(segments: TimedTextSegment[]): PassageChunk[] {
+  if (segments.length === 0) return [];
+
+  // Normalize: fill endMs where missing by using the next segment's start,
+  // or a +2s fallback for the trailing segment. The chunker decides
+  // boundaries off endMs, so it needs to be defined everywhere.
+  const normalized: Array<{ text: string; startMs: number; endMs: number }> = [];
+  for (let i = 0; i < segments.length; i += 1) {
+    const s = segments[i];
+    const next = segments[i + 1];
+    let end = s.endMs;
+    if (end === undefined || end <= s.startMs) {
+      end = next ? next.startMs : s.startMs + 2000;
+    }
+    normalized.push({ text: s.text, startMs: s.startMs, endMs: end });
+  }
+
+  const chunks: PassageChunk[] = [];
+  let buffer: typeof normalized = [];
+
+  const flushBuffer = () => {
+    if (buffer.length === 0) return;
+    const text = buffer
+      .map((s) => s.text)
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    // Skip vacuous chunks (e.g. a single "[Music]" segment).
+    if (text.length < 20) {
+      buffer = [];
+      return;
+    }
+    chunks.push({
+      text,
+      startSec: buffer[0].startMs / 1000,
+      endSec: buffer[buffer.length - 1].endMs / 1000,
+      chunkIndex: chunks.length,
+    });
+    buffer = [];
+  };
+
+  for (let i = 0; i < normalized.length; i += 1) {
+    const seg = normalized[i];
+    const next = normalized[i + 1];
+    buffer.push(seg);
+
+    const bufferMs = buffer[buffer.length - 1].endMs - buffer[0].startMs;
+    const isLast = !next;
+    const atHardCap = bufferMs >= PASSAGE_MAX_MS;
+    const atTarget = bufferMs >= PASSAGE_TARGET_MS;
+    const pauseAfter = next ? next.startMs - seg.endMs : Infinity;
+    const isNaturalPause = pauseAfter > PASSAGE_PAUSE_MS;
+    const endsSentence = /[.!?]\s*$/.test(seg.text.trim());
+
+    const shouldFlush =
+      isLast ||
+      atHardCap ||
+      (atTarget && (isNaturalPause || endsSentence));
+
+    if (shouldFlush && (bufferMs >= PASSAGE_MIN_MS || isLast)) {
+      flushBuffer();
+    }
+  }
+
+  // Any residue (if the last segment didn't trigger flush).
+  if (buffer.length > 0) flushBuffer();
+
+  return chunks;
 }
 
 // -----------------------------------------------------------------------------

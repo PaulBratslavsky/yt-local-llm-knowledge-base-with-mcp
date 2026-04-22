@@ -65,8 +65,13 @@ type LoaderData =
 //   `summary` = structured summary (sections, takeaways, verdict).
 //   `read`    = long-form article version.
 //   `notes`   = saved notes for this video (chat summaries, MCP entries, manual).
+// `t` = optional start-at-second deep link. Populated by moment-search
+// results and the future "jump to this moment" chips. Baked into the
+// iframe `start` param so YouTube seeks + autoplays without us needing
+// to wait for the player's postMessage channel to come up.
 const LearnSearchSchema = z.object({
   view: z.enum(['summary', 'read', 'notes']).optional(),
+  t: z.number().int().min(0).max(86400).optional(),
 });
 
 export const Route = createFileRoute('/learn/$videoId')({
@@ -104,6 +109,18 @@ export const Route = createFileRoute('/learn/$videoId')({
     return { meta: [{ title: 'Summary · YT Knowledge Base' }] };
   },
 });
+
+// Build the YouTube embed URL, optionally seeded with a start-at-second
+// offset. When `startSec` is present we also set `autoplay=1` — the
+// navigation itself was a user gesture (clicking a moment-search card),
+// so most browsers allow autoplay downstream.
+function buildEmbedSrc(videoId: string, startSec?: number): string {
+  const base = `https://www.youtube.com/embed/${videoId}?enablejsapi=1&rel=0`;
+  if (typeof startSec === 'number' && startSec > 0) {
+    return `${base}&start=${startSec}&autoplay=1`;
+  }
+  return base;
+}
 
 // Poll the loader while generation is pending. Long videos doing
 // map-reduce summaries can run 5–10 min, so the cap has to exceed that or
@@ -174,7 +191,16 @@ function SummaryView({
   const navigate = Route.useNavigate();
   const view = search.view ?? 'summary';
   const setView = (next: 'summary' | 'read' | 'notes') => {
-    void navigate({ search: { view: next === 'summary' ? undefined : next } });
+    // Preserve `t` across view changes — stripping it would mutate the
+    // iframe src and force the player to reload from whatever its current
+    // state is. User changes tabs after landing at a moment; the video
+    // should keep playing uninterrupted.
+    void navigate({
+      search: {
+        view: next === 'summary' ? undefined : next,
+        t: search.t,
+      },
+    });
   };
   // Bumped when VideoChat saves a note, so NotesPane refetches without
   // needing its own event wiring or a page reload.
@@ -248,7 +274,12 @@ function SummaryView({
             <div className="relative aspect-video w-full">
               <iframe
                 ref={iframeRef}
-                src={`https://www.youtube.com/embed/${videoId}?enablejsapi=1&rel=0`}
+                // When a `?t=<sec>` deep link is present (moment search →
+                // learn page), append `start=<sec>&autoplay=1` to the
+                // iframe src. YouTube's player loads already seeked to
+                // that position and begins playback — reliable across
+                // browsers without waiting for the postMessage channel.
+                src={buildEmbedSrc(videoId, search.t)}
                 title={video.videoTitle ?? video.summaryTitle ?? 'Video'}
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                 allowFullScreen

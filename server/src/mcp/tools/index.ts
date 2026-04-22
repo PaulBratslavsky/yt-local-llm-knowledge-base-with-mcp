@@ -26,6 +26,9 @@ import { libraryStatsTool } from './library-stats';
 import { generateDigestTool } from './generate-digest';
 import { getReadableArticleTool } from './get-readable-article';
 
+import { reindexEmbeddingsTool } from './reindex-embeddings';
+import { relatedVideosTool } from './related-videos';
+
 let registered = false;
 
 export function registerAllTools(): void {
@@ -59,4 +62,10 @@ export function registerAllTools(): void {
   registerTool(libraryStatsTool);
   registerTool(generateDigestTool);
   registerTool(getReadableArticleTool);
+
+  // Semantic discovery — per-video topical embeddings. Same (model, version)
+  // contract as the client; `reindexEmbeddings` is the maintenance lever
+  // when either changes.
+  registerTool(reindexEmbeddingsTool);
+  registerTool(relatedVideosTool);
 }

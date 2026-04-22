@@ -109,6 +109,17 @@ export type StrapiVideo = {
   embeddingModel: string | null;
   embeddingVersion: number | null;
   embeddingGeneratedAt: string | null;
+  passageEmbeddings: {
+    model: string;
+    version: number;
+    generatedAt: string;
+    chunks: Array<{
+      text: string;
+      startSec: number;
+      endSec: number;
+      embedding: number[];
+    }>;
+  } | null;
   keyTakeaways: StrapiTakeaway[] | null;
   sections: StrapiSection[] | null;
   actionSteps: StrapiActionStep[] | null;
@@ -407,6 +418,25 @@ export async function updateVideoEmbeddingService(input: {
   });
   if (!res.ok) {
     await handleFetchError(res, 'updateVideoEmbeddingService');
+    return { success: false, error: `Strapi error ${res.status}` };
+  }
+  return { success: true };
+}
+
+// Dedicated writer for the Tier-2 passage-index JSON blob.
+export async function updateVideoPassagesService(input: {
+  documentId: string;
+  passageEmbeddings: NonNullable<StrapiVideo['passageEmbeddings']>;
+}): Promise<{ success: true } | { success: false; error: string }> {
+  const res = await fetch(`${STRAPI_URL}/api/videos/${input.documentId}`, {
+    method: 'PUT',
+    headers: strapiHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({
+      data: { passageEmbeddings: input.passageEmbeddings },
+    }),
+  });
+  if (!res.ok) {
+    await handleFetchError(res, 'updateVideoPassagesService');
     return { success: false, error: `Strapi error ${res.status}` };
   }
   return { success: true };

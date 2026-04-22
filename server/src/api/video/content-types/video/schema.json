@@ -127,6 +127,10 @@
     "embeddingGeneratedAt": {
       "type": "datetime"
     },
+    "passageEmbeddings": {
+      "type": "json",
+      "description": "Tier-2 passage-level embeddings for moment search. Self-contained blob holding the chunker output: { model, version, generatedAt, chunks: [{ text, startSec, endSec, embedding }] }. Independent from summaryEmbedding — different invalidation key and chunker."
+    },
     "keyTakeaways": {
       "type": "component",
       "repeatable": true,

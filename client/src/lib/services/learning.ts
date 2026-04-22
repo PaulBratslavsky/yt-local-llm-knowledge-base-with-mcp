@@ -1067,6 +1067,46 @@ export async function generateVideoSummary(
     });
   }
 
+  // Tier-2 passage embeddings for moment search. Same best-effort stance:
+  // N embedding calls (one per ~60s chunk) can fail individually without
+  // blocking the summary. Skipped silently if the transcript segments
+  // aren't available (shouldn't happen for a freshly-generated summary).
+  try {
+    const passStart = performance.now();
+    const segments = transcriptSegments.rawSegments ?? [];
+    if (segments.length === 0) {
+      logPhase(videoId, '⚠ passages skipped — no raw segments');
+    } else {
+      const { computePassageIndex } = await import('#/lib/services/embeddings');
+      const { updateVideoPassagesService } = await import('#/lib/services/videos');
+      const passages = await computePassageIndex({
+        video: updated.video,
+        segments,
+      });
+      const saved = await updateVideoPassagesService({
+        documentId: updated.video.documentId,
+        passageEmbeddings: passages,
+      });
+      if (!saved.success) {
+        logPhase(videoId, '⚠ passages save failed', {
+          error: saved.error,
+          took: ms(passStart),
+        });
+      } else {
+        logPhase(videoId, 'passages ✓ saved', {
+          chunks: passages.chunks.length,
+          model: passages.model,
+          version: passages.version,
+          took: ms(passStart),
+        });
+      }
+    }
+  } catch (err) {
+    logPhase(videoId, '⚠ passages skipped', {
+      error: err instanceof Error ? err.message : 'unknown',
+    });
+  }
+
   clearGenerationStep(videoId);
   logPhase(videoId, '✓ generation complete', { took: ms(runStart) });
   return { success: true, data: updated.video };

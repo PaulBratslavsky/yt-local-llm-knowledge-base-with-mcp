@@ -8,6 +8,7 @@ import {
   semanticSearchVideos,
   type SemanticHit,
 } from '#/data/server-functions/videos';
+import { getMatchTier } from '#/lib/services/embeddings';
 import {
   DIGEST_MAX_VIDEOS,
   DIGEST_MIN_VIDEOS,
@@ -33,7 +34,6 @@ type KeywordResultShape = {
     videos: StrapiVideo[];
     total: number;
     page: number;
-    pageSize: number;
     pageCount: number;
   };
 };
@@ -81,10 +81,16 @@ function FeedPage() {
     loaderData.kind === 'keyword'
       ? loaderData.result.videos
       : loaderData.hits.map((h) => h.video);
-  const scores =
+  // For semantic mode, compute a match tier per hit — derived from rank
+  // + score. Raw cosine saturates around 0.7 so rank-based labels read
+  // better than percentages.
+  const tiers =
     loaderData.kind === 'semantic'
       ? new Map(
-          loaderData.hits.map((h) => [h.video.documentId, h.score] as const),
+          loaderData.hits.map(
+            (h, rank) =>
+              [h.video.documentId, getMatchTier(rank, h.score)] as const,
+          ),
         )
       : null;
 
@@ -228,7 +234,7 @@ function FeedPage() {
               const isSelected = selected.has(video.youtubeVideoId);
               const atCap =
                 selected.size >= DIGEST_MAX_VIDEOS && !isSelected;
-              const score = scores?.get(video.documentId);
+              const tier = tiers?.get(video.documentId);
               return (
                 <VideoCard
                   key={video.documentId}
@@ -238,7 +244,7 @@ function FeedPage() {
                   eligible={eligible}
                   disabled={atCap}
                   onToggle={() => toggleSelected(video.youtubeVideoId)}
-                  similarityScore={score}
+                  matchTier={tier}
                 />
               );
             })}

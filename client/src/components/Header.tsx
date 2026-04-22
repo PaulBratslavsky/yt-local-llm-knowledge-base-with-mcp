@@ -47,6 +47,13 @@ export default function Header() {
             Digests
           </Link>
           <Link
+            to="/search"
+            className="nav-link text-sm"
+            activeProps={{ className: 'nav-link is-active text-sm' }}
+          >
+            Search
+          </Link>
+          <Link
             to="/about"
             className="nav-link text-sm"
             activeProps={{ className: 'nav-link is-active text-sm' }}
