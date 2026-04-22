@@ -275,10 +275,10 @@ function buildLoadPassagesTool(pool: RetrievedPassage[]) {
   return toolDefinition({
     name: 'load_passages',
     description: [
-      'Load the pre-retrieved transcript passages for ONE candidate video.',
-      'Input is the youtubeVideoId of a candidate shown in the CANDIDATES block (not any random video).',
-      'Returns the passages with their pre-assigned [N] citation indices — cite them directly in your answer just like you cite the seed passages.',
-      'Use this to expand context for a promising candidate. Do NOT call it for every candidate; pick the one(s) most likely to answer the question.',
+      'Load the additional transcript passages for ONE candidate video beyond the single anchor passage already shown in its card.',
+      'Input is the youtubeVideoId of a candidate in the CANDIDATE VIDEOS block — never invent or guess IDs.',
+      'Returns all passages for that video with their pre-assigned [N] citation indices (including the anchor, re-exposed). Cite them the same way you cite the anchor.',
+      'Use this ONLY when a claim needs a specific quote, number, or timestamp beyond what the anchor passage or the summary already shows. If the summary already answers the question, SKIP this tool.',
     ].join(' '),
     inputSchema: LoadPassagesInput,
     outputSchema: LoadPassagesOutput,

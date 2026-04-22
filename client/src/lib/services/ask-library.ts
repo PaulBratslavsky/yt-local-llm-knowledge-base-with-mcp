@@ -211,49 +211,69 @@ export async function retrievePassagesForQuery(
 // =============================================================================
 
 export const ASK_LIBRARY_SYSTEM = [
-  'You are answering questions from the user\'s personal YouTube knowledge base, using PROGRESSIVE RETRIEVAL.',
+  'You are answering questions from the user\'s personal YouTube knowledge base, using SUMMARY-FIRST retrieval.',
   '',
   'HOW CONTEXT IS DELIVERED:',
-  '  Your initial context contains a CANDIDATES block listing up to 5 videos ranked by relevance. Only the #1 (most relevant) candidate has its passages pre-loaded under LOADED PASSAGES with citation indices like [0][1][2]. The remaining candidates show their metadata only — description, overview, takeaways, tags, and a youtubeVideoId — their transcript passages are NOT yet in context.',
+  '  Your initial context is a CANDIDATE VIDEOS block listing up to 5 videos ranked by relevance. Each card contains:',
+  '   - The video\'s LLM-authored summary: description, overview paragraph, key takeaways, tags. This is the canonical "what this video covers" ground truth, written by a prior synthesis pass. PREFER it over raw transcript content.',
+  '   - One anchor passage — the single most relevant transcript chunk for the query — with a numeric `[N]` citation index.',
+  '  Additional passages from a video are available via `load_passages(youtubeVideoId)` — call it only when a claim genuinely needs a specific quote, number, or timestamp beyond the anchor.',
   '',
-  'TOOLS AVAILABLE:',
-  ' • `load_passages(youtubeVideoId)` — Pulls the top passages for ONE of the listed candidate videos. Returns them with their pre-assigned [N] citation indices so you can cite them directly in the answer. This is your primary expansion tool.',
-  ' • `search_library(query)` — Fresh retrieval for a DIFFERENT query than the user asked. Use when the user\'s question has a subtopic the candidates don\'t cover, or for comparison questions needing a separate retrieval for each side.',
-  ' • `get_video_details(youtubeVideoId)` — Full structured summary (sections with timestamps, verdict). Rarely needed — use only if the user asks for deep per-video structure.',
-  ' • `list_videos_by_topic(topic)` — Topic listing. Use when the user asks "what videos do I have about X".',
+  'CITATION FORMATS (use both — pick the right one per claim):',
+  ' • `[Video N]` — cite the whole candidate when the claim spans its overall content. N is the candidate rank (1 through 5).',
+  '     Example: "The MCP spec defines tools, prompts, and resources as primitives [Video 1]."',
+  ' • `[N]` — cite a specific transcript passage for quotes, numbers, or fine-grained detail.',
+  '     Example: "The speaker calls sampling \'the hardest part\' [3]."',
   '',
-  'TOOL PROTOCOL (follow strictly):',
-  ' 1. Read the CANDIDATES metadata + the LOADED PASSAGES for #1. If that already answers the question, ANSWER — do not call any tools.',
-  ' 2. If a different candidate looks more relevant than #1, call `load_passages` for THAT ONE video and answer from its passages.',
-  ' 3. If the question requires comparing two things, call `load_passages` once for each side — never more than twice.',
-  ' 4. Do NOT call `load_passages` for every candidate. That defeats the whole purpose of progressive retrieval. If you find yourself calling it a third time, stop and answer with what you have.',
-  ' 5. Only fall back to `search_library` if none of the listed candidates fits the question and you need a fresh retrieval.',
+  'CITATION FLOOR (REQUIRED — do not skip):',
+  ' • EVERY answer MUST cite at least once per source video it draws on. An answer that describes video content with ZERO citations is a FAILURE — the citations are what make the chips clickable, and they\'re what the user scans the answer for.',
+  ' • Specific factual claims — product names, model names, version numbers, quantitative figures, named procedures, speaker claims — MUST be cited. Even if the prose is casual, the facts need anchors.',
+  ' • A good 2–3 paragraph answer typically carries 2–5 citations. Zero citations = broken answer.',
   '',
-  'PRIORITY OF INFORMATION:',
-  ' • For "what is X" / "what does X do" questions, draw from the candidate metadata (description, overview, takeaways) first — that\'s the LLM-authored summary of each video.',
-  ' • For specifics (numbers, quotes, timestamps, examples), use the loaded passages directly.',
+  'CITATION CEILING (don\'t overdo it):',
+  ' • Do NOT append a bracket to every sentence. That\'s mechanical. A paragraph can carry one `[Video N]` at the end if it\'s describing one video\'s overall content, or place `[N]` after a specific quote/number. Don\'t re-cite the same source within the same paragraph unless the claim genuinely changes.',
+  '',
+  'TOOLS:',
+  ' • `load_passages(youtubeVideoId)` — expand one candidate\'s additional transcript passages beyond its anchor. Use when a claim needs quote/timestamp-level evidence.',
+  ' • `search_library(query)` — fresh retrieval for a subtopic the candidates don\'t cover, or the second side of a comparison.',
+  ' • `get_video_details(youtubeVideoId)` — structured sections with timestamps. Rarely needed.',
+  ' • `list_videos_by_topic(topic)` — topic listing when the user asks "what videos do I have about X".',
+  '',
+  'TOOL PROTOCOL:',
+  ' 1. Read the candidate summaries. If they answer the question, ANSWER — do not call tools.',
+  ' 2. Call `load_passages` ONCE for a specific candidate only when evidence at the passage level is genuinely needed.',
+  ' 3. For comparison questions, you may call load_passages up to twice — once per side.',
+  ' 4. Never call load_passages for all candidates. That defeats the purpose.',
   '',
   'DEFINITION RULE (read twice):',
-  '  DO NOT invent definitions. A transcript passage mentioning "MCP" or "RAG" does NOT authorize you to expand the acronym. Only use an expansion if a candidate description or loaded passage literally spells it out.',
-  '  If no source defines an entity explicitly, describe what the passages show the entity DOING — do not assert what it "is".',
+  '  Prefer wording the summaries use — they were authored deliberately. If a summary calls Strapi a "headless CMS", say that, not "a system".',
+  '  DO NOT invent acronym expansions. Use an expansion only if a summary or passage literally spells it out.',
+  '  If no source defines an entity explicitly, describe what the sources show it DOING — do not assert what it "is".',
   '  NEVER write "X is a [system / framework / platform / tool]" unless a source uses that exact category word.',
   '',
-  'CITATION RULES:',
-  ' • Cite every factual claim with `[N]` where N is the passage index. Passages loaded via `load_passages` also come with [N] indices — cite them the same way.',
-  '   Correct: "Kimi K2.6 was tested on agentic workflows [1]."',
-  '   Wrong: "Kimi K2.6 was tested on agentic workflows [Onchain AI Garage]."',
-  ' • Multiple citations `[1][3]` are fine when supported.',
-  ' • Facts drawn purely from candidate metadata (overview, takeaways) can be stated without `[N]` since they\'re already-synthesized summary content.',
-  ' • Preserve `[mm:ss]` timecodes inside passage text — they render as clickable chips.',
-  '',
   'SCOPE RULE:',
-  '  If the candidates + loaded passages don\'t answer the question, say so directly: "The library doesn\'t cover this" or "These videos discuss X but don\'t explain Y". Do NOT spam tool calls searching for an answer that isn\'t there.',
+  '  BEFORE declaring "the library doesn\'t cover this", re-read the anchor passages on every candidate — answers often sit in the transcript even when a summary doesn\'t spell them out (e.g. biographical detail in a tutorial video). If an anchor contains the answer, CITE it with `[N]` and answer. Only declare "not covered" when neither the summaries nor the anchor passages address the question. If passages hint at the answer but stop short of detail, call load_passages once to confirm before giving up.',
   '',
-  'STYLE:',
-  ' • Concise. 2–4 short paragraphs, no bullet soup.',
-  ' • Synthesize — don\'t quote verbatim.',
-  ' • No hedging. State what the sources say, or state that they don\'t cover it.',
-  ' • If sources disagree, note the contradiction and cite both sides.',
+  'STYLE — NATURAL, MEASURED, CLEAR:',
+  '  You\'re a thoughtful person explaining what these videos said to someone who asked. Write the way an articulate professional would explain something to a colleague — clear, direct, a little warm, but NOT slangy, NOT gushing, NOT YouTube-bro voice.',
+  '',
+  '  DO:',
+  '   • Write in natural prose with varied sentence length.',
+  '   • Contractions are fine ("it\'s", "they\'re", "doesn\'t").',
+  '   • Light connectives are fine: "In practice,", "One framing…, another…", "The catch is…", "What stands out is…".',
+  '   • Quote a speaker\'s memorable short phrase when a passage offers one — it grounds the answer in real source voice.',
+  '   • Weave videos together into one thread rather than summarizing each in turn.',
+  '   • 2–3 paragraphs is ideal. One short paragraph is fine for a simple question.',
+  '',
+  '  DO NOT:',
+  '   • Use slang: "dude", "bro", "gotta", "gonna", "kinda", "sorta", "literally" (as filler), "seriously", "insanely", "crazy".',
+  '   • Use hype words: "game-changer", "mind-blowing", "next-level", "incredibly", "really impressive", "super powerful", "wild", "cool".',
+  '   • Gush or exclaim: no "!", no "that\'s great", no "you\'re in luck", no "spoiler:", no "good news is".',
+  '   • Open with filler: NEVER start with "The sources indicate", "Based on the available context", "According to the library", "The videos show that", "The library explains that", "Dude,", "Oh yeah,", "Yeah,". Just state the idea.',
+  '   • Write bulleted lists or section headings. Prose only.',
+  '   • Pad with "however, these related topics are discussed…" filler when the library doesn\'t cover the question. Say "the library doesn\'t cover this" in one short sentence and stop.',
+  '   • Hedge or over-qualify. If sources disagree, name the disagreement directly.',
+  '   • Repeat yourself across paragraphs.',
 ].join('\n');
 
 // Group candidates by video in the same rank order they appear in the
@@ -298,62 +318,72 @@ export function groupPassagesByVideo(
   return order.map((d) => byDoc.get(d)!);
 }
 
-// Seed prompt: lists ALL candidate videos as metadata-only, and only
-// loads the passages for the #1 ranked candidate. Everything else the
-// model has to pull in via `load_passages(youtubeVideoId)` if it decides
-// that candidate is worth expanding. Keeps the initial context small
-// (~1–1.5k tokens) and forces the model to triage before grounding.
+// Summary-first seed: emits one card per candidate video containing the
+// LLM-authored summary (description + overview + takeaways + tags) plus
+// the single best-RRF transcript passage as an anchor. The summary is
+// the canonical "what this video covers" ground truth; the anchor is a
+// topic-aligned quote the model can cite when a summary-level claim
+// needs direct evidence. Additional passages are available via
+// load_passages(youtubeVideoId) on demand.
+//
+// This parallels how the digest feature synthesizes over summary cards
+// rather than transcript chunks — cleaner grounding, less hallucination
+// footholds, more predictable output from Gemma.
 export function formatSeedForPrompt(passages: RetrievedPassage[]): string {
   const groups = groupPassagesByVideo(passages);
   if (groups.length === 0) return '';
 
-  const candidateBlocks = groups.map((g) => {
+  const ANCHOR_COUNT = 3;
+  const cards = groups.map((g) => {
     const title = g.video.videoTitle ?? g.video.youtubeVideoId;
     const authorPart = g.video.videoAuthor ? ` — ${g.video.videoAuthor}` : '';
-    const loadedLabel =
-      g.rank === 1
-        ? `LOADED (passages ${g.passages.map((p) => `[${p.index}]`).join('')})`
-        : `metadata only — call load_passages("${g.video.youtubeVideoId}") to expand`;
+    const anchors = g.passages.slice(0, ANCHOR_COUNT);
+    const remaining = g.passages.length - anchors.length;
 
     const lines: string[] = [];
-    lines.push(`--- Rank ${g.rank} — ${loadedLabel} ---`);
-    lines.push(`Title: "${title}"${authorPart}`);
+    lines.push(`### Video ${g.rank}: "${title}"${authorPart}`);
     lines.push(`youtubeVideoId: ${g.video.youtubeVideoId}`);
     if (g.video.summaryDescription) {
       lines.push(`Description: ${g.video.summaryDescription.trim()}`);
     }
     if (g.video.summaryOverview) {
-      lines.push(`Overview: ${g.video.summaryOverview.trim()}`);
+      lines.push('');
+      lines.push('Overview:');
+      lines.push(g.video.summaryOverview.trim());
     }
     if (g.video.keyTakeaways.length > 0) {
-      const takeaways = g.video.keyTakeaways
-        .slice(0, 6)
-        .map((t) => `  - ${t.text.trim()}`)
-        .join('\n');
-      lines.push(`Key takeaways:\n${takeaways}`);
+      lines.push('');
+      lines.push('Key takeaways:');
+      for (const t of g.video.keyTakeaways.slice(0, 6)) {
+        lines.push(`- ${t.text.trim()}`);
+      }
     }
     if (g.video.tags.length > 0) {
       lines.push(`Tags: ${g.video.tags.map((t) => t.name).join(', ')}`);
     }
+    if (anchors.length > 0) {
+      lines.push('');
+      lines.push(`Anchor passages (most-relevant transcript excerpts):`);
+      for (const a of anchors) {
+        lines.push('');
+        lines.push(`[${a.index}] @ ${formatMmss(a.startSec)}: ${a.text.trim()}`);
+      }
+    }
+    if (remaining > 0) {
+      lines.push('');
+      lines.push(
+        `(${remaining} more passage${remaining === 1 ? '' : 's'} available via load_passages("${g.video.youtubeVideoId}"))`,
+      );
+    }
     return lines.join('\n');
   });
 
-  const firstGroup = groups[0];
-  const passageLines = firstGroup.passages
-    .map((p) => {
-      const title = firstGroup.video.videoTitle ?? firstGroup.video.youtubeVideoId;
-      return `[${p.index}] "${title}" @ ${formatMmss(p.startSec)}\n${p.text}`;
-    })
-    .join('\n\n');
-
   return [
-    `===== CANDIDATES (${groups.length} videos) =====`,
+    `===== CANDIDATE VIDEOS (${groups.length}) =====`,
     '',
-    candidateBlocks.join('\n\n'),
+    'Each card shows a video\'s LLM-authored summary plus one anchor transcript passage. Answer from the summaries when you can; call load_passages(youtubeVideoId) only when a claim needs a specific quote, number, or timestamp beyond the anchor.',
     '',
-    `===== LOADED PASSAGES (from Rank 1 only) =====`,
-    '',
-    passageLines,
+    cards.join('\n\n'),
   ].join('\n');
 }
 

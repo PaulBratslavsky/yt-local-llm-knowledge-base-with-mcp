@@ -219,13 +219,20 @@ function MessageRow({ message }: Readonly<{ message: ChatMessage }>) {
 
 function AssistantMessage({ message }: Readonly<{ message: ChatMessage }>) {
   const allCitations = message.citations ?? [];
-  // Show only citations the model actually referenced via [N] markers in
-  // the answer. Progressive retrieval means the candidate pool is ~15
-  // passages wide, but the model often cites only 2–6 of them — the
-  // disclosure should reflect what was used, not what was available.
-  const referenced = extractReferencedIndices(message.content);
+  // Disclosure reflects only citations actually referenced in the
+  // answer. Two forms:
+  //   [N]       → specific passage, citation.index matches N
+  //   [Video N] → whole candidate, maps to that video's anchor
+  // While streaming, show the retrieval pool so the UI isn't empty
+  // during the typing animation. Once done, drop to exactly what was
+  // cited — an empty set means the disclosure hides (no dangling
+  // "5 videos · 15 passages" when the model answered without citing).
+  const referenced = collectReferencedCitationIndices(
+    message.content,
+    allCitations,
+  );
   const citations =
-    message.status === 'done' && referenced.size > 0
+    message.status === 'done'
       ? allCitations.filter((c) => referenced.has(c.index))
       : allCitations;
   if (message.status === 'pending') {
@@ -279,34 +286,67 @@ function AssistantMessage({ message }: Readonly<{ message: ChatMessage }>) {
   );
 }
 
-// Collect the set of citation indices the model actually referenced
-// via `[N]` markers in the answer text. Used to trim the citations
-// disclosure down to what was used, instead of every candidate the
-// retriever surfaced.
-function extractReferencedIndices(text: string): Set<number> {
+// Build the "Video N → anchor citation" lookup. Citations arrive in
+// rank order grouped by video (video 1's passages, then video 2's, …),
+// so the first citation per youtubeVideoId is that video's anchor.
+function buildVideoAnchorIndex(citations: Citation[]): Citation[] {
+  const seen = new Set<string>();
+  const anchors: Citation[] = [];
+  for (const c of citations) {
+    if (seen.has(c.youtubeVideoId)) continue;
+    seen.add(c.youtubeVideoId);
+    anchors.push(c);
+  }
+  return anchors;
+}
+
+// Collect citation indices the model actually referenced. `[N]` maps
+// directly to citation.index; `[Video N]` maps to the Nth candidate's
+// anchor citation so the disclosure has something to show.
+function collectReferencedCitationIndices(
+  text: string,
+  citations: Citation[],
+): Set<number> {
   const seen = new Set<number>();
-  const re = /\[(\d+)\]/g;
+  const anchors = buildVideoAnchorIndex(citations);
+  const re = /\[(Video\s+)?(\d+)\]/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
-    const n = parseInt(m[1], 10);
-    if (!Number.isNaN(n)) seen.add(n);
+    const n = parseInt(m[2], 10);
+    if (Number.isNaN(n)) continue;
+    if (m[1]) {
+      const anchor = anchors[n - 1];
+      if (anchor) seen.add(anchor.index);
+    } else {
+      seen.add(n);
+    }
   }
   return seen;
 }
 
-// Walk the streamed answer text and replace `[N]` markers with markdown
-// links to the corresponding citation's learn-page deep link. Keeps
-// chips inline with the prose — reading the answer flows naturally.
+// Walk the streamed answer text and replace citation markers with
+// markdown links. `[N]` → deep-link to that passage's timestamp.
+// `[Video N]` → link to the candidate's learn page (no timestamp,
+// since the claim is about the video as a whole).
 function annotateCitations(text: string, citations: Citation[]): string {
   if (citations.length === 0) return text;
   const byIndex = new Map(citations.map((c) => [c.index, c]));
-  return text.replace(/\[(\d+)\]/g, (match, numStr: string) => {
-    const n = parseInt(numStr, 10);
-    const c = byIndex.get(n);
-    if (!c) return match;
-    const startSec = Math.max(0, Math.floor(c.startSec));
-    return `[${match}](/learn/${c.youtubeVideoId}?t=${startSec})`;
-  });
+  const anchors = buildVideoAnchorIndex(citations);
+  return text.replace(
+    /\[(Video\s+)?(\d+)\]/gi,
+    (match, prefix: string | undefined, numStr: string) => {
+      const n = parseInt(numStr, 10);
+      if (prefix) {
+        const v = anchors[n - 1];
+        if (!v) return match;
+        return `[${match}](/learn/${v.youtubeVideoId})`;
+      }
+      const c = byIndex.get(n);
+      if (!c) return match;
+      const startSec = Math.max(0, Math.floor(c.startSec));
+      return `[${match}](/learn/${c.youtubeVideoId}?t=${startSec})`;
+    },
+  );
 }
 
 function CitationCard({ citation }: Readonly<{ citation: Citation }>) {

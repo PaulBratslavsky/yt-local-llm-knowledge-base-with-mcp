@@ -62,13 +62,15 @@ export const Route = createFileRoute('/api/ask')({
           });
         }
 
-        // Retrieve top 15 passages. Shared helper so this stays aligned
-        // with /search moment-search ranking.
+        // Retrieve up to 25 passages across top 5 videos. Seed shows
+        // the top 3 per video; the extra 2 stay available via
+        // load_passages so progressive expansion still has unseen
+        // material to reveal on demand.
         let passages: RetrievedPassage[];
         try {
           passages = await retrievePassagesForQuery(question, {
             maxVideos: 5,
-            passagesPerVideo: 3,
+            passagesPerVideo: 5,
             minScore: 0.35,
           });
         } catch (err) {
@@ -102,8 +104,11 @@ export const Route = createFileRoute('/api/ask')({
         const uniqueVideoCount = new Set(
           passages.map((p) => p.video.documentId),
         ).size;
+        // Pool = retrieval output (all candidates available for load_passages).
+        // Seed = what actually lands in the initial prompt (2 anchors per video).
+        const seedAnchors = Math.min(passages.length, uniqueVideoCount * 2);
         console.log(
-          `[${new Date().toISOString().slice(11, 23)}] [ask] "${question}" → ${uniqueVideoCount} videos / ${passages.length} passages → synthesizing`,
+          `[${new Date().toISOString().slice(11, 23)}] [ask] "${question}" → pool: ${uniqueVideoCount} videos / ${passages.length} passages · seed: ${seedAnchors} anchors → synthesizing`,
         );
 
         const userPrompt = [
@@ -131,7 +136,7 @@ export const Route = createFileRoute('/api/ask')({
             { role: 'user', content: userPrompt },
           ] as never,
           tools,
-          temperature: 0.2,
+          temperature: 0.4,
         });
 
         // Build a combined stream: one CITATIONS frame up front, then
