@@ -1,11 +1,19 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Accordion } from 'radix-ui';
 import { buildMarkdownComponents, stripInlineTimecodes } from './TimecodeMarkdown';
 import { Button } from '#/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from '#/components/ui/dropdown-menu';
 import { getChatResponseEvidence } from '#/data/server-functions/videos';
 import { summarizeToNote } from '#/data/server-functions/notes';
+import { listSkills, type Skill } from '#/lib/skills';
 import type { EvidenceCitation } from '#/lib/services/transcript';
 
 export type ToolCallRecord = {
@@ -67,11 +75,16 @@ type StreamEvent =
 async function* streamChatResponse(
   videoId: string,
   messages: Message[],
+  skillSlug: string | null,
 ): AsyncGenerator<StreamEvent, void, void> {
   const res = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ videoId, messages }),
+    body: JSON.stringify({
+      videoId,
+      messages,
+      skillSlug: skillSlug ?? undefined,
+    }),
   });
 
   if (!res.ok) {
@@ -165,6 +178,11 @@ export function VideoChat({ videoId, onSeek, onNoteCreated, className }: Readonl
   const [error, setError] = useState<string | null>(null);
   const [summarizing, setSummarizing] = useState(false);
   const [summaryMsg, setSummaryMsg] = useState<string | null>(null);
+  // Skills are code modules (see `#/lib/skills`), resolved synchronously
+  // at render time — no DB round-trip, no loading state. Memoized so the
+  // registry lookup isn't repeated on every render.
+  const skills = useMemo<Skill[]>(() => listSkills('video-chat'), []);
+  const [skillSlug, setSkillSlug] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -172,11 +190,37 @@ export function VideoChat({ videoId, onSeek, onNoteCreated, className }: Readonl
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [messages]);
 
+  // Switching skills auto-primes the conversation with the skill's
+  // `defaultGreeting` (if any) — BUT only while the user hasn't
+  // engaged yet. Presence of a single auto-primer greeting doesn't
+  // count as engagement; only a user message does. This lets the user
+  // pick a skill, see the greeting, switch to a different skill, and
+  // see THAT greeting — without locking them into the first pick.
+  //
+  // Once the user sends even one message, we preserve conversation
+  // history on skill switch and let the new persona take over on the
+  // next assistant turn.
+  const changeSkill = (nextSlug: string | null) => {
+    if (pending) return;
+    setSkillSlug(nextSlug);
+    const hasUserMessages = messages.some((m) => m.role === 'user');
+    if (hasUserMessages) return;
+    const selected = nextSlug
+      ? skills.find((s) => s.slug === nextSlug)
+      : null;
+    const greeting = selected?.defaultGreeting?.trim();
+    setMessages(greeting ? [{ role: 'assistant', content: greeting }] : []);
+  };
+
   const clear = () => {
     if (pending) return;
-    setMessages([]);
     setError(null);
     setSummaryMsg(null);
+    // If the active skill has a greeting, re-seed it so the conversation
+    // starts from the same opening after Clear. Otherwise truly empty.
+    const active = skillSlug ? skills.find((s) => s.slug === skillSlug) : null;
+    const greeting = active?.defaultGreeting?.trim();
+    setMessages(greeting ? [{ role: 'assistant', content: greeting }] : []);
   };
 
   const summarize = async () => {
@@ -187,7 +231,12 @@ export function VideoChat({ videoId, onSeek, onNoteCreated, className }: Readonl
       .filter((m) => m.content && m.content.trim().length > 0)
       .map((m) => ({ role: m.role, content: m.content }));
     const res = await summarizeToNote({
-      data: { videoIds: [videoId], messages: payload, source: 'chat' },
+      data: {
+        videoIds: [videoId],
+        messages: payload,
+        source: 'chat',
+        skillSlug: skillSlug ?? undefined,
+      },
     });
     setSummarizing(false);
     if (res.status === 'ok') {
@@ -233,7 +282,7 @@ export function VideoChat({ videoId, onSeek, onNoteCreated, className }: Readonl
         });
       };
 
-      for await (const event of streamChatResponse(videoId, history)) {
+      for await (const event of streamChatResponse(videoId, history, skillSlug)) {
         if (event.kind === 'text') {
           accumulated += event.delta;
           pushUpdate();
@@ -297,47 +346,59 @@ export function VideoChat({ videoId, onSeek, onNoteCreated, className }: Readonl
 
   return (
     <section
-      className={`flex min-h-0 flex-col ${className ?? 'mb-12'}`}
+      className={`flex min-h-0 min-w-0 flex-col ${className ?? 'mb-12'}`}
       aria-label="Chat with this video"
     >
-      <header className="shrink-0 flex items-center justify-between gap-3 pb-4">
-        <div>
-          <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--ink-muted)]">
-            Ask about this video
-          </h2>
-          <p className="mt-1 text-xs text-[var(--ink-muted)]">
-            Answers come from the transcript. Timestamps seek the player.
-          </p>
-        </div>
-        {messages.length > 0 && (
-          <div className="flex shrink-0 items-center gap-2">
-            {messages.filter((m) => m.content.trim().length > 0).length >= 2 && (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => void summarize()}
-                disabled={pending || summarizing}
-              >
-                {summarizing ? 'Saving…' : 'Summarize to note'}
-              </Button>
-            )}
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={clear}
-              disabled={pending || summarizing}
-            >
-              Clear
-            </Button>
+      <header className="shrink-0 pb-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--ink-muted)]">
+              Ask about this video
+            </h2>
+            <p className="mt-1 text-xs text-[var(--ink-muted)]">
+              Answers come from the transcript. Timestamps seek the player.
+            </p>
           </div>
-        )}
+          <div className="flex shrink-0 items-center gap-2">
+            {skills.length > 0 && (
+              <SkillPicker
+                skills={skills}
+                value={skillSlug}
+                onChange={changeSkill}
+                disabled={pending}
+              />
+            )}
+            {messages.length > 0 && (
+              <>
+                {messages.filter((m) => m.content.trim().length > 0).length >= 2 && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void summarize()}
+                    disabled={pending || summarizing}
+                  >
+                    {summarizing ? 'Saving…' : 'Summarize to note'}
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={clear}
+                  disabled={pending || summarizing}
+                >
+                  Clear
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
       </header>
 
       <div
         ref={scrollRef}
-        className="min-h-0 flex-1 overflow-y-auto"
+        className="min-h-0 min-w-0 flex-1 overflow-y-auto"
       >
         {messages.length === 0 && (
           <div className="flex flex-wrap gap-2 pb-4">
@@ -441,7 +502,7 @@ function MessageRow({
   const isEmpty = message.content.length === 0 && streaming;
 
   return (
-    <div className="mr-auto max-w-[95%]">
+    <div className="mr-auto min-w-0 max-w-[95%]">
       {message.toolCalls && message.toolCalls.length > 0 && (
         <div className="mb-2">
           <ToolCallsPanel toolCalls={message.toolCalls} />
@@ -453,7 +514,7 @@ function MessageRow({
           <span>Thinking…</span>
         </div>
       ) : (
-        <div className="chat-md rounded-2xl rounded-bl-sm border border-[var(--line)] bg-[var(--bg-subtle)] px-4 py-3 text-sm leading-relaxed text-[var(--ink)]">
+        <div className="chat-md min-w-0 rounded-2xl rounded-bl-sm border border-[var(--line)] bg-[var(--bg-subtle)] px-4 py-3 text-sm leading-relaxed text-[var(--ink)]">
           {/* Strip inline `[mm:ss]` / `(mm:ss)` timecodes from the chat body
               — the Sources accordion below shows each citation with its
               transcript excerpt, so inline chips are redundant. */}
@@ -750,4 +811,72 @@ function formatResult(result: string): string {
   } catch {
     return result;
   }
+}
+
+// Skill picker — styled DropdownMenu (shadcn/radix). Sized to sit
+// inline with the chat's action buttons (Summarize / Clear) in the
+// header row. The open state is fully themed (no native OS chrome).
+function SkillPicker({
+  skills,
+  value,
+  onChange,
+  disabled,
+}: Readonly<{
+  skills: Skill[];
+  value: string | null;
+  onChange: (slug: string | null) => void;
+  disabled: boolean;
+}>) {
+  const active = value ? skills.find((s) => s.slug === value) : null;
+  const label = active?.name ?? 'Default';
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        disabled={disabled}
+        className={
+          'inline-flex h-8 items-center gap-1 rounded-md border border-[var(--line)] bg-[var(--bg-subtle)] px-2.5 text-xs font-medium text-[var(--ink)] transition focus:outline-none focus:border-[var(--line-strong)] ' +
+          (disabled
+            ? 'cursor-not-allowed opacity-50'
+            : 'cursor-pointer hover:border-[var(--line-strong)]')
+        }
+        aria-label={`Chat mode: ${label}`}
+        title={active?.description ?? 'Default persona'}
+      >
+        <span>{label}</span>
+        <svg
+          viewBox="0 0 20 20"
+          className="h-3 w-3 text-[var(--ink-muted)]"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          aria-hidden="true"
+        >
+          <path d="M6 8l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-[240px]">
+        <DropdownMenuRadioGroup
+          value={value ?? ''}
+          onValueChange={(next) => onChange(next || null)}
+        >
+          {skills.map((skill) => (
+            <DropdownMenuRadioItem
+              key={skill.slug}
+              value={skill.slug}
+              className="flex flex-col items-start gap-0.5 px-2 py-1.5"
+            >
+              <span className="text-xs font-medium text-[var(--ink)]">
+                {skill.name}
+              </span>
+              {skill.description && (
+                <span className="text-[0.65rem] leading-snug text-[var(--ink-muted)]">
+                  {skill.description}
+                </span>
+              )}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 }

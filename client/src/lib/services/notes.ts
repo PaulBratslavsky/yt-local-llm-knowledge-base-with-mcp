@@ -24,6 +24,7 @@ import {
   type TimedTextSegment,
 } from './transcript';
 import { fetchTranscriptByVideoIdService, type StrapiVideo } from './videos';
+import { getSkill } from '#/lib/skills';
 
 type ServiceResult<T> = { success: true; data: T } | { success: false; error: string };
 
@@ -258,6 +259,11 @@ function stripFences(raw: string): string {
 export async function summarizeConversationToNote(input: {
   video: StrapiVideo;
   messages: ConversationMessage[];
+  /** Active chat skill at the time of save. If the skill defines its own
+   * `notePrompt`, that becomes the system prompt — so Social Post saves
+   * preserve drafts verbatim, Tutor saves capture the learning arc, etc.
+   * Omitted / unknown slug → fall back to the generic NOTE_SYSTEM. */
+  skillSlug?: string | null;
 }): Promise<ServiceResult<NoteSummary>> {
   const trimmedMessages = input.messages.filter(
     (m) => m.content && m.content.trim().length > 0,
@@ -300,13 +306,19 @@ export async function summarizeConversationToNote(input: {
       : 'Full transcript: (unavailable — rely on the conversation alone)',
   ].join('\n');
 
+  // Skill-aware system prompt: if the active skill provides a `notePrompt`,
+  // use that (Social Post → preserve drafts verbatim; Tutor → first-person
+  // learning note). Otherwise fall back to the generic study-note format.
+  const skill = input.skillSlug ? getSkill(input.skillSlug) : null;
+  const systemPrompt = skill?.notePrompt ?? NOTE_SYSTEM;
+
   try {
     const raw = (await withRetry(
       () =>
         chat({
           adapter: summaryAdapter,
           messages: [
-            { role: 'system', content: NOTE_SYSTEM },
+            { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt },
           ] as never,
           stream: false,

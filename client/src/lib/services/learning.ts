@@ -1291,7 +1291,22 @@ async function retrieveChunks(
   return searchBM25MultiQuery(video.transcriptSegments.bm25, queries, CHAT_TOP_K);
 }
 
-export function buildChatSystemPrompt(
+// Default persona used when no skill is selected. Matches the Q&A skill's
+// prompt (which is seeded in Strapi as the user-editable mirror) — kept
+// inline here so the default Q&A path doesn't require a DB round-trip.
+// If you change this, also update the `qa` skill in `server/src/seed-skills.ts`.
+const DEFAULT_VIDEO_CHAT_PERSONA = [
+  'You answer questions about a single YouTube video. You will NOT be shown the full transcript — only the top passages retrieved for this specific question, plus the AI-generated sections and takeaways as semantic anchors.',
+  'Ground every claim in the retrieved passages or sections. If nothing in the provided material answers the question, say so plainly — do not invent.',
+  'When citing, use `[mm:ss]` (or `[h:mm:ss]`) timecode notation. Prefer timecodes from the retrieved passages (they are grounded); fall back to section timecodes when appropriate.',
+  'Keep answers concise (2–4 short paragraphs). No preambles like "Great question!". Use markdown for structure (bold, lists) when it actually helps clarity.',
+].join('\n');
+
+// Grounding context block: meta + sections + takeaways + retrieved
+// passages + always-on tool-availability rule. Skills (and the default
+// persona) are prepended to this block; it stays stable regardless of
+// which skill is active so the model always has the same source material.
+function buildVideoGroundingContext(
   video: StrapiVideo,
   retrieved: TranscriptChunk[],
 ): string {
@@ -1324,12 +1339,7 @@ export function buildChatSystemPrompt(
     .join('\n');
 
   return [
-    'You answer questions about a single YouTube video. You will NOT be shown the full transcript — only the top passages retrieved for this specific question, plus the AI-generated sections and takeaways as semantic anchors.',
-    'Ground every claim in the retrieved passages or sections. If nothing in the provided material answers the question, say so plainly — do not invent.',
-    'When citing, use `[mm:ss]` (or `[h:mm:ss]`) timecode notation. Prefer timecodes from the retrieved passages (they are grounded); fall back to section timecodes when appropriate.',
-    'Keep answers concise (2–4 short paragraphs). No preambles like "Great question!". Use markdown for structure (bold, lists) when it actually helps clarity.',
-    '',
-    'You have ONE external tool available: `web_search(query)` — use it ONLY when the retrieved passages genuinely do not answer the user\'s question (e.g., they ask about something outside the video, or want current/external information). When you do use it, cite the source URL inline. Never call `web_search` for information that IS in the retrieved passages.',
+    'TOOLS AVAILABLE: `web_search(query)` — use it ONLY when the retrieved passages genuinely do not answer the user\'s question (they ask about something outside the video, or want current/external information). When you do use it, cite the source URL inline. Never call `web_search` for information that IS in the retrieved passages.',
     '',
     meta,
     '',
@@ -1342,6 +1352,23 @@ export function buildChatSystemPrompt(
     '---- Retrieved transcript passages (top matches for the user question) ----',
     retrievedBlock,
   ].join('\n');
+}
+
+// Compose a chat system prompt as PERSONA + GROUNDING. Persona can come
+// from a Skill (the picker in the UI) or fall back to the baked-in Q&A
+// default. Grounding stays constant across personas — it's the source
+// material. Keeps skills focused purely on HOW to behave; WHAT to reason
+// over is provided by grounding regardless of skill choice.
+export function buildChatSystemPrompt(
+  video: StrapiVideo,
+  retrieved: TranscriptChunk[],
+  skillPrompt?: string | null,
+): string {
+  const persona = skillPrompt && skillPrompt.trim().length > 0
+    ? skillPrompt
+    : DEFAULT_VIDEO_CHAT_PERSONA;
+  const grounding = buildVideoGroundingContext(video, retrieved);
+  return `${persona}\n\n${grounding}`;
 }
 
 export async function askAboutVideoService(
@@ -1373,14 +1400,16 @@ export async function askAboutVideoService(
 
 // Exposed for the streaming endpoint (`api.chat.tsx`) so it can reuse the
 // same retrieval path and prompt shape without duplicating the logic.
+// `skillPrompt` is optional; when omitted the default Q&A persona is used.
 export async function prepareChatPrompt(
   video: StrapiVideo,
   messages: ChatMessage[],
+  opts?: { skillPrompt?: string | null },
 ): Promise<{ system: string; retrievedCount: number }> {
   const query = extractLatestUserQuery(messages);
   const retrieved = await retrieveChunks(video, query);
   return {
-    system: buildChatSystemPrompt(video, retrieved),
+    system: buildChatSystemPrompt(video, retrieved, opts?.skillPrompt ?? null),
     retrievedCount: retrieved.length,
   };
 }

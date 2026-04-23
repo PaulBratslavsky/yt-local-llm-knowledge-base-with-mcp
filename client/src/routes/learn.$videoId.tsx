@@ -257,6 +257,7 @@ function SummaryView({
           ) : view === 'notes' ? (
             <NotesPane
               videoDocumentId={video.documentId}
+              videoYoutubeId={video.youtubeVideoId}
               onSeek={seekTo}
               refreshKey={notesRefreshKey}
             />
@@ -269,7 +270,7 @@ function SummaryView({
             remaining height. On lg+ the aside is sticky so the video stays
             visible while the left column scrolls. Bordered on the left to
             separate from the summary panel. */}
-        <aside className="flex min-h-0 flex-col bg-[var(--card)] lg:sticky lg:top-16 lg:max-h-[calc(100vh-4rem)] lg:border-l lg:border-[var(--line)]">
+        <aside className="flex min-h-0 min-w-0 flex-col bg-[var(--card)] lg:sticky lg:top-16 lg:max-h-[calc(100vh-4rem)] lg:border-l lg:border-[var(--line)]">
           <div className="bg-black">
             <div className="relative aspect-video w-full">
               <iframe

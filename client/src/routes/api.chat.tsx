@@ -2,6 +2,7 @@ import { createFileRoute } from '@tanstack/react-router';
 import { chat, toServerSentEventsResponse } from '@tanstack/ai';
 import { createOllamaChat } from '@tanstack/ai-ollama';
 import { fetchVideoByVideoIdService } from '#/lib/services/videos';
+import { getSkill } from '#/lib/skills';
 import { prepareChatPrompt } from '#/lib/services/learning';
 import { webSearchTool } from '#/lib/services/chat-tools';
 import { OLLAMA_HOST, OLLAMA_CHAT_MODEL as CHAT_MODEL } from '#/lib/env';
@@ -101,7 +102,11 @@ export const Route = createFileRoute('/api/chat')({
   server: {
     handlers: {
       POST: async ({ request }) => {
-        let body: { videoId?: string; messages?: ChatMessage[] };
+        let body: {
+          videoId?: string;
+          messages?: ChatMessage[];
+          skillSlug?: string;
+        };
         try {
           body = await request.json();
         } catch {
@@ -120,19 +125,34 @@ export const Route = createFileRoute('/api/chat')({
           return new Response('Summary not ready', { status: 409 });
         }
 
-        const { system, retrievedCount } = await prepareChatPrompt(video, body.messages);
+        // Skill lookup — synchronous, in-memory registry (`#/lib/skills`).
+        // Unknown slug falls back to the default persona; logged so
+        // misconfigured clients surface during dev.
+        const skill = body.skillSlug ? getSkill(body.skillSlug) : null;
+        if (body.skillSlug && !skill) {
+          console.warn(
+            `[chat ${body.videoId}] skillSlug="${body.skillSlug}" not found in registry — using default persona`,
+          );
+        }
+
+        const { system, retrievedCount } = await prepareChatPrompt(
+          video,
+          body.messages,
+          { skillPrompt: skill?.systemPrompt },
+        );
         // Expand the client's (user/assistant + inline toolCalls) history
         // into proper ModelMessage sequences so the agent loop sees its
         // own prior tool calls/results and maintains continuity.
         const expanded = expandHistoryForModel(body.messages);
         const toolCallCount = expanded.filter((m) => m.role === 'tool').length;
         console.log(
-          `[${new Date().toISOString().slice(11, 23)}] [chat ${body.videoId}] → streaming response (tanstack-ai)`,
+          `[${new Date().toISOString().slice(11, 23)}] [chat ${body.videoId}${skill ? `/${skill.slug}` : ''}] → streaming response (tanstack-ai)`,
           {
             retrievedChunks: retrievedCount,
             messages: body.messages.length,
             expandedMessages: expanded.length,
             priorToolResults: toolCallCount,
+            skill: skill?.slug ?? null,
           },
         );
 

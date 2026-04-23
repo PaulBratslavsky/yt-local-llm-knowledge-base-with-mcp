@@ -22,6 +22,7 @@ import { Route as LearnVideoIdRouteImport } from './routes/learn.$videoId'
 import { Route as ApiDigestChatRouteImport } from './routes/api.digest-chat'
 import { Route as ApiChatRouteImport } from './routes/api.chat'
 import { Route as ApiAskRouteImport } from './routes/api.ask'
+import { Route as ApiNotesComposeRouteImport } from './routes/api.notes.compose'
 
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
@@ -88,6 +89,11 @@ const ApiAskRoute = ApiAskRouteImport.update({
   path: '/api/ask',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiNotesComposeRoute = ApiNotesComposeRouteImport.update({
+  id: '/api/notes/compose',
+  path: '/api/notes/compose',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -103,6 +109,7 @@ export interface FileRoutesByFullPath {
   '/api/digest-chat': typeof ApiDigestChatRoute
   '/learn/$videoId': typeof LearnVideoIdRoute
   '/video/$documentId': typeof VideoDocumentIdRoute
+  '/api/notes/compose': typeof ApiNotesComposeRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -118,6 +125,7 @@ export interface FileRoutesByTo {
   '/api/digest-chat': typeof ApiDigestChatRoute
   '/learn/$videoId': typeof LearnVideoIdRoute
   '/video/$documentId': typeof VideoDocumentIdRoute
+  '/api/notes/compose': typeof ApiNotesComposeRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -134,6 +142,7 @@ export interface FileRoutesById {
   '/api/digest-chat': typeof ApiDigestChatRoute
   '/learn/$videoId': typeof LearnVideoIdRoute
   '/video/$documentId': typeof VideoDocumentIdRoute
+  '/api/notes/compose': typeof ApiNotesComposeRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -151,6 +160,7 @@ export interface FileRouteTypes {
     | '/api/digest-chat'
     | '/learn/$videoId'
     | '/video/$documentId'
+    | '/api/notes/compose'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -166,6 +176,7 @@ export interface FileRouteTypes {
     | '/api/digest-chat'
     | '/learn/$videoId'
     | '/video/$documentId'
+    | '/api/notes/compose'
   id:
     | '__root__'
     | '/'
@@ -181,6 +192,7 @@ export interface FileRouteTypes {
     | '/api/digest-chat'
     | '/learn/$videoId'
     | '/video/$documentId'
+    | '/api/notes/compose'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -197,6 +209,7 @@ export interface RootRouteChildren {
   ApiDigestChatRoute: typeof ApiDigestChatRoute
   LearnVideoIdRoute: typeof LearnVideoIdRoute
   VideoDocumentIdRoute: typeof VideoDocumentIdRoute
+  ApiNotesComposeRoute: typeof ApiNotesComposeRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -292,6 +305,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAskRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/notes/compose': {
+      id: '/api/notes/compose'
+      path: '/api/notes/compose'
+      fullPath: '/api/notes/compose'
+      preLoaderRoute: typeof ApiNotesComposeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -309,6 +329,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiDigestChatRoute: ApiDigestChatRoute,
   LearnVideoIdRoute: LearnVideoIdRoute,
   VideoDocumentIdRoute: VideoDocumentIdRoute,
+  ApiNotesComposeRoute: ApiNotesComposeRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

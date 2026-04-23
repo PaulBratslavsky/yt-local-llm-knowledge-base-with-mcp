@@ -125,6 +125,11 @@ const SummarizeToNoteSchema = z.object({
   videoIds: z.array(z.string().min(1).max(64)).min(1).max(10),
   messages: z.array(ConversationMessageSchema).min(2).max(100),
   source: z.enum(['chat', 'digest-chat']).default('chat'),
+  /** Active chat skill at save time — threaded into the summarizer so
+   * the resulting note matches the conversation type (Social Post
+   * preserves drafts; Tutor captures learning; Q&A uses the generic
+   * study-note format). Optional; unknown slug falls back. */
+  skillSlug: z.string().min(1).max(200).nullish(),
 });
 
 export type SummarizeToNoteResult =
@@ -171,6 +176,7 @@ export const summarizeToNote = createServerFn({ method: 'POST' })
     const summary = await summarizeConversationToNote({
       video: videos[0],
       messages: data.messages,
+      skillSlug: data.skillSlug ?? null,
     });
     if (!summary.success) return { status: 'error', error: summary.error };
 
