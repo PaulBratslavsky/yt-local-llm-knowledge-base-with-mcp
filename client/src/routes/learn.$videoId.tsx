@@ -11,6 +11,7 @@ import { VideoChat } from '#/components/VideoChat';
 import { ViewTabs } from '#/components/ViewTabs';
 import { ReadablePane } from '#/components/ReadablePane';
 import { NotesPane } from '#/components/NotesPane';
+import { TranscriptPane } from '#/components/TranscriptPane';
 import { RelatedVideos } from '#/components/RelatedVideos';
 import { GenerationModeSelect } from '#/components/GenerationModeSelect';
 import {
@@ -70,7 +71,7 @@ type LoaderData =
 // iframe `start` param so YouTube seeks + autoplays without us needing
 // to wait for the player's postMessage channel to come up.
 const LearnSearchSchema = z.object({
-  view: z.enum(['summary', 'read', 'notes']).optional(),
+  view: z.enum(['summary', 'read', 'notes', 'transcript']).optional(),
   t: z.number().int().min(0).max(86400).optional(),
 });
 
@@ -190,7 +191,7 @@ function SummaryView({
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
   const view = search.view ?? 'summary';
-  const setView = (next: 'summary' | 'read' | 'notes') => {
+  const setView = (next: 'summary' | 'read' | 'notes' | 'transcript') => {
     // Preserve `t` across view changes — stripping it would mutate the
     // iframe src and force the player to reload from whatever its current
     // state is. User changes tabs after landing at a moment; the video
@@ -247,6 +248,7 @@ function SummaryView({
                 { id: 'summary', label: 'Summary' },
                 { id: 'read', label: 'Read' },
                 { id: 'notes', label: 'Notes' },
+                { id: 'transcript', label: 'Transcript' },
               ]}
               onChange={setView}
             />
@@ -261,6 +263,8 @@ function SummaryView({
               onSeek={seekTo}
               refreshKey={notesRefreshKey}
             />
+          ) : view === 'transcript' ? (
+            <TranscriptPane video={video} onSeek={seekTo} />
           ) : (
             <SummaryContent video={video} seekTo={seekTo} iframeRef={iframeRef} />
           )}
