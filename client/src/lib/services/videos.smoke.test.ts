@@ -11,7 +11,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 // youtubeVideoId that won't collide with real content. They don't clean up
 // after themselves (admin-only delete); re-running re-uses the same row.
 
-const STRAPI_URL = process.env.STRAPI_URL ?? 'http://localhost:1337';
+const STRAPI_URL = process.env.STRAPI_URL ?? 'http://localhost:1340';
 const TEST_VIDEO_ID = 'test-smoke-001';
 
 async function isStrapiUp(): Promise<boolean> {

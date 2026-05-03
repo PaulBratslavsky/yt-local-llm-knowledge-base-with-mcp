@@ -81,6 +81,6 @@ else
 fi
 
 # --- start Strapi + client (delegates to existing yarn dev) ----------------
-echo "→ Starting Strapi (1337) + TanStack client (3000) via yarn dev..."
+echo "→ Starting Strapi (1340) + TanStack client (3005) via yarn dev..."
 echo ""
 exec yarn dev

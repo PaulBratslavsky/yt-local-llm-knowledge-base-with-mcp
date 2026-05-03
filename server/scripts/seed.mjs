@@ -1,10 +1,10 @@
 #!/usr/bin/env node
-// Seed script — runs against a live Strapi (npm run develop) on localhost:1337.
+// Seed script — runs against a live Strapi (npm run develop) on localhost:1340.
 // Idempotent: if a seed user already exists, the script skips them.
 //
 // Usage: node scripts/seed.mjs
 
-const STRAPI = process.env.STRAPI_URL || 'http://localhost:1337';
+const STRAPI = process.env.STRAPI_URL || 'http://localhost:1340';
 
 const SEED_USERS = [
   {

@@ -13,11 +13,13 @@ import { QA_SKILL } from './qa';
 import { TUTOR_SKILL } from './tutor';
 import { SOCIAL_POST_SKILL } from './social-post';
 import { NOTE_SKILL } from './note';
+import { YOUTUBE_SCRIPT_SKILL } from './youtube-script';
 
 registerSkill(QA_SKILL);
 registerSkill(TUTOR_SKILL);
 registerSkill(SOCIAL_POST_SKILL);
 registerSkill(NOTE_SKILL);
+registerSkill(YOUTUBE_SCRIPT_SKILL);
 
 export type { Skill, SkillContext } from './types';
 export { listAllSkills, listSkills, getSkill } from './registry';

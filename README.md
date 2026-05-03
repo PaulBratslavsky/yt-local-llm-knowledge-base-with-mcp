@@ -59,7 +59,7 @@ yarn seed
 yarn start
 ```
 
-Open `http://localhost:3000`, paste a YouTube URL on `/new-post`. The row is created immediately; the AI summary runs in the background and lands on `/learn/$videoId` when done.
+Open `http://localhost:3005`, paste a YouTube URL on `/new-post`. The row is created immediately; the AI summary runs in the background and lands on `/learn/$videoId` when done.
 
 > `yarn start` is a convenience wrapper that sets Ollama env vars (`OLLAMA_KEEP_ALIVE=15m`, `OLLAMA_NUM_PARALLEL=1`) and then runs `yarn dev`. Use `yarn start:fresh` to hard-restart Ollama first (required after changing `OLLAMA_NUM_PARALLEL`).
 
@@ -183,7 +183,7 @@ Claude Desktop ──▶ POST /api/mcp  (Streamable HTTP + Bearer token)
          "command": "npx",
          "args": [
            "-y", "mcp-remote",
-           "http://localhost:1337/api/mcp",
+           "http://localhost:1340/api/mcp",
            "--header", "Authorization: Bearer YOUR_TOKEN"
          ]
        }
@@ -205,7 +205,7 @@ Full walkthrough (Claude Code, Cursor, MCP Inspector, auth rotation) in [`docs/m
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `STRAPI_URL` | `http://localhost:1337` | Local Strapi |
+| `STRAPI_URL` | `http://localhost:1340` | Local Strapi |
 | `STRAPI_API_TOKEN` | *(empty)* | Optional bearer token for locked-down deployments |
 | `OLLAMA_BASE_URL` | `http://localhost:11434/v1` | Ollama endpoint (the `/v1` suffix is stripped for the TanStack AI adapter, but kept for env-file portability) |
 | `OLLAMA_MODEL` | `gemma4-kb:latest` | Summary generation model |
@@ -229,7 +229,7 @@ Standard Strapi config. `yarn setup` copies `server/.env.example` into `server/.
 | Variable | Default | Purpose |
 |---|---|---|
 | `HOST` | `0.0.0.0` | Bind address for the Strapi HTTP server |
-| `PORT` | `1337` | Strapi port — must match `STRAPI_URL` in `client/.env` |
+| `PORT` | `1340` | Strapi port — must match `STRAPI_URL` in `client/.env` |
 | `APP_KEYS` | *(generated)* | Comma-separated session cookie signing keys. **Regenerate for any non-local deploy.** |
 | `API_TOKEN_SALT` | *(generated)* | Salt used when hashing issued API tokens |
 | `ADMIN_JWT_SECRET` | *(generated)* | Signs admin-panel JWTs |

@@ -7,13 +7,13 @@
 //
 // Usage:
 //   export MCP_TEST_TOKEN=<your-strapi-api-token>
-//   export MCP_TEST_URL=http://localhost:1337/api/mcp   (default)
+//   export MCP_TEST_URL=http://localhost:1340/api/mcp   (default)
 //   node server/scripts/test-mcp.mjs
 //
 // Prints a per-tool PASS/FAIL line and exits non-zero on any failure so
 // the script can wire into a CI gate later.
 
-const URL = process.env.MCP_TEST_URL ?? 'http://localhost:1337/api/mcp';
+const URL = process.env.MCP_TEST_URL ?? 'http://localhost:1340/api/mcp';
 const TOKEN = process.env.MCP_TEST_TOKEN;
 if (!TOKEN) {
   console.error('MCP_TEST_TOKEN env var is required.');

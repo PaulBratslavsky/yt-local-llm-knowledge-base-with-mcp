@@ -15,7 +15,7 @@ function readEnv(name: string): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-const STRAPI_URL = readEnv('STRAPI_URL') ?? 'http://localhost:1337';
+const STRAPI_URL = readEnv('STRAPI_URL') ?? 'http://localhost:1340';
 const STRAPI_API_TOKEN = readEnv('STRAPI_API_TOKEN');
 
 const TRANSCRIPT_PROXY_URL = readEnv('TRANSCRIPT_PROXY_URL');
