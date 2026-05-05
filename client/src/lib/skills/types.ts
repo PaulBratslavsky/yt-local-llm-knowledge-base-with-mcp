@@ -40,6 +40,13 @@ export type Skill = {
   defaultGreeting?: string;
   /** Optional emoji or short icon label for the picker. */
   icon?: string;
+  /** Optional starter prompts surfaced as chips below the chat header
+   * while the user hasn't engaged yet. Clicking a chip auto-sends.
+   * The first entry doubles as the input-prefill on skill change so
+   * the Send button is immediately enabled (user can edit, swap to
+   * another chip, or just hit Send). Skills without explicit prompts
+   * fall back to a generic Q&A set defined in `VideoChat`. */
+  suggestedPrompts?: string[];
   /** Lower numbers sort earlier in the picker. Built-ins use 10/20/30;
    * later-added skills can slot in between (15, 25…). */
   sortOrder: number;

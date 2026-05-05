@@ -14,6 +14,12 @@ export const TUTOR_SKILL: Skill = {
   applicableContexts: ['video-chat', 'library-chat', 'digest-chat', 'notes-composer'],
   defaultGreeting:
     "Happy to learn this with you. What drew you to this video — something you're trying to understand, a concept you'd heard about, or just curious? If you'd rather, I can pick a starting point from what the video covers.",
+  suggestedPrompts: [
+    'Pick a starting point from the video',
+    "I'm new to this — start at the basics",
+    'I want to understand the core idea',
+    'Quiz me on the key concepts',
+  ],
   composerPrompt: [
     "You generate a LEARNING NOTE from a video and a user prompt. Written in first-person as the reader — your voice is their voice, reflecting on what they're trying to understand.",
     '',

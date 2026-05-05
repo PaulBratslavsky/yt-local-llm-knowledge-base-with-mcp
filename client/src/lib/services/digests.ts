@@ -7,26 +7,10 @@
 // type (what the UI consumes) and the decomposed Strapi row + components.
 // Callers never see the raw component arrays; they get a `Digest`.
 
-import { STRAPI_URL, STRAPI_API_TOKEN } from '#/lib/env';
+import { strapiFetch, type StrapiQuery } from './strapi-client';
 import type { Digest } from './digest';
 
 type ServiceResult<T> = { success: true; data: T } | { success: false; error: string };
-
-function strapiHeaders(extra?: Record<string, string>): Record<string, string> {
-  const headers: Record<string, string> = { ...extra };
-  if (STRAPI_API_TOKEN) headers.Authorization = `Bearer ${STRAPI_API_TOKEN}`;
-  return headers;
-}
-
-async function logFetchError(res: Response, tag: string): Promise<void> {
-  const body = await res.text().catch(() => '');
-  // eslint-disable-next-line no-console
-  console.error(`[${tag}] strapi request failed`, {
-    status: res.status,
-    url: res.url,
-    body: body.slice(0, 500),
-  });
-}
 
 // =============================================================================
 // Strapi row types — shape of what /api/digests returns when fully populated.
@@ -164,17 +148,17 @@ function digestToComponentPayload(d: Digest): Record<string, unknown> {
 // CRUD
 // =============================================================================
 
-function digestQueryParams(): URLSearchParams {
-  const params = new URLSearchParams();
-  params.set('populate[videos]', 'true');
-  // Populate every component array + their nested components so the row
-  // comes back fully reassemble-able.
-  params.set('populate[sharedThemes][populate][videoTitles]', 'true');
-  params.set('populate[uniqueInsights]', 'true');
-  params.set('populate[contradictions][populate][positions]', 'true');
-  params.set('populate[viewingOrder]', 'true');
-  return params;
-}
+// Populate every component array + their nested components so the row
+// comes back fully reassemble-able.
+const digestQuery: StrapiQuery = {
+  populate: {
+    videos: true,
+    sharedThemes: { populate: { videoTitles: true } },
+    uniqueInsights: true,
+    contradictions: { populate: { positions: true } },
+    viewingOrder: true,
+  },
+};
 
 export function makeVideoSetKey(youtubeVideoIds: string[]): string {
   return [...youtubeVideoIds]
@@ -194,10 +178,9 @@ export async function createDigestService(input: {
   model?: string | null;
 }): Promise<ServiceResult<StrapiDigest>> {
   const componentPayload = digestToComponentPayload(input.digest);
-  const res = await fetch(`${STRAPI_URL}/api/digests?${digestQueryParams().toString()}`, {
-    method: 'POST',
-    headers: strapiHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({
+  const result = await strapiFetch<StrapiDigest>('POST', '/api/digests', {
+    query: digestQuery,
+    body: {
       data: {
         title: input.title,
         description: input.description ?? null,
@@ -207,14 +190,11 @@ export async function createDigestService(input: {
         videoSetKey: input.videoSetKey,
         videos: input.videoDocumentIds,
       },
-    }),
+    },
   });
-  if (!res.ok) {
-    await logFetchError(res, 'createDigestService');
-    return { success: false, error: `Strapi error ${res.status}` };
-  }
-  const json = (await res.json()) as { data: StrapiDigest };
-  return { success: true, data: json.data };
+  return result.ok
+    ? { success: true, data: result.data }
+    : { success: false, error: result.error };
 }
 
 export type PaginatedDigests = {
@@ -232,51 +212,44 @@ export async function listDigestsService(input?: {
 }): Promise<ServiceResult<PaginatedDigests>> {
   const page = input?.page ?? 1;
   const pageSize = input?.pageSize ?? 20;
-  const params = digestQueryParams();
-  params.set('sort', 'createdAt:desc');
-  params.set('pagination[page]', String(page));
-  params.set('pagination[pageSize]', String(pageSize));
-  params.set('pagination[withCount]', 'true');
-
   const q = input?.q?.trim();
-  if (q) {
-    params.set('filters[$or][0][title][$containsi]', q);
-    params.set('filters[$or][1][description][$containsi]', q);
-  }
-
-  const res = await fetch(`${STRAPI_URL}/api/digests?${params.toString()}`, {
-    headers: strapiHeaders(),
+  const result = await strapiFetch<StrapiDigest[]>('GET', '/api/digests', {
+    query: {
+      ...digestQuery,
+      sort: 'createdAt:desc',
+      pagination: { page, pageSize, withCount: true },
+      ...(q
+        ? {
+            filters: {
+              $or: [
+                { title: { $containsi: q } },
+                { description: { $containsi: q } },
+              ],
+            },
+          }
+        : {}),
+    },
   });
-  if (!res.ok) {
-    await logFetchError(res, 'listDigestsService');
-    return { success: false, error: `Strapi error ${res.status}` };
-  }
-  const json = (await res.json()) as {
-    data: StrapiDigest[];
-    meta?: { pagination?: { total?: number; pageCount?: number } };
-  };
-  const total = json.meta?.pagination?.total ?? json.data.length;
-  const pageCount = json.meta?.pagination?.pageCount ?? 1;
+  if (!result.ok) return { success: false, error: result.error };
+  const digests = result.data ?? [];
+  const total = result.meta?.pagination?.total ?? digests.length;
+  const pageCount = result.meta?.pagination?.pageCount ?? 1;
   return {
     success: true,
-    data: { digests: json.data, total, page, pageSize, pageCount },
+    data: { digests, total, page, pageSize, pageCount },
   };
 }
 
 export async function fetchDigestByDocumentIdService(
   documentId: string,
 ): Promise<StrapiDigest | null> {
-  const res = await fetch(
-    `${STRAPI_URL}/api/digests/${documentId}?${digestQueryParams().toString()}`,
-    { headers: strapiHeaders() },
+  const result = await strapiFetch<StrapiDigest>(
+    'GET',
+    `/api/digests/${documentId}`,
+    { query: digestQuery },
   );
-  if (res.status === 404) return null;
-  if (!res.ok) {
-    await logFetchError(res, 'fetchDigestByDocumentIdService');
-    return null;
-  }
-  const json = (await res.json()) as { data: StrapiDigest | null };
-  return json.data ?? null;
+  if (!result.ok) return null;
+  return result.data ?? null;
 }
 
 export async function updateDigestService(input: {
@@ -297,49 +270,37 @@ export async function updateDigestService(input: {
   if (input.articleMarkdown !== undefined) data.articleMarkdown = input.articleMarkdown;
   if (input.videoDocumentIds !== undefined) data.videos = input.videoDocumentIds;
   if (input.model !== undefined) data.model = input.model;
-  const res = await fetch(
-    `${STRAPI_URL}/api/digests/${input.documentId}?${digestQueryParams().toString()}`,
-    {
-      method: 'PUT',
-      headers: strapiHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ data }),
-    },
+  const result = await strapiFetch<StrapiDigest>(
+    'PUT',
+    `/api/digests/${input.documentId}`,
+    { query: digestQuery, body: { data } },
   );
-  if (!res.ok) {
-    await logFetchError(res, 'updateDigestService');
-    return { success: false, error: `Strapi error ${res.status}` };
-  }
-  const json = (await res.json()) as { data: StrapiDigest };
-  return { success: true, data: json.data };
+  return result.ok
+    ? { success: true, data: result.data }
+    : { success: false, error: result.error };
 }
 
 export async function findDigestByVideoSetKeyService(
   videoSetKey: string,
 ): Promise<ServiceResult<StrapiDigest | null>> {
-  const params = digestQueryParams();
-  params.set('filters[videoSetKey][$eq]', videoSetKey);
-  params.set('pagination[pageSize]', '1');
-  const res = await fetch(`${STRAPI_URL}/api/digests?${params.toString()}`, {
-    headers: strapiHeaders(),
+  const result = await strapiFetch<StrapiDigest[]>('GET', '/api/digests', {
+    query: {
+      ...digestQuery,
+      filters: { videoSetKey: { $eq: videoSetKey } },
+      pagination: { pageSize: 1 },
+    },
   });
-  if (!res.ok) {
-    await logFetchError(res, 'findDigestByVideoSetKeyService');
-    return { success: false, error: `Strapi error ${res.status}` };
-  }
-  const json = (await res.json()) as { data: StrapiDigest[] };
-  return { success: true, data: json.data[0] ?? null };
+  return result.ok
+    ? { success: true, data: result.data?.[0] ?? null }
+    : { success: false, error: result.error };
 }
 
 export async function deleteDigestService(
   documentId: string,
 ): Promise<ServiceResult<void>> {
-  const res = await fetch(`${STRAPI_URL}/api/digests/${documentId}`, {
-    method: 'DELETE',
-    headers: strapiHeaders(),
-  });
-  if (!res.ok && res.status !== 404) {
-    await logFetchError(res, 'deleteDigestService');
-    return { success: false, error: `Strapi error ${res.status}` };
+  const result = await strapiFetch<unknown>('DELETE', `/api/digests/${documentId}`);
+  if (!result.ok && result.status !== 404) {
+    return { success: false, error: result.error };
   }
   return { success: true, data: undefined };
 }

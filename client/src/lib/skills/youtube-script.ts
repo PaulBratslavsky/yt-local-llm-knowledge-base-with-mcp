@@ -23,6 +23,12 @@ export const YOUTUBE_SCRIPT_SKILL: Skill = {
   ],
   defaultGreeting:
     "I'll draft a YouTube script grounded in this video. Tell me the angle (tutorial walkthrough, talking-head explainer, reaction, something else), roughly how long the video should be, and any extra context you want woven in — your own take, related tools, audience level. If you don't specify, I'll pick the strongest framing from the source and you can redirect.",
+  suggestedPrompts: [
+    'Tutorial walkthrough, ~8 min',
+    'Talking-head explainer, ~5 min',
+    'Reaction style, casual tone',
+    'Pick the strongest framing from the source',
+  ],
   composerPrompt: [
     "You generate a spoken YouTube script as a note, grounded in a YouTube video the reader watched plus any additional context they pass in the prompt. Output is a teleprompter-ready script in markdown.",
     '',

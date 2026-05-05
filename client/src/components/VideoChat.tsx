@@ -3,6 +3,8 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Accordion } from 'radix-ui';
 import { buildMarkdownComponents, stripInlineTimecodes } from './TimecodeMarkdown';
+import { usePlayerControl } from '#/components/player';
+import { streamChatSSE, type StreamEvent } from '#/lib/services/chat-stream';
 import { Button } from '#/components/ui/button';
 import {
   DropdownMenu,
@@ -38,7 +40,6 @@ type Message = {
 
 type Props = {
   videoId: string;
-  onSeek: (seconds: number) => void;
   /** Called after a conversation is successfully saved as a note, so the
    * parent can refresh any note-list UI that's currently open. */
   onNoteCreated?: (noteDocumentId: string) => void;
@@ -57,21 +58,19 @@ function transformSlashCommand(input: string): string {
   return input;
 }
 
-const SUGGESTED_PROMPTS = [
+// Fallback prompts for the default Q&A skill (no skillSlug). Skills with
+// `suggestedPrompts` of their own override these.
+const DEFAULT_SUGGESTED_PROMPTS = [
   "What's the main argument?",
   'Give me the key claims, with timestamps',
   'What should I do after watching this?',
   'Summarize the part around 5 minutes in',
 ];
 
-// Events the UI cares about from the SSE stream. Text deltas advance the
-// assistant message's rendered content; tool events populate the
-// expandable "tool call" accordion attached to that message.
-type StreamEvent =
-  | { kind: 'text'; delta: string }
-  | { kind: 'tool_start'; id: string; name: string }
-  | { kind: 'tool_end'; id: string; name: string; input: unknown; result: string | null };
-
+// Issue the chat request and yield typed events from the response stream.
+// Wire framing + AG-UI parsing live in `chat-stream.ts`; this wrapper
+// owns only the request shape (URL, body, headers) for the per-video
+// chat endpoint.
 async function* streamChatResponse(
   videoId: string,
   messages: Message[],
@@ -86,92 +85,14 @@ async function* streamChatResponse(
       skillSlug: skillSlug ?? undefined,
     }),
   });
-
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`chat (${res.status}): ${text || 'request failed'}`);
   }
-  if (!res.body) throw new Error('chat: empty response body');
-
-  // TanStack AI emits Server-Sent Events in AG-UI format. Each event is a
-  // line `data: <json>\n\n`. The stream ends with `data: [DONE]\n\n`. We
-  // accumulate bytes into a buffer, split on blank-line delimiters, parse
-  // each, and yield a typed event. Events we don't care about (run
-  // start/end, text start/end, step events) are dropped at the parser
-  // boundary — the consumer only sees text deltas and tool events.
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let idx = buffer.indexOf('\n\n');
-      while (idx !== -1) {
-        const eventBlock = buffer.slice(0, idx);
-        buffer = buffer.slice(idx + 2);
-        const event = parseSseEventBlock(eventBlock);
-        if (event) yield event;
-        idx = buffer.indexOf('\n\n');
-      }
-    }
-    buffer += decoder.decode();
-    const event = parseSseEventBlock(buffer);
-    if (event) yield event;
-  } finally {
-    reader.releaseLock();
-  }
+  yield* streamChatSSE(res);
 }
 
-// Parse one SSE event block → a typed StreamEvent, or null to skip.
-// Handles text content, tool-call start, and tool-call end; silently
-// drops other event types (TOOL_CALL_ARGS is intermediate — we only
-// need the final `input` from TOOL_CALL_END).
-function parseSseEventBlock(block: string): StreamEvent | null {
-  const lines = block.split('\n');
-  let payload = '';
-  for (const line of lines) {
-    if (line.startsWith('data:')) {
-      payload += line.slice(5).trimStart();
-    }
-  }
-  if (!payload || payload === '[DONE]') return null;
-  try {
-    const event = JSON.parse(payload) as {
-      type?: string;
-      delta?: string;
-      toolCallId?: string;
-      toolName?: string;
-      input?: unknown;
-      result?: string;
-    };
-    switch (event.type) {
-      case 'TEXT_MESSAGE_CONTENT':
-        return typeof event.delta === 'string' ? { kind: 'text', delta: event.delta } : null;
-      case 'TOOL_CALL_START':
-        return event.toolCallId && event.toolName
-          ? { kind: 'tool_start', id: event.toolCallId, name: event.toolName }
-          : null;
-      case 'TOOL_CALL_END':
-        return event.toolCallId && event.toolName
-          ? {
-              kind: 'tool_end',
-              id: event.toolCallId,
-              name: event.toolName,
-              input: event.input ?? null,
-              result: event.result ?? null,
-            }
-          : null;
-      default:
-        return null;
-    }
-  } catch {
-    return null;
-  }
-}
-
-export function VideoChat({ videoId, onSeek, onNoteCreated, className }: Readonly<Props>) {
+export function VideoChat({ videoId, onNoteCreated, className }: Readonly<Props>) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [pending, setPending] = useState(false);
@@ -210,6 +131,13 @@ export function VideoChat({ videoId, onSeek, onNoteCreated, className }: Readonl
       : null;
     const greeting = selected?.defaultGreeting?.trim();
     setMessages(greeting ? [{ role: 'assistant', content: greeting }] : []);
+    // Prime the input with the skill's first suggested prompt so Send
+    // is immediately enabled — the user can hit Send, edit the text,
+    // or click a different chip below to swap. Falls back to clearing
+    // the input for skills (or the default Q&A) without explicit
+    // prompts.
+    const firstPrompt = selected?.suggestedPrompts?.[0] ?? '';
+    setInput(firstPrompt);
   };
 
   const clear = () => {
@@ -400,28 +328,42 @@ export function VideoChat({ videoId, onSeek, onNoteCreated, className }: Readonl
         ref={scrollRef}
         className="min-h-0 min-w-0 flex-1 overflow-y-auto"
       >
-        {messages.length === 0 && (
-          <div className="flex flex-wrap gap-2 pb-4">
-            {SUGGESTED_PROMPTS.map((p) => (
-              <button
-                key={p}
-                type="button"
-                onClick={() => void sendPrompt(p)}
-                disabled={pending}
-                className="rounded-full border border-[var(--line)] bg-[var(--bg-subtle)] px-3 py-1 text-xs text-[var(--ink-muted)] transition hover:border-[var(--line-strong)] hover:text-[var(--ink)] disabled:opacity-50"
-              >
-                {p}
-              </button>
-            ))}
-          </div>
-        )}
+        {/* Show suggested-prompt chips while the user hasn't engaged yet.
+            "Engaged" = sent at least one user message. A skill's greeting
+            counts as an assistant message but NOT engagement, so the chips
+            stay available after picking a skill. Each skill can declare
+            its own `suggestedPrompts`; falls back to a generic Q&A set
+            for the default (no-skill) path. */}
+        {(() => {
+          const hasUserMessages = messages.some((m) => m.role === 'user');
+          if (hasUserMessages) return null;
+          const activeSkill = skillSlug
+            ? skills.find((s) => s.slug === skillSlug)
+            : null;
+          const prompts = activeSkill?.suggestedPrompts ?? DEFAULT_SUGGESTED_PROMPTS;
+          if (prompts.length === 0) return null;
+          return (
+            <div className="flex flex-wrap gap-2 pb-4">
+              {prompts.map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => void sendPrompt(p)}
+                  disabled={pending}
+                  className="rounded-full border border-[var(--line)] bg-[var(--bg-subtle)] px-3 py-1 text-xs text-[var(--ink-muted)] transition hover:border-[var(--line-strong)] hover:text-[var(--ink)] disabled:opacity-50"
+                >
+                  {p}
+                </button>
+              ))}
+            </div>
+          );
+        })()}
 
         <div className="grid gap-4 pb-4">
           {messages.map((msg, i) => (
             <MessageRow
               key={i}
               message={msg}
-              onSeek={onSeek}
               streaming={
                 pending && i === messages.length - 1 && msg.role === 'assistant'
               }
@@ -484,11 +426,9 @@ export function VideoChat({ videoId, onSeek, onNoteCreated, className }: Readonl
 
 function MessageRow({
   message,
-  onSeek,
   streaming,
 }: Readonly<{
   message: Message;
-  onSeek: (sec: number) => void;
   streaming: boolean;
 }>) {
   if (message.role === 'user') {
@@ -520,7 +460,7 @@ function MessageRow({
               transcript excerpt, so inline chips are redundant. */}
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
-            components={buildMarkdownComponents(onSeek)}
+            components={buildMarkdownComponents()}
           >
             {stripInlineTimecodes(message.content)}
           </ReactMarkdown>
@@ -531,7 +471,7 @@ function MessageRow({
             />
           )}
           {!streaming && message.evidence && message.evidence.length > 0 && (
-            <EvidencePanel evidence={message.evidence} onSeek={onSeek} />
+            <EvidencePanel evidence={message.evidence} />
           )}
         </div>
       )}
@@ -550,11 +490,8 @@ function formatMmss(sec: number): string {
 
 function EvidencePanel({
   evidence,
-  onSeek,
-}: Readonly<{
-  evidence: EvidenceCitation[];
-  onSeek: (sec: number) => void;
-}>) {
+}: Readonly<{ evidence: EvidenceCitation[] }>) {
+  const { seekTo } = usePlayerControl();
   // Outer accordion collapses the whole Sources block into a single-row
   // summary ("Sources — N citations") until expanded. Matches Claude's
   // "References" disclosure pattern — keeps the chat scroll clean.
@@ -611,13 +548,13 @@ function EvidencePanel({
                       tabIndex={0}
                       onClick={(e) => {
                         e.stopPropagation();
-                        onSeek(seekSec);
+                        seekTo(seekSec);
                       }}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' || e.key === ' ') {
                           e.preventDefault();
                           e.stopPropagation();
-                          onSeek(seekSec);
+                          seekTo(seekSec);
                         }
                       }}
                       className="inline-flex h-5 cursor-pointer items-center gap-1 rounded-full bg-[var(--ink)] px-1.5 text-[0.65rem] font-semibold text-[var(--cream)]"

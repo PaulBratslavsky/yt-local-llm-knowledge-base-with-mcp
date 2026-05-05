@@ -16,8 +16,9 @@
 
 import { chat } from '@tanstack/ai';
 import { createOllamaChat } from '@tanstack/ai-ollama';
-import { STRAPI_URL, STRAPI_API_TOKEN, OLLAMA_HOST, OLLAMA_MODEL } from '#/lib/env';
+import { OLLAMA_HOST, OLLAMA_MODEL } from '#/lib/env';
 import { withRetry } from '#/lib/retry';
+import { strapiFetch, type StrapiQuery } from './strapi-client';
 import {
   cleanTranscript,
   prepareSegmentedTranscript,
@@ -27,22 +28,6 @@ import { fetchTranscriptByVideoIdService, type StrapiVideo } from './videos';
 import { getSkill } from '#/lib/skills';
 
 type ServiceResult<T> = { success: true; data: T } | { success: false; error: string };
-
-function strapiHeaders(extra?: Record<string, string>): Record<string, string> {
-  const headers: Record<string, string> = { ...extra };
-  if (STRAPI_API_TOKEN) headers.Authorization = `Bearer ${STRAPI_API_TOKEN}`;
-  return headers;
-}
-
-async function logFetchError(res: Response, tag: string): Promise<void> {
-  const body = await res.text().catch(() => '');
-  // eslint-disable-next-line no-console
-  console.error(`[${tag}] strapi request failed`, {
-    status: res.status,
-    url: res.url,
-    body: body.slice(0, 500),
-  });
-}
 
 // =============================================================================
 // Types
@@ -75,11 +60,9 @@ export type StrapiNote = {
 // CRUD
 // =============================================================================
 
-function noteQueryParams(): URLSearchParams {
-  const params = new URLSearchParams();
-  params.set('populate[videos]', 'true');
-  return params;
-}
+// Notes always populate their `videos` relation so the UI can show
+// which video(s) a note belongs to without a second round-trip.
+const noteQuery: StrapiQuery = { populate: ['videos'] };
 
 export async function createNoteService(input: {
   title?: string | null;
@@ -88,10 +71,9 @@ export async function createNoteService(input: {
   author?: string | null;
   videoDocumentIds: string[];
 }): Promise<ServiceResult<StrapiNote>> {
-  const res = await fetch(`${STRAPI_URL}/api/notes?${noteQueryParams().toString()}`, {
-    method: 'POST',
-    headers: strapiHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({
+  const result = await strapiFetch<StrapiNote>('POST', '/api/notes', {
+    query: noteQuery,
+    body: {
       data: {
         title: input.title ?? null,
         body: input.body,
@@ -99,32 +81,27 @@ export async function createNoteService(input: {
         author: input.author ?? null,
         videos: input.videoDocumentIds,
       },
-    }),
+    },
   });
-  if (!res.ok) {
-    await logFetchError(res, 'createNoteService');
-    return { success: false, error: `Strapi error ${res.status}` };
-  }
-  const json = (await res.json()) as { data: StrapiNote };
-  return { success: true, data: json.data };
+  return result.ok
+    ? { success: true, data: result.data }
+    : { success: false, error: result.error };
 }
 
 export async function listNotesForVideoService(
   videoDocumentId: string,
 ): Promise<ServiceResult<StrapiNote[]>> {
-  const params = noteQueryParams();
-  params.set('filters[videos][documentId][$eq]', videoDocumentId);
-  params.set('sort', 'createdAt:desc');
-  params.set('pagination[pageSize]', '100');
-  const res = await fetch(`${STRAPI_URL}/api/notes?${params.toString()}`, {
-    headers: strapiHeaders(),
+  const result = await strapiFetch<StrapiNote[]>('GET', '/api/notes', {
+    query: {
+      ...noteQuery,
+      filters: { videos: { documentId: { $eq: videoDocumentId } } },
+      sort: 'createdAt:desc',
+      pagination: { pageSize: 100 },
+    },
   });
-  if (!res.ok) {
-    await logFetchError(res, 'listNotesForVideoService');
-    return { success: false, error: `Strapi error ${res.status}` };
-  }
-  const json = (await res.json()) as { data: StrapiNote[] };
-  return { success: true, data: json.data };
+  return result.ok
+    ? { success: true, data: result.data ?? [] }
+    : { success: false, error: result.error };
 }
 
 export async function updateNoteService(input: {
@@ -135,32 +112,22 @@ export async function updateNoteService(input: {
   const data: Record<string, unknown> = {};
   if (input.title !== undefined) data.title = input.title;
   if (input.body !== undefined) data.body = input.body;
-  const res = await fetch(
-    `${STRAPI_URL}/api/notes/${input.documentId}?${noteQueryParams().toString()}`,
-    {
-      method: 'PUT',
-      headers: strapiHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ data }),
-    },
+  const result = await strapiFetch<StrapiNote>(
+    'PUT',
+    `/api/notes/${input.documentId}`,
+    { query: noteQuery, body: { data } },
   );
-  if (!res.ok) {
-    await logFetchError(res, 'updateNoteService');
-    return { success: false, error: `Strapi error ${res.status}` };
-  }
-  const json = (await res.json()) as { data: StrapiNote };
-  return { success: true, data: json.data };
+  return result.ok
+    ? { success: true, data: result.data }
+    : { success: false, error: result.error };
 }
 
 export async function deleteNoteService(
   documentId: string,
 ): Promise<ServiceResult<void>> {
-  const res = await fetch(`${STRAPI_URL}/api/notes/${documentId}`, {
-    method: 'DELETE',
-    headers: strapiHeaders(),
-  });
-  if (!res.ok && res.status !== 404) {
-    await logFetchError(res, 'deleteNoteService');
-    return { success: false, error: `Strapi error ${res.status}` };
+  const result = await strapiFetch<unknown>('DELETE', `/api/notes/${documentId}`);
+  if (!result.ok && result.status !== 404) {
+    return { success: false, error: result.error };
   }
   return { success: true, data: undefined };
 }

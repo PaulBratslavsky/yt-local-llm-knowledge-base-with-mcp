@@ -36,10 +36,14 @@ import {
   fetchYouTubeMeta,
   generateVideoSummary,
   askAboutVideoService,
-  readGenerationStep,
   type ChatMessage,
   type GenerationStep,
 } from '#/lib/services/learning';
+import {
+  clearRecentFailure,
+  ensureGenerationRunning,
+  getLiveState,
+} from '#/lib/services/generation-state';
 import {
   buildBM25Index,
   extractCitationsWithEvidence,
@@ -120,37 +124,26 @@ export type ShareVideoResult =
   | { status: 'exists'; video: StrapiVideo }
   | { status: 'error'; error: string };
 
-// Shared in-memory set of videoIds for which a background generation is
-// currently running. Previously split into two Sets (one for the share
-// kickoff, one for trigger/regenerate) which let the SAME videoId run
-// TWICE concurrently: the share flow kicked off gen A, then the learn
-// page loader's trigger call didn't see gen A and kicked off gen B. Both
-// writing to the same Video row, competing for GPU time, halving effective
-// throughput. Single Set fixes it.
-const generationInflight = new Set<string>();
+// Background-generation state machine lives in `lib/services/generation-state`.
+// This module wires the server-fn handlers below to the Module via two hooks:
+// `markVideoFailedHook` — fires after an uncaught throw so the durable
+// Strapi row never gets stuck in `pending`. Three handlers (kickoff via
+// share, trigger, regenerate) share the same hook.
+async function markVideoFailedHook(videoId: string): Promise<void> {
+  try {
+    const row = await fetchVideoByVideoIdService(videoId);
+    if (row) await markSummaryFailedService(row.documentId);
+  } catch (err) {
+    console.error('[generation] mark-failed itself failed', { videoId, err });
+  }
+}
 
 function kickoffSummaryGeneration(videoId: string, mode?: GenerationMode) {
-  if (generationInflight.has(videoId)) return;
-  generationInflight.add(videoId);
-  void (async () => {
-    try {
-      const result = await generateVideoSummary(videoId, { mode });
-      if (!result.success) {
-        console.error('[summary bg] failed', { videoId, error: result.error });
-      }
-    } catch (err) {
-      // Last-resort catch: mark the Video row as failed so the UI flips out
-      // of pending. Otherwise a crashed bg job leaves the row at
-      // summaryStatus: 'pending' forever and the learn page polls forever.
-      const message = err instanceof Error ? err.message : 'Generation crashed';
-      console.error('[summary bg] exception', { videoId, err });
-      const video = await fetchVideoByVideoIdService(videoId);
-      if (video) await markSummaryFailedService(video.documentId);
-      recentFailures.set(videoId, { error: message, at: Date.now() });
-    } finally {
-      generationInflight.delete(videoId);
-    }
-  })();
+  void ensureGenerationRunning(
+    videoId,
+    () => generateVideoSummary(videoId, { mode }),
+    { onTerminalThrow: () => markVideoFailedHook(videoId) },
+  );
 }
 
 export const shareVideo = createServerFn({ method: 'POST' })
@@ -211,23 +204,6 @@ export type TriggerResult =
   | { status: 'started' }
   | { status: 'error'; error: string };
 
-// `inflight` is an alias to the shared set — kept as a local name here
-// for readability in the trigger/regenerate handlers below.
-const inflight = generationInflight;
-type RecentFailure = { error: string; at: number };
-const recentFailures = new Map<string, RecentFailure>();
-const FAILURE_TTL_MS = 5 * 60 * 1000;
-
-function readRecentFailure(videoId: string): string | null {
-  const entry = recentFailures.get(videoId);
-  if (!entry) return null;
-  if (Date.now() - entry.at > FAILURE_TTL_MS) {
-    recentFailures.delete(videoId);
-    return null;
-  }
-  return entry.error;
-}
-
 const TriggerInputSchema = VideoIdSchema.extend({
   mode: GenerationModeSchema.optional(),
 });
@@ -239,50 +215,21 @@ export const triggerSummaryGeneration = createServerFn({ method: 'POST' })
   .handler(async ({ data }): Promise<TriggerResult> => {
     const existing = await fetchVideoByVideoIdService(data.videoId);
     if (existing && existing.summaryStatus === 'generated') {
-      recentFailures.delete(data.videoId);
+      clearRecentFailure(data.videoId);
       return { status: 'found', video: existing };
     }
 
-    if (inflight.has(data.videoId)) return { status: 'started' };
-
-    const previousError = readRecentFailure(data.videoId);
-    if (previousError) return { status: 'error', error: previousError };
-
-    inflight.add(data.videoId);
-    void (async () => {
-      try {
-        const result = await generateVideoSummary(data.videoId, { mode: data.mode });
-        if (!result.success) {
-          recentFailures.set(data.videoId, { error: result.error, at: Date.now() });
-          console.error('[bg generation] failed', {
-            videoId: data.videoId,
-            error: result.error,
-          });
-        } else {
-          recentFailures.delete(data.videoId);
-        }
-      } catch (err) {
-        // generateVideoSummary threw (vs. returning {success:false}). It
-        // may not have reached its own markSummaryFailedService call, so
-        // flip the DB row here — otherwise the UI polls a pending row
-        // forever while the only evidence of failure lives in memory.
-        const message = err instanceof Error ? err.message : 'Generation failed';
-        recentFailures.set(data.videoId, { error: message, at: Date.now() });
-        console.error('[bg generation] exception', { videoId: data.videoId, err });
-        try {
-          const row = await fetchVideoByVideoIdService(data.videoId);
-          if (row) await markSummaryFailedService(row.documentId);
-        } catch (markErr) {
-          console.error('[bg generation] mark-failed itself failed', {
-            videoId: data.videoId,
-            markErr,
-          });
-        }
-      } finally {
-        inflight.delete(data.videoId);
-      }
-    })();
-
+    const result = await ensureGenerationRunning(
+      data.videoId,
+      () => generateVideoSummary(data.videoId, { mode: data.mode }),
+      { onTerminalThrow: () => markVideoFailedHook(data.videoId) },
+    );
+    if (result.status === 'recently_failed') {
+      return { status: 'error', error: result.error };
+    }
+    if (result.status === 'failed_to_start') {
+      return { status: 'error', error: result.error };
+    }
     return { status: 'started' };
   });
 
@@ -306,7 +253,7 @@ export const updateSectionTimecode = createServerFn({ method: 'POST' })
 export const clearSummaryFailure = createServerFn({ method: 'POST' })
   .inputValidator((data: { videoId: string }) => VideoIdSchema.parse(data))
   .handler(async ({ data }): Promise<{ ok: true }> => {
-    recentFailures.delete(data.videoId);
+    clearRecentFailure(data.videoId);
     return { ok: true };
   });
 
@@ -341,49 +288,38 @@ export const regenerateSummary = createServerFn({ method: 'POST' })
     if (!video) {
       return { status: 'error', error: 'Video not found' };
     }
-    if (inflight.has(data.videoId)) {
-      return { status: 'already_running' };
-    }
 
-    // Clear any stale failure marker and flip the row to pending so the
-    // loader sees a fresh pending state (not 'generated') while work runs.
-    recentFailures.delete(data.videoId);
-    const flip = await markSummaryPendingService(video.documentId);
-    if (!flip.success) {
-      return { status: 'error', error: flip.error };
-    }
+    // User-initiated regenerate: bypass the recent-failure window so
+    // the click takes effect even if a prior run just failed.
+    clearRecentFailure(data.videoId);
 
-    inflight.add(data.videoId);
-    void (async () => {
-      try {
-        const result = await generateVideoSummary(data.videoId, {
+    // The pending-flip is wired as `beforeStart` so it fires only if a
+    // job will actually run — `already_running` skips it, avoiding a
+    // pointless DB write under contention.
+    const result = await ensureGenerationRunning(
+      data.videoId,
+      () =>
+        generateVideoSummary(data.videoId, {
           forceRefetch: data.forceRefetch,
           mode: data.mode,
-        });
-        if (!result.success) {
-          recentFailures.set(data.videoId, { error: result.error, at: Date.now() });
-          console.error('[regenerate] failed', {
-            videoId: data.videoId,
-            error: result.error,
-          });
-        } else {
-          recentFailures.delete(data.videoId);
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Regeneration failed';
-        recentFailures.set(data.videoId, { error: message, at: Date.now() });
-        console.error('[regenerate] exception', { videoId: data.videoId, err });
-        try {
-          const row = await fetchVideoByVideoIdService(data.videoId);
-          if (row) await markSummaryFailedService(row.documentId);
-        } catch (markErr) {
-          console.error('[regenerate] mark-failed itself failed', { markErr });
-        }
-      } finally {
-        inflight.delete(data.videoId);
-      }
-    })();
-
+        }),
+      {
+        beforeStart: async () => {
+          const flip = await markSummaryPendingService(video.documentId);
+          if (!flip.success) throw new Error(flip.error);
+        },
+        onTerminalThrow: () => markVideoFailedHook(data.videoId),
+      },
+    );
+    if (result.status === 'already_running') return { status: 'already_running' };
+    if (result.status === 'recently_failed') {
+      // Cleared above; reaching here means a separate concurrent run
+      // re-set the failure between the clear and the ensure call.
+      return { status: 'error', error: result.error };
+    }
+    if (result.status === 'failed_to_start') {
+      return { status: 'error', error: result.error };
+    }
     return { status: 'started' };
   });
 
@@ -401,19 +337,19 @@ export type GenerationProgress = {
 export const getGenerationProgress = createServerFn({ method: 'POST' })
   .inputValidator((data: { videoId: string }) => VideoIdSchema.parse(data))
   .handler(async ({ data }): Promise<GenerationProgress> => {
-    const current = readGenerationStep(data.videoId);
-    if (!current) {
+    const live = getLiveState(data.videoId);
+    if (live.status !== 'running') {
       return { step: null, detail: null, elapsedMs: null, detailElapsedMs: null };
     }
     // eslint-disable-next-line no-console
     console.log(
-      `[${new Date().toISOString().slice(11, 23)}] [progress ${data.videoId}] ${current.step}${current.detail ? ` · ${current.detail}` : ''} (step +${Math.round(current.elapsedMs / 1000)}s, detail +${Math.round(current.detailElapsedMs / 1000)}s)`,
+      `[${new Date().toISOString().slice(11, 23)}] [progress ${data.videoId}] ${live.step ?? '—'}${live.detail ? ` · ${live.detail}` : ''} (step +${Math.round(live.elapsedMs / 1000)}s, detail +${Math.round(live.detailElapsedMs / 1000)}s)`,
     );
     return {
-      step: current.step,
-      detail: current.detail,
-      elapsedMs: current.elapsedMs,
-      detailElapsedMs: current.detailElapsedMs,
+      step: live.step,
+      detail: live.detail,
+      elapsedMs: live.elapsedMs,
+      detailElapsedMs: live.detailElapsedMs,
     };
   });
 

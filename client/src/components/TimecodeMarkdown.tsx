@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { usePlayerControl } from '#/components/player';
 
 // Minimal shape of an evidence citation — duplicated here to avoid a
 // dependency from components/ → services/. Matches the subset of
@@ -77,9 +78,41 @@ function parseTcToSeconds(tc: string): number {
 // citation. When provided, the chip's `title` attribute is set to the
 // matching excerpt so hover reveals WHY this moment was cited — a
 // lightweight alternative to expanding the Sources accordion row by row.
+// Inline chip component — its own React component so it can call
+// usePlayerControl() to seek directly. Keeps the chip-rendering loop
+// below pure (no hook, no ctx — just JSX construction).
+function TimecodeChip({
+  seconds,
+  label,
+  snippet,
+}: Readonly<{
+  seconds: number;
+  label: string;
+  snippet: string | null;
+}>) {
+  const { seekTo } = usePlayerControl();
+  return (
+    <button
+      type="button"
+      onClick={() => seekTo(seconds)}
+      className="mx-0.5 inline-flex h-6 items-center gap-1 rounded-full border border-[var(--line)] bg-[var(--bg-subtle)] px-2 align-baseline text-[0.7rem] font-semibold text-[var(--ink)] transition hover:bg-[var(--ink)] hover:text-[var(--cream)]"
+      aria-label={
+        snippet
+          ? `Jump to ${label}. Context: ${snippet.slice(0, 120)}`
+          : `Jump to ${label} in the video`
+      }
+      title={snippet ?? undefined}
+    >
+      <svg viewBox="0 0 16 16" width="9" height="9" aria-hidden="true">
+        <path fill="currentColor" d="M4 2v12l9-6z" />
+      </svg>
+      {label}
+    </button>
+  );
+}
+
 function renderWithTimecodes(
   text: string,
-  onSeek: (sec: number) => void,
   evidence?: ChipEvidence[],
 ): React.ReactNode[] {
   const out: React.ReactNode[] = [];
@@ -105,23 +138,12 @@ function renderWithTimecodes(
     const snippet = findSnippetForSeconds(seconds, evidence);
 
     out.push(
-      <button
+      <TimecodeChip
         key={`tc-${key++}`}
-        type="button"
-        onClick={() => onSeek(seconds)}
-        className="mx-0.5 inline-flex h-6 items-center gap-1 rounded-full border border-[var(--line)] bg-[var(--bg-subtle)] px-2 align-baseline text-[0.7rem] font-semibold text-[var(--ink)] transition hover:bg-[var(--ink)] hover:text-[var(--cream)]"
-        aria-label={
-          snippet
-            ? `Jump to ${label}. Context: ${snippet.slice(0, 120)}`
-            : `Jump to ${label} in the video`
-        }
-        title={snippet ?? undefined}
-      >
-        <svg viewBox="0 0 16 16" width="9" height="9" aria-hidden="true">
-          <path fill="currentColor" d="M4 2v12l9-6z" />
-        </svg>
-        {label}
-      </button>,
+        seconds={seconds}
+        label={label}
+        snippet={snippet}
+      />,
     );
 
     lastIndex = start + full.length;
@@ -136,14 +158,13 @@ function renderWithTimecodes(
 // (em/strong/code/etc.) containing a timecode still renders correctly.
 export function processChildren(
   children: React.ReactNode,
-  onSeek: (sec: number) => void,
   evidence?: ChipEvidence[],
 ): React.ReactNode {
   return React.Children.map(children, (child, i) => {
     if (typeof child === 'string') {
       return (
         <React.Fragment key={i}>
-          {renderWithTimecodes(child, onSeek, evidence)}
+          {renderWithTimecodes(child, evidence)}
         </React.Fragment>
       );
     }
@@ -153,7 +174,7 @@ export function processChildren(
         return React.cloneElement(
           el,
           undefined,
-          processChildren(el.props.children, onSeek, evidence),
+          processChildren(el.props.children, evidence),
         );
       }
     }
@@ -163,11 +184,9 @@ export function processChildren(
 
 // Build the react-markdown `components` override. Each HTML tag re-renders
 // its children through `processChildren` so timecodes in any formatting
-// context become clickable chips.
-export function buildMarkdownComponents(
-  onSeek: (sec: number) => void,
-  evidence?: ChipEvidence[],
-): Components {
+// context become clickable chips. The chip itself reads `seekTo` from the
+// player Module via context — no callback wiring needed at the call site.
+export function buildMarkdownComponents(evidence?: ChipEvidence[]): Components {
   const wrap =
     <T extends keyof React.JSX.IntrinsicElements>(Tag: T) =>
     ({
@@ -177,7 +196,7 @@ export function buildMarkdownComponents(
     }: { node?: unknown; children?: React.ReactNode } & React.JSX.IntrinsicElements[T]) => {
       const Component = Tag as unknown as React.ElementType;
       return (
-        <Component {...props}>{processChildren(children, onSeek, evidence)}</Component>
+        <Component {...props}>{processChildren(children, evidence)}</Component>
       );
     };
 
@@ -204,25 +223,22 @@ export function buildMarkdownComponents(
         className="underline decoration-[var(--line-strong)] underline-offset-2 hover:text-[var(--accent)]"
         {...props}
       >
-        {processChildren(children, onSeek, evidence)}
+        {processChildren(children, evidence)}
       </a>
     ),
   };
 }
 
 // Drop-in markdown renderer that turns timecodes into clickable chips.
-// Use everywhere AI-generated prose is displayed. Optionally pass
-// `evidence` to enrich each chip with a hover tooltip showing the
-// grounded transcript excerpt — critical in chat responses where the
-// reader wants to verify a citation without expanding a separate panel.
+// Must be rendered inside <PlayerProvider>. Optionally pass `evidence`
+// to enrich each chip with a hover tooltip showing the grounded
+// transcript excerpt.
 export function TimecodeMarkdown({
   children,
-  onSeek,
   className,
   evidence,
 }: Readonly<{
   children: string;
-  onSeek: (sec: number) => void;
   className?: string;
   evidence?: ChipEvidence[];
 }>) {
@@ -230,7 +246,7 @@ export function TimecodeMarkdown({
     <div className={className}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        components={buildMarkdownComponents(onSeek, evidence)}
+        components={buildMarkdownComponents(evidence)}
       >
         {children}
       </ReactMarkdown>

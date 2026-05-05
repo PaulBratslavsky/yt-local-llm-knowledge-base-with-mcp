@@ -22,12 +22,16 @@ import {
   makeSectionContextualizer,
   prepareSegmentedTranscript,
   searchBM25,
-  searchBM25MultiQuery,
   type PreparedTranscript,
   type StoredTranscriptIndex,
   type TimedTextSegment,
   type TranscriptChunk,
 } from '#/lib/services/transcript';
+import { getChatEvidenceForVideo } from '#/lib/services/chat-retrieval';
+import {
+  setStep as setGenerationStep,
+  type GenerationStep,
+} from '#/lib/services/generation-state';
 import { withRetry } from '#/lib/retry';
 import { fetchYouTubeTranscript } from '#/lib/services/youtube-transcript';
 import {
@@ -822,7 +826,6 @@ export async function generateVideoSummary(
   });
   if (!transcriptResult.success) {
     await markSummaryFailedService(video.documentId);
-    clearGenerationStep(videoId);
     logPhase(videoId, '✗ generation failed at transcript', {
       took: ms(runStart),
       error: transcriptResult.error,
@@ -896,7 +899,6 @@ export async function generateVideoSummary(
   const summary = await generateSummaryWithAI(cleanedTranscript, meta, options.mode ?? 'auto');
   if (!summary.success) {
     await markSummaryFailedService(video.documentId);
-    clearGenerationStep(videoId);
     logPhase(videoId, '✗ generation failed at AI step', {
       took: ms(runStart),
       error: summary.error,
@@ -1023,7 +1025,6 @@ export async function generateVideoSummary(
     actionSteps: safe.actionSteps,
   });
   if (!updated.success) {
-    clearGenerationStep(videoId);
     logPhase(videoId, '✗ db save failed', {
       error: updated.error,
       took: ms(saveStart),
@@ -1107,7 +1108,6 @@ export async function generateVideoSummary(
     });
   }
 
-  clearGenerationStep(videoId);
   logPhase(videoId, '✓ generation complete', { took: ms(runStart) });
   return { success: true, data: updated.video };
 }
@@ -1119,62 +1119,12 @@ export async function generateVideoSummary(
 // status (pending/failed/generated) as the source of truth.
 // -----------------------------------------------------------------------------
 
-export type GenerationStep = 'transcript' | 'ai' | 'saving';
-
-// `detail` is an optional free-form sub-label (e.g. "map chunk 10/16",
-// "reduce", "single-pass"). The UI uses it to show per-chunk progress
-// during map-reduce so a long run doesn't look like it's wedged on a
-// single unchanging step.
-type GenerationProgress = {
-  step: GenerationStep;
-  detail: string | null;
-  at: number;
-  detailAt: number;
-};
-
-const generationProgress = new Map<string, GenerationProgress>();
-
-function setGenerationStep(
-  videoId: string,
-  step: GenerationStep,
-  detail: string | null = null,
-) {
-  const now = Date.now();
-  const existing = generationProgress.get(videoId);
-  // Preserve the step's start-time when only the detail changes, so the
-  // UI's "elapsed" counter keeps ticking across sub-steps rather than
-  // resetting on every chunk boundary.
-  const stepStartedAt = existing && existing.step === step ? existing.at : now;
-  generationProgress.set(videoId, {
-    step,
-    detail,
-    at: stepStartedAt,
-    detailAt: now,
-  });
-}
-
-function clearGenerationStep(videoId: string) {
-  generationProgress.delete(videoId);
-}
-
-export function readGenerationStep(
-  videoId: string,
-): {
-  step: GenerationStep;
-  detail: string | null;
-  elapsedMs: number;
-  detailElapsedMs: number;
-} | null {
-  const entry = generationProgress.get(videoId);
-  if (!entry) return null;
-  const now = Date.now();
-  return {
-    step: entry.step,
-    detail: entry.detail,
-    elapsedMs: now - entry.at,
-    detailElapsedMs: now - entry.detailAt,
-  };
-}
+// Background-generation progress lives in `generation-state.ts`. The
+// pipeline writes to it via `setGenerationStep` (re-exported there as
+// `setStep`); the UI reads via `getLiveState`. `GenerationStep` is
+// re-exported from this file for backward compatibility with existing
+// imports.
+export type { GenerationStep };
 
 // -----------------------------------------------------------------------------
 // Chat-with-video — non-streaming. Includes the full transcript plus the
@@ -1196,18 +1146,6 @@ function formatTimecode(sec: number): string {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-// How many retrieved chunks to include in the chat prompt. 8 * ~150 words
-// ≈ 1,200 words of retrieved content, plus the always-included sections /
-// takeaways — stays well under the model's context even for the smallest
-// local quant.
-const CHAT_TOP_K = 8;
-
-// How many alternative phrasings of the user's query to ask for. The
-// original is always included, so total query count = REWRITE_COUNT + 1.
-// Too few misses paraphrase gaps; too many increases rewrite latency and
-// dilutes ranking. 3-5 is the industry sweet spot.
-const REWRITE_COUNT = 4;
-
 function formatChunksForPrompt(chunks: TranscriptChunk[]): string {
   return chunks
     .map((c) => `[${formatTimecode(c.timeSec)}] ${c.text}`)
@@ -1222,73 +1160,6 @@ function extractLatestUserQuery(messages: ChatMessage[]): string {
     if (messages[i].role === 'user') return messages[i].content;
   }
   return '';
-}
-
-// Ask the local model to expand the user's question into several alternative
-// phrasings that capture the same intent with different vocabulary. The
-// original is always included — rewrites augment, never replace. Failures
-// fall back to the original query alone so retrieval still happens.
-export async function rewriteQuery(
-  videoId: string,
-  original: string,
-): Promise<string[]> {
-  const trimmed = original.trim();
-  if (trimmed.length === 0) return [];
-  // Skip rewriting for very short or very long queries — the marginal value
-  // is low and the latency is non-trivial.
-  if (trimmed.length < 4 || trimmed.length > 400) return [trimmed];
-
-  const started = performance.now();
-  const rewriteSystem = [
-    'You rewrite search queries. Given a user question about a YouTube video, output several alternative phrasings that capture the same intent using different vocabulary (synonyms, paraphrases, related terms).',
-    'Output ONE phrasing per line. No numbering, no bullets, no quotes, no explanation.',
-    `Produce exactly ${REWRITE_COUNT} alternative phrasings. Keep each under 15 words.`,
-  ].join('\n');
-  try {
-    const text = (await withRetry(
-      () =>
-        chat({
-          adapter: ollamaAdapterChat,
-          messages: [
-            { role: 'system', content: rewriteSystem },
-            { role: 'user', content: `Original question: ${trimmed}\n\nAlternative phrasings:` },
-          ] as never,
-          stream: false,
-        }),
-      { attempts: 2 },
-    )) as string;
-    const rewrites = text
-      .split('\n')
-      .map((l) => l.replace(/^[-•\d.)\s"'`]+/, '').replace(/["'`]+$/, '').trim())
-      .filter((l) => l.length > 0 && l.length < 200 && l.toLowerCase() !== trimmed.toLowerCase());
-    const deduped = Array.from(new Set(rewrites)).slice(0, REWRITE_COUNT);
-    const queries = [trimmed, ...deduped];
-    logPhase(videoId, 'chat ✓ query rewritten', {
-      original: trimmed,
-      rewrites: deduped,
-      took: ms(started),
-    });
-    return queries;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'rewrite failed';
-    logPhase(videoId, 'chat ✗ query rewrite failed (falling back)', {
-      error: message,
-      took: ms(started),
-    });
-    return [trimmed];
-  }
-}
-
-async function retrieveChunks(
-  video: StrapiVideo,
-  query: string,
-): Promise<TranscriptChunk[]> {
-  if (!isStoredIndex(video.transcriptSegments)) return [];
-  const queries = await rewriteQuery(video.youtubeVideoId, query);
-  if (queries.length <= 1) {
-    return searchBM25(video.transcriptSegments.bm25, queries[0] ?? query, CHAT_TOP_K);
-  }
-  return searchBM25MultiQuery(video.transcriptSegments.bm25, queries, CHAT_TOP_K);
 }
 
 // Default persona used when no skill is selected. Matches the Q&A skill's
@@ -1377,7 +1248,7 @@ export async function askAboutVideoService(
 ): Promise<ServiceResult<string>> {
   try {
     const query = extractLatestUserQuery(messages);
-    const retrieved = await retrieveChunks(video, query);
+    const retrieved = await getChatEvidenceForVideo(video, query);
     const system = buildChatSystemPrompt(video, retrieved);
     const text = (await withRetry(
       () =>
@@ -1407,7 +1278,7 @@ export async function prepareChatPrompt(
   opts?: { skillPrompt?: string | null },
 ): Promise<{ system: string; retrievedCount: number }> {
   const query = extractLatestUserQuery(messages);
-  const retrieved = await retrieveChunks(video, query);
+  const retrieved = await getChatEvidenceForVideo(video, query);
   return {
     system: buildChatSystemPrompt(video, retrieved, opts?.skillPrompt ?? null),
     retrievedCount: retrieved.length,

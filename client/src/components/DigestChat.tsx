@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { StrapiVideo } from '#/lib/services/videos';
 import { Button } from '#/components/ui/button';
+import { streamChatSSE, type StreamEvent } from '#/lib/services/chat-stream';
 
 // Chat UI for the /digest page. Simpler than VideoChat: no timecode seek
 // (no embedded player), no evidence accordion (chunks come from N videos
@@ -24,57 +25,10 @@ type Message = {
   toolCalls?: ToolCallRecord[];
 };
 
-type StreamEvent =
-  | { kind: 'text'; delta: string }
-  | { kind: 'tool_start'; id: string; name: string }
-  | {
-      kind: 'tool_end';
-      id: string;
-      name: string;
-      input: unknown;
-      result: string | null;
-    };
-
-function parseSseEventBlock(block: string): StreamEvent | null {
-  const lines = block.split('\n');
-  let payload = '';
-  for (const line of lines) {
-    if (line.startsWith('data:')) {
-      payload += line.slice(5).trimStart();
-    }
-  }
-  if (!payload || payload === '[DONE]') return null;
-  try {
-    const obj = JSON.parse(payload) as {
-      type?: string;
-      delta?: string;
-      content?: string;
-      toolCallId?: string;
-      toolCallName?: string;
-      args?: unknown;
-      result?: string | null;
-    };
-    if (obj.type === 'TEXT_MESSAGE_CONTENT' && typeof obj.delta === 'string') {
-      return { kind: 'text', delta: obj.delta };
-    }
-    if (obj.type === 'TOOL_CALL_START' && obj.toolCallId && obj.toolCallName) {
-      return { kind: 'tool_start', id: obj.toolCallId, name: obj.toolCallName };
-    }
-    if (obj.type === 'TOOL_CALL_END' && obj.toolCallId) {
-      return {
-        kind: 'tool_end',
-        id: obj.toolCallId,
-        name: obj.toolCallName ?? '',
-        input: obj.args ?? null,
-        result: obj.result ?? null,
-      };
-    }
-  } catch {
-    return null;
-  }
-  return null;
-}
-
+// Issue the digest-chat request and yield typed events from the
+// response stream. Wire framing + AG-UI parsing live in
+// `chat-stream.ts`; this wrapper owns only the request shape for the
+// cross-video digest endpoint.
 async function* streamDigestChat(
   videoIds: string[],
   messages: Message[],
@@ -88,31 +42,7 @@ async function* streamDigestChat(
     const text = await res.text().catch(() => '');
     throw new Error(`digest-chat (${res.status}): ${text || 'request failed'}`);
   }
-  if (!res.body) throw new Error('digest-chat: empty response body');
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let idx = buffer.indexOf('\n\n');
-      while (idx !== -1) {
-        const eventBlock = buffer.slice(0, idx);
-        buffer = buffer.slice(idx + 2);
-        const event = parseSseEventBlock(eventBlock);
-        if (event) yield event;
-        idx = buffer.indexOf('\n\n');
-      }
-    }
-    buffer += decoder.decode();
-    const event = parseSseEventBlock(buffer);
-    if (event) yield event;
-  } finally {
-    reader.releaseLock();
-  }
+  yield* streamChatSSE(res);
 }
 
 const SUGGESTED_PROMPTS = [

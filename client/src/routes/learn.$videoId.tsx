@@ -12,6 +12,7 @@ import { ViewTabs } from '#/components/ViewTabs';
 import { ReadablePane } from '#/components/ReadablePane';
 import { NotesPane } from '#/components/NotesPane';
 import { TranscriptPane } from '#/components/TranscriptPane';
+import { PlayerProvider, YouTubePlayer } from '#/components/player';
 import { RelatedVideos } from '#/components/RelatedVideos';
 import { GenerationModeSelect } from '#/components/GenerationModeSelect';
 import {
@@ -111,18 +112,6 @@ export const Route = createFileRoute('/learn/$videoId')({
   },
 });
 
-// Build the YouTube embed URL, optionally seeded with a start-at-second
-// offset. When `startSec` is present we also set `autoplay=1` — the
-// navigation itself was a user gesture (clicking a moment-search card),
-// so most browsers allow autoplay downstream.
-function buildEmbedSrc(videoId: string, startSec?: number): string {
-  const base = `https://www.youtube.com/embed/${videoId}?enablejsapi=1&rel=0`;
-  if (typeof startSec === 'number' && startSec > 0) {
-    return `${base}&start=${startSec}&autoplay=1`;
-  }
-  return base;
-}
-
 // Poll the loader while generation is pending. Long videos doing
 // map-reduce summaries can run 5–10 min, so the cap has to exceed that or
 // the UI freezes mid-run as polling dies. Also invalidates when the tab
@@ -187,15 +176,13 @@ function SummaryView({
   video,
   videoId,
 }: Readonly<{ video: StrapiVideo; videoId: string }>) {
-  const iframeRef = useRef<HTMLIFrameElement>(null);
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
   const view = search.view ?? 'summary';
   const setView = (next: 'summary' | 'read' | 'notes' | 'transcript') => {
     // Preserve `t` across view changes — stripping it would mutate the
-    // iframe src and force the player to reload from whatever its current
-    // state is. User changes tabs after landing at a moment; the video
-    // should keep playing uninterrupted.
+    // player's start offset and force a reload. User changes tabs after
+    // landing at a moment; the video should keep playing uninterrupted.
     void navigate({
       search: {
         view: next === 'summary' ? undefined : next,
@@ -207,100 +194,73 @@ function SummaryView({
   // needing its own event wiring or a page reload.
   const [notesRefreshKey, setNotesRefreshKey] = useState(0);
 
-  const seekTo = (seconds: number) => {
-    const iframe = iframeRef.current;
-    const win = iframe?.contentWindow;
-    if (!win || !iframe) return;
-    const origin = 'https://www.youtube.com';
-    win.postMessage(
-      JSON.stringify({ event: 'command', func: 'seekTo', args: [seconds, true] }),
-      origin,
-    );
-    win.postMessage(
-      JSON.stringify({ event: 'command', func: 'playVideo', args: [] }),
-      origin,
-    );
-    // Desktop: the right column is sticky so the iframe is always visible —
-    // no scroll needed. Mobile: the chat/video column stacks below summary,
-    // so bring the iframe into view when a timecode is clicked.
-    const rect = iframe.getBoundingClientRect();
-    const viewportH = window.innerHeight || document.documentElement.clientHeight;
-    const fullyVisible = rect.top >= 0 && rect.bottom <= viewportH;
-    if (!fullyVisible) {
-      iframe.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-  };
-
   return (
-    <main className="min-h-[calc(100vh-4rem)]">
-      {/* Full-bleed edge-to-edge 60/40 split on lg+. LinkedIn-Learning /
-          Udemy feel: the left summary panel has a subtle gray bg and
-          extends to the left viewport edge; the right aside (video + chat)
-          extends to the right viewport edge. Both columns fill the
-          viewport vertically on desktop so the divider between them is a
-          clean full-height line. */}
-      <div className="grid min-h-[calc(100vh-4rem)] lg:grid-cols-[6fr_4fr] lg:items-stretch">
-        <div className="min-w-0 bg-[var(--bg-subtle)] px-6 py-10 sm:px-10 sm:py-14 lg:px-14">
-          <div className="mb-6">
-            <ViewTabs
-              active={view}
-              tabs={[
-                { id: 'summary', label: 'Summary' },
-                { id: 'read', label: 'Read' },
-                { id: 'notes', label: 'Notes' },
-                { id: 'transcript', label: 'Transcript' },
-              ]}
-              onChange={setView}
-            />
-          </div>
+    <PlayerProvider>
+      {/* On lg+ the page itself doesn't scroll — `<main>` is taken out
+          of body flow with `lg:fixed`, anchored from just-below-the-
+          header (`top-16`) to the viewport bottom. Body's height stops
+          at the header, so the whole page can never scroll. Each
+          column scrolls inside its own container with `overscroll-
+          contain` so wheel events don't chain. Mobile (under `lg`)
+          falls back to stacked, page-level scroll via `min-h-`.
 
-          {view === 'read' ? (
-            <ReadablePane video={video} />
-          ) : view === 'notes' ? (
-            <NotesPane
-              videoDocumentId={video.documentId}
-              videoYoutubeId={video.youtubeVideoId}
-              onSeek={seekTo}
-              refreshKey={notesRefreshKey}
-            />
-          ) : view === 'transcript' ? (
-            <TranscriptPane video={video} onSeek={seekTo} />
-          ) : (
-            <SummaryContent video={video} seekTo={seekTo} iframeRef={iframeRef} />
-          )}
-        </div>
-
-        {/* Right column — video pinned at top edge-to-edge, chat filling
-            remaining height. On lg+ the aside is sticky so the video stays
-            visible while the left column scrolls. Bordered on the left to
-            separate from the summary panel. */}
-        <aside className="flex min-h-0 min-w-0 flex-col bg-[var(--card)] lg:sticky lg:top-16 lg:max-h-[calc(100vh-4rem)] lg:border-l lg:border-[var(--line)]">
-          <div className="bg-black">
-            <div className="relative aspect-video w-full">
-              <iframe
-                ref={iframeRef}
-                // When a `?t=<sec>` deep link is present (moment search →
-                // learn page), append `start=<sec>&autoplay=1` to the
-                // iframe src. YouTube's player loads already seeked to
-                // that position and begins playback — reliable across
-                // browsers without waiting for the postMessage channel.
-                src={buildEmbedSrc(videoId, search.t)}
-                title={video.videoTitle ?? video.summaryTitle ?? 'Video'}
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                allowFullScreen
-                className="absolute inset-0 h-full w-full"
+          Why `fixed` rather than `h-[calc(100vh-...)]`: the latter
+          requires nailing the header's exact pixel height (incl. its
+          `border-b`), and any 1-pixel overflow puts a scrollbar back
+          on the page. `fixed` sidesteps the math entirely. */}
+      <main className="min-h-[calc(100dvh-4rem)] lg:fixed lg:inset-x-0 lg:bottom-0 lg:top-16 lg:min-h-0 lg:overflow-hidden">
+        <div className="grid min-h-[calc(100dvh-4rem)] lg:h-full lg:min-h-0 lg:grid-cols-[6fr_4fr]">
+          <div className="min-w-0 bg-[var(--bg-subtle)] px-6 py-10 sm:px-10 sm:py-14 lg:overflow-y-auto lg:overscroll-contain lg:px-14">
+            <div className="mb-6">
+              <ViewTabs
+                active={view}
+                tabs={[
+                  { id: 'summary', label: 'Summary' },
+                  { id: 'read', label: 'Read' },
+                  { id: 'notes', label: 'Notes' },
+                  { id: 'transcript', label: 'Transcript' },
+                ]}
+                onChange={setView}
               />
             </div>
+
+            {view === 'read' ? (
+              <ReadablePane video={video} />
+            ) : view === 'notes' ? (
+              <NotesPane
+                videoDocumentId={video.documentId}
+                videoYoutubeId={video.youtubeVideoId}
+                refreshKey={notesRefreshKey}
+              />
+            ) : view === 'transcript' ? (
+              <TranscriptPane video={video} />
+            ) : (
+              <SummaryContent video={video} />
+            )}
           </div>
-          <VideoChat
-            videoId={videoId}
-            onSeek={seekTo}
-            onNoteCreated={() => setNotesRefreshKey((k) => k + 1)}
-            className="min-h-[360px] flex-1 px-6 py-6 sm:px-8"
-          />
-        </aside>
-      </div>
-    </main>
+
+          {/* Right column — video pinned at top, chat scrolls internally
+              below it. The aside fills the grid cell (no `sticky` needed
+              since the page itself is height-locked on lg+). */}
+          <aside className="flex min-h-0 min-w-0 flex-col bg-[var(--card)] lg:overscroll-contain lg:border-l lg:border-[var(--line)]">
+            <div className="bg-black">
+              <div className="relative aspect-video w-full">
+                <YouTubePlayer
+                  videoId={videoId}
+                  startSec={search.t}
+                  className="absolute inset-0 h-full w-full"
+                />
+              </div>
+            </div>
+            <VideoChat
+              videoId={videoId}
+              onNoteCreated={() => setNotesRefreshKey((k) => k + 1)}
+              className="min-h-[360px] flex-1 px-6 py-6 sm:px-8"
+            />
+          </aside>
+        </div>
+      </main>
+    </PlayerProvider>
   );
 }
 
@@ -341,13 +301,7 @@ function formatElapsed(ms: number | null): string | null {
 // `summary` tab in the learn page's left pane.
 function SummaryContent({
   video,
-  seekTo,
-  iframeRef,
-}: Readonly<{
-  video: StrapiVideo;
-  seekTo: (seconds: number) => void;
-  iframeRef: React.RefObject<HTMLIFrameElement | null>;
-}>) {
+}: Readonly<{ video: StrapiVideo }>) {
   return (
     <>
       <header className="mb-10">
@@ -404,7 +358,6 @@ function SummaryContent({
             Overview
           </h2>
           <TimecodeMarkdown
-            onSeek={seekTo}
             className="chat-md mt-4 text-base leading-relaxed text-[var(--ink-soft)]"
           >
             {video.summaryOverview}
@@ -423,7 +376,7 @@ function SummaryContent({
                 className="flex items-start gap-3 rounded-xl border border-[var(--line)] bg-[var(--card)] px-4 py-3 text-sm leading-relaxed text-[var(--ink-soft)]"
               >
                 <span className="mt-[0.4rem] h-1.5 w-1.5 flex-none rounded-full bg-[var(--accent)]" />
-                <TimecodeMarkdown onSeek={seekTo} className="chat-md min-w-0 flex-1">
+                <TimecodeMarkdown className="chat-md min-w-0 flex-1">
                   {t.text}
                 </TimecodeMarkdown>
               </li>
@@ -459,15 +412,10 @@ function SummaryContent({
                           documentId={video.documentId}
                           sectionId={s.id}
                           timeSec={s.timeSec as number}
-                          iframeRef={iframeRef}
-                          onSeek={seekTo}
                         />
                       )}
                     </header>
-                    <TimecodeMarkdown
-                      onSeek={seekTo}
-                      className="chat-md mt-3 text-sm leading-relaxed text-[var(--ink-soft)]"
-                    >
+                    <TimecodeMarkdown className="chat-md mt-3 text-sm leading-relaxed text-[var(--ink-soft)]">
                       {stripInlineTimecodes(s.body)}
                     </TimecodeMarkdown>
                   </article>
@@ -497,10 +445,7 @@ function SummaryContent({
                   <h3 className="text-base font-semibold leading-snug text-[var(--ink)]">
                     {step.title}
                   </h3>
-                  <TimecodeMarkdown
-                    onSeek={seekTo}
-                    className="chat-md mt-1.5 text-sm leading-relaxed text-[var(--ink-soft)]"
-                  >
+                  <TimecodeMarkdown className="chat-md mt-1.5 text-sm leading-relaxed text-[var(--ink-soft)]">
                     {step.body}
                   </TimecodeMarkdown>
                 </div>

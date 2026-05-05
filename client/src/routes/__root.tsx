@@ -1,10 +1,15 @@
-import { HeadContent, Scripts, createRootRoute } from '@tanstack/react-router'
+import { HeadContent, Scripts, createRootRoute, useLocation } from '@tanstack/react-router'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { useState } from 'react'
 import Footer from '../components/Footer'
 import Header from '../components/Header'
 import { BottomNav } from '../components/BottomNav'
 import { LibraryChat } from '../components/LibraryChat'
+
+// Pathnames where the marketing footer renders. Everywhere else (feed,
+// learn, search, settings, digests, etc.) the chrome-heavy footer
+// competes for attention with task-focused UI, so we hide it.
+const FOOTER_PATHS = new Set(['/', '/about'])
 
 import appCss from '../styles.css?url'
 
@@ -51,7 +56,7 @@ function RootDocument({ children }: Readonly<{ children: React.ReactNode }>) {
         <QueryClientProvider client={queryClient}>
           <Header />
           {children}
-          <Footer />
+          <ConditionalFooter />
           <BottomNav />
           <LibraryChat />
         </QueryClientProvider>
@@ -59,4 +64,10 @@ function RootDocument({ children }: Readonly<{ children: React.ReactNode }>) {
       </body>
     </html>
   )
+}
+
+function ConditionalFooter() {
+  const { pathname } = useLocation()
+  if (!FOOTER_PATHS.has(pathname)) return null
+  return <Footer />
 }

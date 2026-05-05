@@ -2,15 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Popover } from 'radix-ui';
 import { useRouter } from '@tanstack/react-router';
 import { updateSectionTimecode } from '#/data/server-functions/videos';
-
-// The YouTube IFrame API streams `infoDelivery` messages with currentTime
-// once we subscribe via `{event: 'listening'}`. We parse them in a window
-// listener and keep the latest value in state — no extra script load.
-// Only active while the popover is open to avoid leaking listeners.
-type YTListeningMessage = {
-  event?: string;
-  info?: { currentTime?: number; playerState?: number };
-};
+import { usePlayerControl } from '#/components/player';
 
 function parseTimecodeInput(raw: string): number | null {
   const s = raw.trim();
@@ -51,57 +43,34 @@ export function SectionTimecodeEditor({
   documentId,
   sectionId,
   timeSec,
-  iframeRef,
-  onSeek,
 }: Readonly<{
   documentId: string;
   sectionId: number;
   timeSec: number;
-  iframeRef: React.RefObject<HTMLIFrameElement | null>;
-  onSeek: (sec: number) => void;
 }>) {
   const router = useRouter();
+  const { seekTo, currentSeconds, isReady } = usePlayerControl();
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState(formatTc(timeSec));
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [livePlayerSec, setLivePlayerSec] = useState<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Live time only matters while the popover is open. We read it
+  // from the player Module's reactive state instead of running our
+  // own postMessage listener.
+  const livePlayerSec = open && isReady ? currentSeconds : null;
 
   useEffect(() => {
     if (!open) return;
     setInput(formatTc(timeSec));
     setError(null);
-    // Subscribe to the iframe's info stream so we can offer "use current
-    // video time". Nothing happens if the iframe isn't ready yet — user
-    // can still type manually.
-    const iframe = iframeRef.current;
-    if (iframe?.contentWindow) {
-      iframe.contentWindow.postMessage(
-        JSON.stringify({ event: 'listening', id: 'yt-section-editor' }),
-        'https://www.youtube.com',
-      );
-    }
-    const onMessage = (event: MessageEvent) => {
-      if (typeof event.data !== 'string') return;
-      if (!event.origin.includes('youtube.com')) return;
-      try {
-        const msg = JSON.parse(event.data) as YTListeningMessage;
-        if (msg.event === 'infoDelivery' && typeof msg.info?.currentTime === 'number') {
-          setLivePlayerSec(msg.info.currentTime);
-        }
-      } catch {
-        // not-JSON messages: ignore
-      }
-    };
-    window.addEventListener('message', onMessage);
     // Focus the input when opening so keyboard flow is clean.
     const t = window.setTimeout(() => inputRef.current?.focus(), 30);
     return () => {
-      window.removeEventListener('message', onMessage);
       window.clearTimeout(t);
     };
-  }, [open, iframeRef, timeSec]);
+  }, [open, timeSec]);
 
   const handleSave = async () => {
     const parsed = parseTimecodeInput(input);
@@ -140,11 +109,9 @@ export function SectionTimecodeEditor({
         <button
           type="button"
           onClick={(e) => {
-            // Modifier-less click = seek (existing behavior). Long-press /
-            // shift-click opens the editor. Actually simpler: plain click
-            // still seeks, click the small pencil button next to it to edit.
+            // Plain click seeks; right-click opens the inline editor.
             e.preventDefault();
-            onSeek(timeSec);
+            seekTo(timeSec);
           }}
           onContextMenu={(e) => {
             e.preventDefault();
@@ -187,7 +154,7 @@ export function SectionTimecodeEditor({
           {error && (
             <p className="mt-1.5 text-xs text-destructive">{error}</p>
           )}
-          {livePlayerSec != null && (
+          {livePlayerSec !== null && (
             <button
               type="button"
               onClick={() => {

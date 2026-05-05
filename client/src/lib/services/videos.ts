@@ -1,24 +1,9 @@
-import { STRAPI_URL, STRAPI_API_TOKEN } from '#/lib/env';
+import { STRAPI_URL } from '#/lib/env';
+import { strapiFetch, type StrapiQuery } from './strapi-client';
 import type { StoredTranscriptIndex } from './transcript';
 
-// Build request headers with the optional bearer token. Server-side only.
-function strapiHeaders(extra?: Record<string, string>): Record<string, string> {
-  const headers: Record<string, string> = { ...extra };
-  if (STRAPI_API_TOKEN) headers.Authorization = `Bearer ${STRAPI_API_TOKEN}`;
-  return headers;
-}
-
-// Log failed fetches loudly — the previous silent-empty-array pattern made
-// "nothing in feed" undiagnosable. Every non-ok response prints status +
-// body so you can see exactly why.
-async function handleFetchError(res: Response, tag: string): Promise<void> {
-  const body = await res.text().catch(() => '');
-  console.error(`[${tag}] strapi request failed`, {
-    status: res.status,
-    url: res.url,
-    body: body.slice(0, 500),
-  });
-}
+// `STRAPI_URL` is kept here only for `strapiAssetUrl` (asset URL composition
+// for uploaded media). Every REST call goes through `strapi-client` instead.
 
 // =============================================================================
 // Types
@@ -146,49 +131,44 @@ export type FeedQuery = {
   tag?: string; // slug
 };
 
-function feedQueryParams({ page = 1, pageSize = 20, q, tag }: FeedQuery): URLSearchParams {
-  const params = new URLSearchParams();
+function feedQuery({ page = 1, pageSize = 20, q, tag }: FeedQuery): StrapiQuery {
   // Keep the feed payload light. No component populate on the list view —
   // summary fields are only needed on the detail page.
-  params.set('populate[tags]', 'true');
-  params.set('sort', 'createdAt:desc');
-  params.set('pagination[page]', String(page));
-  params.set('pagination[pageSize]', String(pageSize));
-  params.set('pagination[withCount]', 'true');
-
+  const filters: Record<string, unknown> = {};
   const trimmed = q?.trim();
   if (trimmed) {
-    params.set('filters[$or][0][videoTitle][$containsi]', trimmed);
-    params.set('filters[$or][1][videoAuthor][$containsi]', trimmed);
-    params.set('filters[$or][2][caption][$containsi]', trimmed);
-    params.set('filters[$or][3][summaryTitle][$containsi]', trimmed);
+    filters.$or = [
+      { videoTitle: { $containsi: trimmed } },
+      { videoAuthor: { $containsi: trimmed } },
+      { caption: { $containsi: trimmed } },
+      { summaryTitle: { $containsi: trimmed } },
+    ];
   }
-
   if (tag) {
-    params.set('filters[tags][slug][$eq]', tag);
+    filters.tags = { slug: { $eq: tag } };
   }
-
-  return params;
+  return {
+    populate: ['tags'],
+    sort: 'createdAt:desc',
+    pagination: { page, pageSize, withCount: true },
+    ...(Object.keys(filters).length > 0
+      ? { filters: filters as StrapiQuery['filters'] }
+      : {}),
+  };
 }
 
 export async function fetchFeedService(query: FeedQuery): Promise<PaginatedVideos> {
-  const params = feedQueryParams(query);
-  const res = await fetch(`${STRAPI_URL}/api/videos?${params.toString()}`, {
-    headers: strapiHeaders(),
+  const result = await strapiFetch<StrapiVideo[]>('GET', '/api/videos', {
+    query: feedQuery(query),
   });
-  if (!res.ok) {
-    await handleFetchError(res, 'fetchFeedService');
+  if (!result.ok) {
     return { videos: [], page: query.page ?? 1, pageCount: 0, total: 0 };
   }
-  const json = (await res.json()) as {
-    data?: StrapiVideo[];
-    meta?: { pagination?: { page: number; pageCount: number; total: number } };
-  };
   return {
-    videos: json.data ?? [],
-    page: json.meta?.pagination?.page ?? 1,
-    pageCount: json.meta?.pagination?.pageCount ?? 0,
-    total: json.meta?.pagination?.total ?? 0,
+    videos: result.data ?? [],
+    page: result.meta?.pagination?.page ?? 1,
+    pageCount: result.meta?.pagination?.pageCount ?? 0,
+    total: result.meta?.pagination?.total ?? 0,
   };
 }
 
@@ -198,15 +178,9 @@ export async function fetchFeedService(query: FeedQuery): Promise<PaginatedVideo
 
 // Populate strategy for the detail page — everything, including the heavy
 // components that the summary view needs.
-function detailQueryParams(): URLSearchParams {
-  const params = new URLSearchParams();
-  params.set('populate[tags]', 'true');
-  params.set('populate[keyTakeaways]', 'true');
-  params.set('populate[sections]', 'true');
-  params.set('populate[actionSteps]', 'true');
-  params.set('populate[transcript]', 'true');
-  return params;
-}
+const detailQuery: StrapiQuery = {
+  populate: ['tags', 'keyTakeaways', 'sections', 'actionSteps', 'transcript'],
+};
 
 // Lightweight listing used by embedding-dependent features (backfill,
 // relatedVideos, semantic search). Pulls the fields needed to rebuild the
@@ -216,28 +190,17 @@ export async function listAllVideosForEmbeddingService(): Promise<StrapiVideo[]>
   const pageSize = 100;
   const all: StrapiVideo[] = [];
   for (let page = 1; page <= 50; page += 1) {
-    const params = new URLSearchParams();
-    params.set('populate[tags]', 'true');
-    params.set('populate[keyTakeaways]', 'true');
-    params.set('populate[sections]', 'true');
-    params.set('filters[summaryStatus][$eq]', 'generated');
-    params.set('sort', 'createdAt:desc');
-    params.set('pagination[page]', String(page));
-    params.set('pagination[pageSize]', String(pageSize));
-    params.set('pagination[withCount]', 'true');
-    const res = await fetch(`${STRAPI_URL}/api/videos?${params.toString()}`, {
-      headers: strapiHeaders(),
+    const result = await strapiFetch<StrapiVideo[]>('GET', '/api/videos', {
+      query: {
+        populate: ['tags', 'keyTakeaways', 'sections'],
+        filters: { summaryStatus: { $eq: 'generated' } },
+        sort: 'createdAt:desc',
+        pagination: { page, pageSize, withCount: true },
+      },
     });
-    if (!res.ok) {
-      await handleFetchError(res, 'listAllVideosForEmbeddingService');
-      break;
-    }
-    const json = (await res.json()) as {
-      data: StrapiVideo[];
-      meta?: { pagination?: { pageCount?: number } };
-    };
-    all.push(...json.data);
-    const pageCount = json.meta?.pagination?.pageCount ?? 1;
+    if (!result.ok) break;
+    all.push(...(result.data ?? []));
+    const pageCount = result.meta?.pagination?.pageCount ?? 1;
     if (page >= pageCount) break;
   }
   return all;
@@ -246,34 +209,25 @@ export async function listAllVideosForEmbeddingService(): Promise<StrapiVideo[]>
 export async function fetchVideoByDocumentIdService(
   documentId: string,
 ): Promise<StrapiVideo | null> {
-  const res = await fetch(
-    `${STRAPI_URL}/api/videos/${documentId}?${detailQueryParams().toString()}`,
-    { headers: strapiHeaders() },
+  const result = await strapiFetch<StrapiVideo>(
+    'GET',
+    `/api/videos/${documentId}`,
+    { query: detailQuery },
   );
-  if (!res.ok) {
-    await handleFetchError(res, 'fetchVideoByDocumentIdService');
-    return null;
-  }
-  const json = (await res.json()) as { data?: StrapiVideo };
-  return json.data ?? null;
+  return result.ok ? (result.data ?? null) : null;
 }
 
 export async function fetchVideoByVideoIdService(
   videoId: string,
 ): Promise<StrapiVideo | null> {
-  const params = detailQueryParams();
-  params.set('filters[youtubeVideoId][$eq]', videoId);
-  params.set('pagination[pageSize]', '1');
-
-  const res = await fetch(`${STRAPI_URL}/api/videos?${params.toString()}`, {
-    headers: strapiHeaders(),
+  const result = await strapiFetch<StrapiVideo[]>('GET', '/api/videos', {
+    query: {
+      ...detailQuery,
+      filters: { youtubeVideoId: { $eq: videoId } },
+      pagination: { pageSize: 1 },
+    },
   });
-  if (!res.ok) {
-    await handleFetchError(res, 'fetchVideoByVideoIdService');
-    return null;
-  }
-  const json = (await res.json()) as { data?: StrapiVideo[] };
-  return json.data?.[0] ?? null;
+  return result.ok ? (result.data?.[0] ?? null) : null;
 }
 
 // =============================================================================
@@ -328,24 +282,11 @@ export async function createVideoService(
     },
   };
 
-  const res = await fetch(`${STRAPI_URL}/api/videos`, {
-    method: 'POST',
-    headers: strapiHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    await handleFetchError(res, 'createVideoService');
-    const err = (await res.json().catch(() => ({}))) as {
-      error?: { message?: string };
-    };
-    return {
-      success: false,
-      kind: 'error',
-      error: err.error?.message ?? `Strapi error ${res.status}`,
-    };
+  const result = await strapiFetch<StrapiVideo>('POST', '/api/videos', { body });
+  if (!result.ok) {
+    return { success: false, kind: 'error', error: result.error };
   }
-  const json = (await res.json()) as { data: StrapiVideo };
-  return { success: true, video: json.data };
+  return { success: true, video: result.data };
 }
 
 // =============================================================================
@@ -371,26 +312,21 @@ export async function updateVideoSummaryService(
   input: UpdateVideoSummaryInput,
 ): Promise<{ success: true; video: StrapiVideo } | { success: false; error: string }> {
   const { documentId, ...rest } = input;
-  const body = {
-    data: {
-      ...rest,
-      summaryStatus: 'generated' as SummaryStatus,
-      summaryGeneratedAt: new Date().toISOString(),
+  const result = await strapiFetch<StrapiVideo>(
+    'PUT',
+    `/api/videos/${documentId}`,
+    {
+      body: {
+        data: {
+          ...rest,
+          summaryStatus: 'generated' as SummaryStatus,
+          summaryGeneratedAt: new Date().toISOString(),
+        },
+      },
     },
-  };
-
-  const res = await fetch(`${STRAPI_URL}/api/videos/${documentId}`, {
-    method: 'PUT',
-    headers: strapiHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    await handleFetchError(res, 'updateVideoSummaryService');
-    const err = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
-    return { success: false, error: err.error?.message ?? `Strapi error ${res.status}` };
-  }
-  const json = (await res.json()) as { data: StrapiVideo };
-  return { success: true, video: json.data };
+  );
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, video: result.data };
 }
 
 // Dedicated writer for embedding fields. Keeping this isolated from the
@@ -404,23 +340,21 @@ export async function updateVideoEmbeddingService(input: {
   version: number;
   generatedAt: string;
 }): Promise<{ success: true } | { success: false; error: string }> {
-  const res = await fetch(`${STRAPI_URL}/api/videos/${input.documentId}`, {
-    method: 'PUT',
-    headers: strapiHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({
-      data: {
-        summaryEmbedding: input.embedding,
-        embeddingModel: input.model,
-        embeddingVersion: input.version,
-        embeddingGeneratedAt: input.generatedAt,
+  const result = await strapiFetch<StrapiVideo>(
+    'PUT',
+    `/api/videos/${input.documentId}`,
+    {
+      body: {
+        data: {
+          summaryEmbedding: input.embedding,
+          embeddingModel: input.model,
+          embeddingVersion: input.version,
+          embeddingGeneratedAt: input.generatedAt,
+        },
       },
-    }),
-  });
-  if (!res.ok) {
-    await handleFetchError(res, 'updateVideoEmbeddingService');
-    return { success: false, error: `Strapi error ${res.status}` };
-  }
-  return { success: true };
+    },
+  );
+  return result.ok ? { success: true } : { success: false, error: result.error };
 }
 
 // Dedicated writer for the Tier-2 passage-index JSON blob.
@@ -428,27 +362,18 @@ export async function updateVideoPassagesService(input: {
   documentId: string;
   passageEmbeddings: NonNullable<StrapiVideo['passageEmbeddings']>;
 }): Promise<{ success: true } | { success: false; error: string }> {
-  const res = await fetch(`${STRAPI_URL}/api/videos/${input.documentId}`, {
-    method: 'PUT',
-    headers: strapiHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({
-      data: { passageEmbeddings: input.passageEmbeddings },
-    }),
-  });
-  if (!res.ok) {
-    await handleFetchError(res, 'updateVideoPassagesService');
-    return { success: false, error: `Strapi error ${res.status}` };
-  }
-  return { success: true };
+  const result = await strapiFetch<StrapiVideo>(
+    'PUT',
+    `/api/videos/${input.documentId}`,
+    { body: { data: { passageEmbeddings: input.passageEmbeddings } } },
+  );
+  return result.ok ? { success: true } : { success: false, error: result.error };
 }
 
 export async function markSummaryFailedService(documentId: string): Promise<void> {
-  await fetch(`${STRAPI_URL}/api/videos/${documentId}`, {
-    method: 'PUT',
-    headers: strapiHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ data: { summaryStatus: 'failed' } }),
-  }).catch(() => {
-    // Best-effort — the chat UI will show the error via its own retry path.
+  // Best-effort — the chat UI will show the error via its own retry path.
+  await strapiFetch('PUT', `/api/videos/${documentId}`, {
+    body: { data: { summaryStatus: 'failed' } },
   });
 }
 
@@ -461,16 +386,13 @@ export async function updateSectionTimecodeService(input: {
   timeSec: number;
 }): Promise<{ success: true } | { success: false; error: string }> {
   // Fetch current sections so we can resend the array with one edit.
-  const res = await fetch(
-    `${STRAPI_URL}/api/videos/${input.documentId}?${detailQueryParams().toString()}`,
-    { headers: strapiHeaders() },
+  const read = await strapiFetch<StrapiVideo>(
+    'GET',
+    `/api/videos/${input.documentId}`,
+    { query: detailQuery },
   );
-  if (!res.ok) {
-    await handleFetchError(res, 'updateSectionTimecodeService.fetch');
-    return { success: false, error: `Strapi read error ${res.status}` };
-  }
-  const json = (await res.json()) as { data?: StrapiVideo };
-  const video = json.data;
+  if (!read.ok) return { success: false, error: read.error };
+  const video = read.data;
   if (!video) return { success: false, error: 'Video not found' };
 
   const currentSections = video.sections ?? [];
@@ -482,16 +404,12 @@ export async function updateSectionTimecodeService(input: {
   });
   if (!matched) return { success: false, error: 'Section not found on this video' };
 
-  const putRes = await fetch(`${STRAPI_URL}/api/videos/${input.documentId}`, {
-    method: 'PUT',
-    headers: strapiHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ data: { sections: nextSections } }),
-  });
-  if (!putRes.ok) {
-    await handleFetchError(putRes, 'updateSectionTimecodeService.put');
-    return { success: false, error: `Strapi write error ${putRes.status}` };
-  }
-  return { success: true };
+  const write = await strapiFetch<StrapiVideo>(
+    'PUT',
+    `/api/videos/${input.documentId}`,
+    { body: { data: { sections: nextSections } } },
+  );
+  return write.ok ? { success: true } : { success: false, error: write.error };
 }
 
 // Flip a completed (or failed) summary back to 'pending' so the generation
@@ -501,16 +419,10 @@ export async function updateSectionTimecodeService(input: {
 export async function markSummaryPendingService(
   documentId: string,
 ): Promise<{ success: true } | { success: false; error: string }> {
-  const res = await fetch(`${STRAPI_URL}/api/videos/${documentId}`, {
-    method: 'PUT',
-    headers: strapiHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ data: { summaryStatus: 'pending' } }),
+  const result = await strapiFetch<StrapiVideo>('PUT', `/api/videos/${documentId}`, {
+    body: { data: { summaryStatus: 'pending' } },
   });
-  if (!res.ok) {
-    await handleFetchError(res, 'markSummaryPendingService');
-    return { success: false, error: `Strapi error ${res.status}` };
-  }
-  return { success: true };
+  return result.ok ? { success: true } : { success: false, error: result.error };
 }
 
 // =============================================================================
@@ -525,19 +437,13 @@ export async function markSummaryPendingService(
 export async function fetchTranscriptByVideoIdService(
   videoId: string,
 ): Promise<StrapiTranscript | null> {
-  const params = new URLSearchParams();
-  params.set('filters[youtubeVideoId][$eq]', videoId);
-  params.set('pagination[pageSize]', '1');
-
-  const res = await fetch(`${STRAPI_URL}/api/transcripts?${params.toString()}`, {
-    headers: strapiHeaders(),
+  const result = await strapiFetch<StrapiTranscript[]>('GET', '/api/transcripts', {
+    query: {
+      filters: { youtubeVideoId: { $eq: videoId } },
+      pagination: { pageSize: 1 },
+    },
   });
-  if (!res.ok) {
-    await handleFetchError(res, 'fetchTranscriptByVideoIdService');
-    return null;
-  }
-  const json = (await res.json()) as { data?: StrapiTranscript[] };
-  return json.data?.[0] ?? null;
+  return result.ok ? (result.data?.[0] ?? null) : null;
 }
 
 export type CreateTranscriptServiceInput = {
@@ -554,24 +460,12 @@ export type CreateTranscriptServiceInput = {
 export async function createTranscriptService(
   input: CreateTranscriptServiceInput,
 ): Promise<{ success: true; transcript: StrapiTranscript } | { success: false; error: string }> {
-  const body = {
-    data: {
-      ...input,
-      fetchedAt: new Date().toISOString(),
-    },
-  };
-  const res = await fetch(`${STRAPI_URL}/api/transcripts`, {
-    method: 'POST',
-    headers: strapiHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify(body),
+  const result = await strapiFetch<StrapiTranscript>('POST', '/api/transcripts', {
+    body: { data: { ...input, fetchedAt: new Date().toISOString() } },
   });
-  if (!res.ok) {
-    await handleFetchError(res, 'createTranscriptService');
-    const err = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
-    return { success: false, error: err.error?.message ?? `Strapi error ${res.status}` };
-  }
-  const json = (await res.json()) as { data: StrapiTranscript };
-  return { success: true, transcript: json.data };
+  return result.ok
+    ? { success: true, transcript: result.data }
+    : { success: false, error: result.error };
 }
 
 // Attach a Transcript to a Video via the 1:1 relation. Used after the
@@ -580,16 +474,12 @@ export async function linkVideoToTranscriptService(
   videoDocumentId: string,
   transcriptDocumentId: string,
 ): Promise<{ success: true } | { success: false; error: string }> {
-  const res = await fetch(`${STRAPI_URL}/api/videos/${videoDocumentId}`, {
-    method: 'PUT',
-    headers: strapiHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ data: { transcript: transcriptDocumentId } }),
-  });
-  if (!res.ok) {
-    await handleFetchError(res, 'linkVideoToTranscriptService');
-    return { success: false, error: `Strapi error ${res.status}` };
-  }
-  return { success: true };
+  const result = await strapiFetch<StrapiVideo>(
+    'PUT',
+    `/api/videos/${videoDocumentId}`,
+    { body: { data: { transcript: transcriptDocumentId } } },
+  );
+  return result.ok ? { success: true } : { success: false, error: result.error };
 }
 
 // =============================================================================
@@ -599,51 +489,32 @@ export async function linkVideoToTranscriptService(
 export async function findTagByNameService(rawName: string): Promise<StrapiTag | null> {
   const name = rawName.trim().toLowerCase().replace(/\s+/g, ' ');
   if (!name) return null;
-  const params = new URLSearchParams();
-  params.set('filters[name][$eq]', name);
-  params.set('pagination[pageSize]', '1');
-
-  const res = await fetch(`${STRAPI_URL}/api/tags?${params.toString()}`, {
-    headers: strapiHeaders(),
+  const result = await strapiFetch<StrapiTag[]>('GET', '/api/tags', {
+    query: {
+      filters: { name: { $eq: name } },
+      pagination: { pageSize: 1 },
+    },
   });
-  if (!res.ok) {
-    await handleFetchError(res, 'findTagByNameService');
-    return null;
-  }
-  const json = (await res.json()) as { data?: StrapiTag[] };
-  return json.data?.[0] ?? null;
+  return result.ok ? (result.data?.[0] ?? null) : null;
 }
 
 export async function searchTagsService(query: string, limit = 8): Promise<StrapiTag[]> {
   const q = query.trim().toLowerCase();
-  const params = new URLSearchParams();
-  if (q) params.set('filters[name][$containsi]', q);
-  params.set('sort', 'name:asc');
-  params.set('pagination[pageSize]', String(limit));
-
-  const res = await fetch(`${STRAPI_URL}/api/tags?${params.toString()}`, {
-    headers: strapiHeaders(),
+  const result = await strapiFetch<StrapiTag[]>('GET', '/api/tags', {
+    query: {
+      ...(q ? { filters: { name: { $containsi: q } } } : {}),
+      sort: 'name:asc',
+      pagination: { pageSize: limit },
+    },
   });
-  if (!res.ok) {
-    await handleFetchError(res, 'searchTagsService');
-    return [];
-  }
-  const json = (await res.json()) as { data?: StrapiTag[] };
-  return json.data ?? [];
+  return result.ok ? (result.data ?? []) : [];
 }
 
 async function createTagService(name: string): Promise<StrapiTag | null> {
-  const res = await fetch(`${STRAPI_URL}/api/tags`, {
-    method: 'POST',
-    headers: strapiHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ data: { name } }),
+  const result = await strapiFetch<StrapiTag>('POST', '/api/tags', {
+    body: { data: { name } },
   });
-  if (!res.ok) {
-    await handleFetchError(res, 'createTagService');
-    return null;
-  }
-  const json = (await res.json()) as { data: StrapiTag };
-  return json.data;
+  return result.ok ? result.data : null;
 }
 
 // =============================================================================

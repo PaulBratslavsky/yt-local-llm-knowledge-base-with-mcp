@@ -14,6 +14,12 @@ export const SOCIAL_POST_SKILL: Skill = {
   applicableContexts: ['video-chat', 'library-chat', 'digest-chat', 'notes-composer'],
   defaultGreeting:
     "I'll turn this into a post. Which platform — X (280 chars), LinkedIn (longer, professional), Threads, or Bluesky? And what angle do you want: a key takeaway, a hot take, a question that invites discussion, or a personal reaction? If you don't care, I'll pick the strongest hook from the video.",
+  suggestedPrompts: [
+    'X post — key takeaway',
+    'LinkedIn post — professional angle',
+    'X thread — hot take',
+    'Pick the strongest hook from the video',
+  ],
   composerPrompt: [
     "You generate a note containing social media drafts, given the video's content and a user prompt telling you what posts to draft. Output is a collection of copy-paste-ready drafts in markdown.",
     '',

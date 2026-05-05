@@ -17,7 +17,6 @@ type Props = {
    * /api/notes/compose (the endpoint resolves videos by YouTube id
    * like the chat routes). */
   videoYoutubeId: string;
-  onSeek: (seconds: number) => void;
   /** Bumped by the parent (e.g. after VideoChat saves a note) to force
    * a refetch so the new note appears without a page reload. */
   refreshKey?: number;
@@ -58,7 +57,6 @@ function formatDate(iso: string): string {
 export function NotesPane({
   videoDocumentId,
   videoYoutubeId,
-  onSeek,
   refreshKey = 0,
 }: Readonly<Props>) {
   const [state, setState] = useState<
@@ -181,7 +179,6 @@ export function NotesPane({
         <NoteCard
           key={note.documentId}
           note={note}
-          onSeek={onSeek}
           onDelete={() => void handleDelete(note.documentId)}
           onEdit={() => setComposer({ kind: 'edit', note })}
           deleting={deletingId === note.documentId}
@@ -194,20 +191,18 @@ export function NotesPane({
 
 function NoteCard({
   note,
-  onSeek,
   onDelete,
   onEdit,
   deleting,
   isEditing,
 }: Readonly<{
   note: StrapiNote;
-  onSeek: (seconds: number) => void;
   onDelete: () => void;
   onEdit: () => void;
   deleting: boolean;
   isEditing: boolean;
 }>) {
-  const markdownComponents = buildMarkdownComponents(onSeek);
+  const markdownComponents = buildMarkdownComponents();
   // Dim the card when it's being edited in the composer above — the
   // composer is the live draft; this card is the snapshot pre-edit.
   return (
