@@ -40,6 +40,20 @@ function makeSegments(): TimedTextSegment[] {
   ];
 }
 
+// BM25 has a `BM25_MIN_QUERY_IDF = 1.5` query-term floor (transcript.ts).
+// With a tiny corpus every term scores below the floor and the filter
+// strips them all → empty results. Tests that exercise real ranking
+// need ~12+ chunks for target terms (which appear in only one chunk
+// each) to clear the IDF threshold.
+function makeBm25Filler(startId: number, count = 12) {
+  return Array.from({ length: count }, (_, i) => ({
+    id: startId + i,
+    text: `generic filler chunk number ${i} with assorted prose unrelated to any specific topic in the corpus`,
+    startWord: 1000 + i * 10,
+    timeSec: 1000 + i * 30,
+  }));
+}
+
 // ---------------------------------------------------------------------------
 // cleanTranscript
 // ---------------------------------------------------------------------------
@@ -208,13 +222,17 @@ describe('BM25', () => {
     { id: 0, text: 'mcp server integrates with llm workflows', startWord: 0, timeSec: 10 },
     { id: 1, text: 'flowjen workflow automation drag drop', startWord: 150, timeSec: 60 },
     { id: 2, text: 'betteroauth authentication plugin factor', startWord: 300, timeSec: 120 },
+    ...makeBm25Filler(3),
   ];
 
   it('builds an index with tf, idf, lengths, avgLength parallel to chunks', () => {
     const index = buildBM25Index(sampleChunks);
-    expect(index.chunks.length).toBe(3);
-    expect(index.tf.length).toBe(3);
-    expect(index.lengths.length).toBe(3);
+    // Tables stay parallel to the chunk list — exact length depends on
+    // fixture size (we pad with filler to clear BM25's IDF floor for
+    // the ranking tests below), but parity is what matters here.
+    expect(index.chunks.length).toBe(sampleChunks.length);
+    expect(index.tf.length).toBe(sampleChunks.length);
+    expect(index.lengths.length).toBe(sampleChunks.length);
     expect(Object.keys(index.idf).length).toBeGreaterThan(0);
     expect(index.avgLength).toBeGreaterThan(0);
   });
@@ -241,6 +259,7 @@ describe('BM25', () => {
     const withMarker = [
       { id: 0, text: '[00:00] mcp server integrates', startWord: 0, timeSec: 0 },
       { id: 1, text: '[01:00] flowjen automation', startWord: 150, timeSec: 60 },
+      ...makeBm25Filler(2),
     ];
     const index = buildBM25Index(withMarker);
     // Query for the timecode itself should match nothing — the tokenizer
@@ -251,8 +270,16 @@ describe('BM25', () => {
   });
 
   it('uses contextualizer when building index but stores original chunk text', () => {
-    const chunks = [{ id: 0, text: 'mcp', startWord: 0, timeSec: 10 }];
-    const index = buildBM25Index(chunks, (c) => `Section: Architecture. ${c.text}`);
+    const chunks = [
+      { id: 0, text: 'mcp', startWord: 0, timeSec: 10 },
+      ...makeBm25Filler(1),
+    ];
+    // Contextualizer applies the "architecture" anchor ONLY to chunk 0
+    // — applying it uniformly to all chunks would dilute the term's IDF
+    // below BM25's 1.5 floor and the search would return empty.
+    const index = buildBM25Index(chunks, (c) =>
+      c.id === 0 ? `Section: Architecture. ${c.text}` : c.text,
+    );
     // The stored chunk still has the original text (for prompt display).
     expect(index.chunks[0].text).toBe('mcp');
     // But BM25 scored against the contextualized text → "architecture" hits.
@@ -265,6 +292,7 @@ describe('searchBM25MultiQuery (RRF fusion)', () => {
     { id: 0, text: 'apple banana cherry', startWord: 0, timeSec: 0 },
     { id: 1, text: 'durian elderberry fig', startWord: 10, timeSec: 30 },
     { id: 2, text: 'apple grape honeydew', startWord: 20, timeSec: 60 },
+    ...makeBm25Filler(3),
   ];
 
   it('falls back to single-query search when one query given', () => {

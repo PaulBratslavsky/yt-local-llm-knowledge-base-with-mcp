@@ -4,6 +4,15 @@ Deep dive into how yt-knowledge-base is wired. Covers data model, generation pip
 
 For setup and usage, see the [README](../README.md). For the notes-section plan, see [notes-section-plan.md](./notes-section-plan.md).
 
+> **Post-refactor note (2026-05-05):** five subsystems were extracted into their own Modules during the architecture review — see [`./architecture-review/`](./architecture-review/) for grilling notes per module. The high-level flows below still apply; specific file-and-line citations have been updated to point at the new homes:
+> - **Chat retrieval** (rewrite + multi-query BM25 + RRF) → `client/src/lib/services/chat-retrieval.ts`
+> - **Strapi REST client** (auth + URL composition + populate/filter syntax + error handling) → `client/src/lib/services/strapi-client.ts`
+> - **Chat SSE parser** (AG-UI event stream → typed `StreamEvent` union) → `client/src/lib/services/chat-stream.ts`
+> - **Background generation state machine** (inflight + progress + recent-failures) → `client/src/lib/services/generation-state.ts`
+> - **YouTube player** (react-player wrapper + reactive `currentSeconds` for transcript auto-highlight) → `client/src/components/player/`
+>
+> The original section 6.1 (retrieval), 6.2 (streaming endpoint), 7.1–7.2 (Learn-page layout + manual timecode override), 8.1–8.2 (inflight + progress) describe the same pipelines; the implementation now lives behind the modules above. Future deeper passes should update those sections in place.
+
 ---
 
 ## 1. System overview
@@ -320,6 +329,8 @@ for (const section of sections) {
 
 ### 6.1 Retrieval path
 
+> Implementation lives in `client/src/lib/services/chat-retrieval.ts` — `getChatEvidence(index, query)` (deep primitive, BM25-only) and `getChatEvidenceForVideo(video, query)` (Strapi-shaped adapter). `learning.ts:prepareChatPrompt` consumes the latter.
+
 ```mermaid
 flowchart LR
     Q["User question"] --> RW["Query rewriting<br/>(4 phrasings via LLM)"]
@@ -329,7 +340,7 @@ flowchart LR
     SYS --> M["chat() stream"]
 ```
 
-**Query rewriting** (`rewriteQuery`):
+**Query rewriting** (`rewriteQuery`, now in `chat-retrieval.ts`):
 
 ```ts
 const rewriteSystem = [
@@ -354,6 +365,8 @@ ranked.forEach((chunk, rank) => {
 Chunks that surface across multiple phrasings rise to the top. Handles score-scale differences between queries cleanly because RRF is rank-based.
 
 ### 6.2 Streaming endpoint
+
+> The server-side framing uses TanStack AI's `toServerSentEventsResponse(stream)`. Client-side parsing of the AG-UI event stream into a typed `StreamEvent` union (`text | tool_start | tool_end`) lives in `client/src/lib/services/chat-stream.ts` and is shared by both `VideoChat.tsx` and `DigestChat.tsx`.
 
 `client/src/routes/api.chat.tsx` is a TanStack Start file-based route that returns an **AG-UI-format** SSE stream:
 
@@ -433,31 +446,29 @@ Drift badge appears when the model-emitted timestamp diverges from the grounded 
 
 ### 7.1 Learn page layout
 
+The left column is a **tab strip** (Summary / Read / Notes / Transcript) that swaps panes; the right column hosts the player + chat. On `lg+` `<main>` is `position: fixed` from below the header to viewport bottom — page itself doesn't scroll, each pane has its own internal scroll with `overscroll-contain` (no wheel chaining).
+
 ```mermaid
 flowchart TB
-    subgraph Left["Summary column"]
-      Hdr["Title + tags"]
-      Ov["Overview (markdown)"]
-      Tk["Key Takeaways"]
-      Wk["Walkthrough<br/>(chronological sections)"]
-      As["Action Steps"]
-      Ft["Footer:<br/>Generation mode heading<br/>+ Regenerate pill"]
+    subgraph Left["Summary column (tabbed, internal scroll)"]
+      Tabs["ViewTabs: Summary · Read · Notes · Transcript"]
+      Body["Active tab body"]
     end
-    subgraph Right["Right column (sticky)"]
-      Vid["YouTube iframe"]
+    subgraph Right["Right column (internal scroll)"]
+      Vid["YouTubePlayer (react-player)"]
       Ch["Chat panel<br/>(streaming, tool calls, sources)"]
     end
     Left --- Right
 ```
 
-Sections sort by `timeSec` ascending so the walkthrough is always chronological. Every section heading gets a clickable `[mm:ss]` chip that seeks the player (YouTube IFrame API `postMessage`).
+Sections sort by `timeSec` ascending so the walkthrough is always chronological. Every section heading gets a clickable `[mm:ss]` chip that seeks the player. **Player control is mediated by the [`components/player/`](../client/src/components/player/) Module** — consumers call `usePlayerControl()` (returns `{ seekTo, play, pause, currentSeconds, isPlaying, isReady }`) instead of receiving an `onSeek` prop or reaching into the iframe directly. The `TranscriptPane` uses `currentSeconds` to auto-highlight + auto-scroll the active row as the video plays.
 
 ### 7.2 Manual timecode override
 
 Right-click any section's timecode chip → Radix Popover opens with:
 
 - An editable `mm:ss` input.
-- A "Use current video time" button that pulls from the YouTube player via `infoDelivery` postMessage events.
+- A "Use current video time" button that reads `currentSeconds` from `usePlayerControl()`. (Previously this ran its own `infoDelivery` postMessage listener — that subsystem is now subsumed by the player Module.)
 
 Override persists on the Video row as a per-section `timeSec`. Useful when grounding mis-anchors (model mentioned a topic at 12:30 that's actually discussed at 15:00).
 
@@ -493,21 +504,17 @@ All three render a native `<select>` (pill-rounded, `h-10` to match the action b
 
 ### 8.1 Inflight dedup
 
-```ts
-const generationInflight = new Set<string>();
-```
+The inflight Set, the progress Map, and the recent-failures Map are now one Module: `client/src/lib/services/generation-state.ts`. Single read (`getLiveState(videoId)` → `idle | running | recently_failed`); single mutating entry (`ensureGenerationRunning(videoId, run, hooks?)`) with atomic check-and-add. Covers:
 
-In-memory, per-process. Covers:
-
-- `shareVideo` → `kickoffSummaryGeneration`
+- `shareVideo` → `kickoffSummaryGeneration` (server fn)
 - `triggerSummaryGeneration` (learn-page loader nudge + Force retry)
 - `regenerateSummary` (user-initiated re-run)
 
-If you ever horizontally scale, move this to Redis or a DB lock table. For single-node local-first, the Set is sufficient.
+All three call `ensureGenerationRunning` with hooks injected for `beforeStart` (pre-job pending-flip, regenerate-only) and `onTerminalThrow` (mark-failed DB write on uncaught throw). If you ever horizontally scale, move the Module's in-memory stores to Redis or a DB lock table. For single-node local-first, the in-process state is sufficient.
 
 ### 8.2 Progress tracking
 
-Server-side map `videoId → { step, detail, elapsedMs }` is updated by `setGenerationStep()` inside `generateVideoSummary`. The learn page's loader polls `getGenerationProgress` every 3s (max 200 attempts ≈ 10 min) and also invalidates on tab focus / visibility change. POST (not GET) avoids browser-level response caching.
+Same Module owns progress. `setStep(videoId, step, detail?)` is called from inside `generateVideoSummary` (defensively ignored for non-inflight videoIds, preserving the "progress only exists while inflight" invariant). The learn page's loader polls `getGenerationProgress` (server fn → `getLiveState`) every 3s (max 200 attempts ≈ 10 min) and also invalidates on tab focus / visibility change. POST (not GET) avoids browser-level response caching. Progress is **auto-cleared in the Module's `finally` block** on completion — no orphan entries possible.
 
 ### 8.3 Failure recovery
 
@@ -544,8 +551,10 @@ Where to plug in new features without tearing out existing scaffolding.
 |---|---|
 | Swap the LLM | Change `OLLAMA_MODEL` (or `OLLAMA_CHAT_MODEL`) — everything is routed through `@tanstack/ai-ollama` |
 | Use a non-Ollama adapter | Replace `createOllamaChat(...)` calls in `learning.ts` and `api.chat.tsx` with any [TanStack AI adapter](https://tanstack.com/ai/latest) |
-| Use embeddings instead of BM25 | `retrieveChunks` in `learning.ts` is the single injection point; `buildBM25Index` and `StoredTranscriptIndex` would be the replacements |
-| Add a new tool | Follow `webSearchTool` — define with `toolDefinition`, export from `chat-tools.ts`, pass into `chat({ tools: [...] })` in `api.chat.tsx` |
+| Use embeddings instead of BM25 | `getChatEvidence` in `chat-retrieval.ts` is the single injection point; `buildBM25Index` and `StoredTranscriptIndex` would be the replacements |
+| Add a new tool | Follow `webSearchTool` — define with `toolDefinition`, export from `chat-tools.ts`, pass into `chat({ tools: [...] })` in `api.chat.tsx`. (For MCP-side tools, follow the pattern in `server/src/mcp/tools/`.) |
+| Add a new chat surface | Read events with `streamChatSSE(response)` from `lib/services/chat-stream.ts`; control the player via `usePlayerControl()` from `components/player/`. |
+| Add a new generation pipeline | Wrap your async work in `ensureGenerationRunning(videoId, run, hooks?)` from `generation-state.ts`. Hooks let you inject persistence at start / terminal-throw boundaries. |
 | Postgres instead of SQLite | Set `DATABASE_CLIENT=postgres` + connection vars in `server/.env` — Strapi handles the rest |
 | Different transcript source | Replace `fetchYouTubeTranscript` in `lib/services/youtube-transcript.ts`; keep the `TimedTextSegment[]` return shape |
 | Custom cleaning rules | Edit `FILLER_PATTERNS` in `transcript.ts` |
@@ -564,11 +573,16 @@ client/src/
 │   └── VideoChat.tsx              — chat UI, SSE parser, tool-call panel
 ├── data/server-functions/
 │   └── videos.ts                  — shareVideo, trigger, regenerate, notes
+├── components/player/             — react-player wrapper + Context + usePlayerControl()
 ├── lib/services/
+│   ├── chat-retrieval.ts          — rewrite + multi-query BM25 + RRF (chat seam)
+│   ├── chat-stream.ts             — AG-UI SSE → typed StreamEvent generator
 │   ├── chat-tools.ts              — web_search toolDefinition
+│   ├── generation-state.ts        — inflight/progress/recent-failure state machine
 │   ├── learning.ts                — generation pipeline, prompts, retrieval
+│   ├── strapi-client.ts           — strapiFetch + StrapiQuery (auth, populate, filters)
 │   ├── transcript.ts              — clean, chunk, BM25, grounding
-│   ├── videos.ts                  — Strapi REST wrapper
+│   ├── videos.ts                  — Strapi-shaped service layer (uses strapi-client)
 │   ├── web-search.ts              — DDG HTML scraper
 │   └── youtube-transcript.ts      — youtubei.js wrapper
 ├── lib/validations/
