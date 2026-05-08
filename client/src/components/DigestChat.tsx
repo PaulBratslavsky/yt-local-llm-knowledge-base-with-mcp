@@ -5,6 +5,7 @@ import remarkGfm from 'remark-gfm';
 import type { StrapiVideo } from '#/lib/services/videos';
 import { Button } from '#/components/ui/button';
 import { streamChatSSE, type StreamEvent } from '#/lib/services/chat-stream';
+import { friendlyOllamaError } from '#/lib/services/ollama-errors';
 
 // Chat UI for the /digest page. Simpler than VideoChat: no timecode seek
 // (no embedded player), no evidence accordion (chunks come from N videos
@@ -118,7 +119,8 @@ export function DigestChat({
         }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Chat failed');
+      const raw = err instanceof Error ? err.message : 'Chat failed';
+      setError(friendlyOllamaError(raw));
       // Drop the empty assistant placeholder if nothing streamed.
       setMessages((prev) => {
         const next = [...prev];

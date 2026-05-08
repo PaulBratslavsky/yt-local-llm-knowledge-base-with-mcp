@@ -666,6 +666,14 @@ export interface ApiVideoVideo extends Struct.CollectionTypeSchema {
         maxLength: 100;
       }>;
     embeddingVersion: Schema.Attribute.Integer;
+    finalScore: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          max: 100;
+          min: 0;
+        },
+        number
+      >;
     keyTakeaways: Schema.Attribute.Component<'content.takeaway', true>;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<'oneToMany', 'api::video.video'> &
@@ -680,6 +688,15 @@ export interface ApiVideoVideo extends Struct.CollectionTypeSchema {
         maxLength: 100;
       }>;
     sections: Schema.Attribute.Component<'content.section', true>;
+    signalScore: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          max: 100;
+          min: 0;
+        },
+        number
+      >;
+    signalScores: Schema.Attribute.JSON;
     summaryDescription: Schema.Attribute.Text &
       Schema.Attribute.SetMinMaxLength<{
         maxLength: 500;
@@ -710,6 +727,15 @@ export interface ApiVideoVideo extends Struct.CollectionTypeSchema {
       Schema.Attribute.SetMinMaxLength<{
         maxLength: 2000;
       }>;
+    valueScore: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          max: 100;
+          min: 0;
+        },
+        number
+      >;
+    valueScoreSource: Schema.Attribute.Enumeration<['model', 'derived']>;
     verdictReason: Schema.Attribute.Text &
       Schema.Attribute.SetMinMaxLength<{
         maxLength: 1000;

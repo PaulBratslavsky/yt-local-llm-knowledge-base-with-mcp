@@ -17,7 +17,8 @@ export const Route = createFileRoute('/digests')({
   loaderDeps: ({ search }) => ({ q: search.q, page: search.page }),
   loader: async ({ deps }) => {
     const result = await listSavedDigests({
-      data: { q: deps.q, page: deps.page ?? 1, pageSize: 20 },
+      // 9 per page = matches the feed's 3×3 grid on desktop.
+      data: { q: deps.q, page: deps.page ?? 1, pageSize: 9 },
     });
     return { result };
   },

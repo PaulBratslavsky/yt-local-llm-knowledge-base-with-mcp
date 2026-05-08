@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { createFileRoute, Link, useNavigate, useRouter } from '@tanstack/react-router';
 import { z } from 'zod';
 import { VideoCard } from '#/components/VideoCard';
+import { BackendErrorPanel } from '#/components/BackendErrorPanel';
 import { Button } from '#/components/ui/button';
 import {
   getFeed,
@@ -20,6 +21,13 @@ const FeedSearchSchema = z.object({
   tag: z.string().max(80).optional(),
   page: z.number().int().min(1).max(1000).optional(),
   mode: z.enum(['keyword', 'semantic']).optional(),
+  // 'recent' (createdAt desc, default) | 'score' (signalScore desc).
+  // Surfaced as a toggle in the feed header.
+  sort: z.enum(['recent', 'score']).optional(),
+  // Lower bound on the hybrid Content score (0–100). Surfaced as a
+  // 3-way preset chip in the feed header (All / 50+ / 70+). Omit or
+  // 0 = no filter; videos with no score are hidden when this is set.
+  minScore: z.number().int().min(0).max(100).optional(),
 });
 
 type SemanticResultShape = {
@@ -38,7 +46,19 @@ type KeywordResultShape = {
   };
 };
 
-type FeedLoaderData = KeywordResultShape | SemanticResultShape;
+// Backend (Strapi) unreachable or errored. The previous behavior was
+// to fall back to an empty result, so the user couldn't tell whether
+// the library was empty or the backend was dead. Now surfaced as a
+// distinct loader variant.
+type BackendErrorShape = {
+  kind: 'backend-error';
+  error: string;
+};
+
+type FeedLoaderData =
+  | KeywordResultShape
+  | SemanticResultShape
+  | BackendErrorShape;
 
 export const Route = createFileRoute('/feed')({
   validateSearch: FeedSearchSchema,
@@ -47,22 +67,51 @@ export const Route = createFileRoute('/feed')({
     tag: search.tag,
     page: search.page,
     mode: search.mode,
+    sort: search.sort,
+    minScore: search.minScore,
   }),
   loader: async ({ deps }): Promise<FeedLoaderData> => {
     // Semantic mode requires a query. With no query the mode toggle is
     // irrelevant — fall back to the normal feed listing.
     if (deps.mode === 'semantic' && deps.q) {
+      // Pull a deeper window so client-side pagination has rows to page
+      // through. Keeps the server work the same (the embed compares
+      // against the whole library either way) — just changes the cutoff.
       const res = await semanticSearchVideos({
-        data: { query: deps.q, limit: 30 },
+        data: { query: deps.q, limit: 90 },
       });
       if (res.status === 'ok') {
-        return { kind: 'semantic', hits: res.hits, query: deps.q };
+        // Apply minScore filter client-side for semantic mode. The server
+        // doesn't filter by score here — semantic search keys on similarity,
+        // and re-running with a Strapi finalScore filter would mean a second
+        // round-trip. Cheaper to slice the already-ranked list locally.
+        const min = deps.minScore ?? 0;
+        const hits =
+          min > 0
+            ? res.hits.filter(
+                (h) =>
+                  typeof h.video.finalScore === 'number' &&
+                  h.video.finalScore >= min,
+              )
+            : res.hits;
+        return { kind: 'semantic', hits, query: deps.q };
       }
       // On semantic failure (Ollama down, model missing), degrade to keyword.
     }
     const result = await getFeed({
-      data: { q: deps.q, tag: deps.tag, page: deps.page ?? 1, pageSize: 20 },
+      // 9 per page = clean 3×3 grid on desktop, 9-row stack on mobile.
+      data: {
+        q: deps.q,
+        tag: deps.tag,
+        page: deps.page ?? 1,
+        pageSize: 9,
+        sort: deps.sort ?? 'recent',
+        minScore: deps.minScore,
+      },
     });
+    if (result.error) {
+      return { kind: 'backend-error', error: result.error };
+    }
     return { kind: 'keyword', result };
   },
   component: FeedPage,
@@ -75,15 +124,49 @@ function FeedPage() {
   const navigate = useNavigate();
   const router = useRouter();
 
+  // Backend dead → render the error panel and bail out before any
+  // derived state reads `loaderData.result` / `loaderData.hits`. Keep
+  // the page header so the user sees where they are; everything below
+  // gets replaced by the panel.
+  if (loaderData.kind === 'backend-error') {
+    return (
+      <main className="px-6 pb-28 pt-10 sm:px-10 sm:pt-14 lg:px-14">
+        <header className="mb-8">
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--line)] bg-[var(--card)] px-3 py-1 text-xs font-medium text-[var(--ink-muted)]">
+            <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent)]" />
+            Knowledge feed
+          </span>
+        </header>
+        <BackendErrorPanel message={loaderData.error} />
+      </main>
+    );
+  }
+
   // Normalize both shapes (keyword paginated, semantic ranked) into a common
-  // list for the rest of the render. Pagination only exists for keyword.
+  // list. Keyword mode is paginated server-side via Strapi; semantic mode
+  // gets a single deeper-window response that we slice client-side here
+  // so the same Pagination component works for both.
+  const SEMANTIC_PAGE_SIZE = 9;
+  const semanticPage = search.page ?? 1;
+  const semanticPageCount =
+    loaderData.kind === 'semantic'
+      ? Math.max(1, Math.ceil(loaderData.hits.length / SEMANTIC_PAGE_SIZE))
+      : 1;
+  const semanticHitsForPage =
+    loaderData.kind === 'semantic'
+      ? loaderData.hits.slice(
+          (semanticPage - 1) * SEMANTIC_PAGE_SIZE,
+          semanticPage * SEMANTIC_PAGE_SIZE,
+        )
+      : [];
+
   const videos =
     loaderData.kind === 'keyword'
       ? loaderData.result.videos
-      : loaderData.hits.map((h) => h.video);
+      : semanticHitsForPage.map((h) => h.video);
   // For semantic mode, compute a match tier per hit — derived from rank
-  // + score. Raw cosine saturates around 0.7 so rank-based labels read
-  // better than percentages.
+  // + score (in the FULL ranked list, not the paged slice — rank should
+  // reflect global similarity ordering, not page-local position).
   const tiers =
     loaderData.kind === 'semantic'
       ? new Map(
@@ -202,29 +285,40 @@ function FeedPage() {
           q={search.q}
           tag={search.tag}
           mode={loaderData.kind === 'semantic' ? 'semantic' : 'keyword'}
+          minScore={search.minScore}
         />
       ) : (
         <>
-          <div className="mb-4 flex items-center justify-between text-sm text-[var(--ink-muted)]">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2 text-sm text-[var(--ink-muted)]">
             {loaderData.kind === 'keyword' ? (
               <>
                 <span>
                   {loaderData.result.total}{' '}
                   {loaderData.result.total === 1 ? 'video' : 'videos'}
                 </span>
-                <span>
-                  Page {loaderData.result.page} of{' '}
-                  {Math.max(1, loaderData.result.pageCount)}
-                </span>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                  <MinScoreFilter current={search.minScore ?? 0} />
+                  <SortToggle current={search.sort ?? 'recent'} />
+                  <span>
+                    Page {loaderData.result.page} of{' '}
+                    {Math.max(1, loaderData.result.pageCount)}
+                  </span>
+                </div>
               </>
             ) : (
               <>
                 <span>
-                  {videos.length} semantic{' '}
-                  {videos.length === 1 ? 'match' : 'matches'} for
+                  {loaderData.hits.length} semantic{' '}
+                  {loaderData.hits.length === 1 ? 'match' : 'matches'} for
                   &ldquo;{loaderData.query}&rdquo;
                 </span>
-                <span>Ranked by similarity</span>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                  <MinScoreFilter current={search.minScore ?? 0} />
+                  <span>
+                    Ranked by similarity · Page {semanticPage} of{' '}
+                    {semanticPageCount}
+                  </span>
+                </div>
               </>
             )}
           </div>
@@ -249,12 +343,25 @@ function FeedPage() {
               );
             })}
           </section>
-          {loaderData.kind === 'keyword' && (
+          {loaderData.kind === 'keyword' ? (
             <Pagination
               currentPage={loaderData.result.page}
               pageCount={loaderData.result.pageCount}
               q={search.q}
               tag={search.tag}
+              mode={search.mode}
+              sort={search.sort}
+              minScore={search.minScore}
+            />
+          ) : (
+            <Pagination
+              currentPage={semanticPage}
+              pageCount={semanticPageCount}
+              q={search.q}
+              tag={search.tag}
+              mode="semantic"
+              sort={search.sort}
+              minScore={search.minScore}
             />
           )}
         </>
@@ -338,7 +445,7 @@ function SearchBar({
 
 function SearchModeToggle({ mode }: Readonly<{ mode: 'keyword' | 'semantic' }>) {
   return (
-    <div className="flex items-center gap-2 text-xs text-[var(--ink-muted)]">
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[var(--ink-muted)]">
       <span>Mode:</span>
       <label className="inline-flex cursor-pointer items-center gap-1">
         <input
@@ -393,15 +500,31 @@ function Pagination({
   pageCount,
   q,
   tag,
-}: Readonly<{ currentPage: number; pageCount: number; q?: string; tag?: string }>) {
+  mode,
+  sort,
+  minScore,
+}: Readonly<{
+  currentPage: number;
+  pageCount: number;
+  q?: string;
+  tag?: string;
+  mode?: 'keyword' | 'semantic';
+  sort?: 'recent' | 'score';
+  minScore?: number;
+}>) {
   if (pageCount <= 1) return null;
   const prev = Math.max(1, currentPage - 1);
   const next = Math.min(pageCount, currentPage + 1);
 
+  // Preserve every URL-state knob across page changes. Previously this
+  // dropped `mode` and `sort`, which silently reset the user's filter
+  // when they hit Next.
+  const baseSearch = { q, tag, mode, sort, minScore };
+
   return (
     <nav className="mt-10 flex items-center justify-center gap-3" aria-label="Pagination">
       <Button asChild size="pill" variant="outline" disabled={currentPage === 1}>
-        <Link to="/feed" search={{ q, tag, page: prev }}>
+        <Link to="/feed" search={{ ...baseSearch, page: prev }}>
           ← Prev
         </Link>
       </Button>
@@ -409,7 +532,7 @@ function Pagination({
         {currentPage} / {pageCount}
       </span>
       <Button asChild size="pill" variant="outline" disabled={currentPage === pageCount}>
-        <Link to="/feed" search={{ q, tag, page: next }}>
+        <Link to="/feed" search={{ ...baseSearch, page: next }}>
           Next →
         </Link>
       </Button>
@@ -421,12 +544,15 @@ function EmptyFeed({
   q,
   tag,
   mode,
+  minScore,
 }: Readonly<{
   q?: string;
   tag?: string;
   mode: 'keyword' | 'semantic';
+  minScore?: number;
 }>) {
-  const filtered = Boolean(q || tag);
+  const scoreFiltered = typeof minScore === 'number' && minScore > 0;
+  const filtered = Boolean(q || tag) || scoreFiltered;
   const semanticEmpty = mode === 'semantic' && Boolean(q);
   return (
     <section className="mx-auto max-w-lg rounded-2xl border border-[var(--line)] bg-[var(--card)] p-10 text-center">
@@ -439,9 +565,11 @@ function EmptyFeed({
       <p className="mt-3 text-sm text-[var(--ink-soft)]">
         {semanticEmpty
           ? 'Nothing in the library clears the similarity threshold. Try different wording, or switch to keyword mode.'
-          : filtered
-            ? 'Or clear the filter to see everything.'
-            : 'Paste a YouTube URL to seed the knowledge base. The AI summary runs in the background.'}
+          : scoreFiltered && !q && !tag
+            ? `No videos scoring at least ${minScore}. Lower the threshold or add more videos.`
+            : filtered
+              ? 'Or clear the filter to see everything.'
+              : 'Paste a YouTube URL to seed the knowledge base. The AI summary runs in the background.'}
       </p>
       <div className="mt-6 flex justify-center gap-2">
         {filtered ? (
@@ -457,5 +585,93 @@ function EmptyFeed({
         )}
       </div>
     </section>
+  );
+}
+
+// Shared chip styling for the header toggle groups. Extracted because
+// MinScoreFilter and SortToggle below are visually identical chip
+// groups — keeping the styles in one place ensures they don't drift.
+//
+// `focus-visible` (not `focus`) so mouse clicks don't leave a stuck
+// ring; only keyboard-driven focus shows it. Tabbable users get a
+// clear accent ring, mouse users get the existing hover behavior.
+const CHIP_BASE =
+  'rounded-full px-2.5 py-0.5 text-[0.7rem] transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]';
+const CHIP_INACTIVE = `${CHIP_BASE} border border-transparent font-medium text-[var(--ink-muted)] hover:text-[var(--ink)]`;
+const CHIP_ACTIVE = `${CHIP_BASE} border border-[var(--line)] bg-[var(--card)] font-semibold text-[var(--ink)]`;
+
+// Three-preset chip group for the minimum Content score filter. State
+// lives in the URL (`?minScore=…`) so links/refreshes preserve it.
+// Changing the threshold resets the page so the user always lands on
+// the first page of the new filtered set rather than (e.g.) page 4 of
+// what may now be a 2-page result.
+//
+// Why presets instead of a slider: practical bands cluster at a few
+// values (anything / decent / high), and chips give the same
+// information density as the SortToggle next to it without adding a
+// drag interaction. Easy to add a slider later if calibration work
+// reveals more useful thresholds.
+function MinScoreFilter({ current }: Readonly<{ current: number }>) {
+  const isActive = (val: number) => current === val;
+  return (
+    <div className="inline-flex items-center gap-1 rounded-full border border-[var(--line)] bg-[var(--bg-subtle)] p-0.5">
+      <span className="px-2 text-[0.65rem] uppercase tracking-wider text-[var(--ink-muted)]">
+        Score
+      </span>
+      <Link
+        to="/feed"
+        // 'undefined' clears the URL param entirely.
+        search={(prev) => ({ ...prev, minScore: undefined, page: undefined })}
+        className={isActive(0) ? CHIP_ACTIVE : CHIP_INACTIVE}
+        title="No filter"
+      >
+        All
+      </Link>
+      <Link
+        to="/feed"
+        search={(prev) => ({ ...prev, minScore: 50, page: undefined })}
+        className={isActive(50) ? CHIP_ACTIVE : CHIP_INACTIVE}
+        title="Hide videos scoring under 50"
+      >
+        50+
+      </Link>
+      <Link
+        to="/feed"
+        search={(prev) => ({ ...prev, minScore: 70, page: undefined })}
+        className={isActive(70) ? CHIP_ACTIVE : CHIP_INACTIVE}
+        title="Hide videos scoring under 70"
+      >
+        70+
+      </Link>
+    </div>
+  );
+}
+
+// Two-pill toggle for the feed sort. State lives in the URL (`?sort=…`)
+// so links / refreshes preserve the choice. Switching sort resets to
+// page 1, since "page 5 by recency" doesn't map to "page 5 by score."
+function SortToggle({ current }: Readonly<{ current: 'recent' | 'score' }>) {
+  return (
+    <div className="inline-flex items-center gap-1 rounded-full border border-[var(--line)] bg-[var(--bg-subtle)] p-0.5">
+      <span className="px-2 text-[0.65rem] uppercase tracking-wider text-[var(--ink-muted)]">
+        Sort
+      </span>
+      <Link
+        to="/feed"
+        search={(prev) => ({ ...prev, sort: undefined, page: undefined })}
+        className={current === 'recent' ? CHIP_ACTIVE : CHIP_INACTIVE}
+        title="Newest first"
+      >
+        Recent
+      </Link>
+      <Link
+        to="/feed"
+        search={(prev) => ({ ...prev, sort: 'score' as const, page: undefined })}
+        className={current === 'score' ? CHIP_ACTIVE : CHIP_INACTIVE}
+        title="Highest content score first"
+      >
+        Score
+      </Link>
+    </div>
   );
 }

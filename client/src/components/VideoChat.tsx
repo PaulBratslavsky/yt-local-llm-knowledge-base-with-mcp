@@ -5,6 +5,7 @@ import { Accordion } from 'radix-ui';
 import { buildMarkdownComponents, stripInlineTimecodes } from './TimecodeMarkdown';
 import { usePlayerControl } from '#/components/player';
 import { streamChatSSE, type StreamEvent } from '#/lib/services/chat-stream';
+import { friendlyOllamaError } from '#/lib/services/ollama-errors';
 import { Button } from '#/components/ui/button';
 import {
   DropdownMenu,
@@ -259,9 +260,11 @@ export function VideoChat({ videoId, onNoteCreated, className }: Readonly<Props>
         }
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Chat failed';
+      const raw = err instanceof Error ? err.message : 'Chat failed';
       setMessages((prev) => prev.slice(0, -1));
-      setError(message);
+      // Translate Ollama-specific errors (server unreachable, model
+      // missing, timeout) to a recovery hint. Other errors pass through.
+      setError(friendlyOllamaError(raw));
     } finally {
       setPending(false);
     }

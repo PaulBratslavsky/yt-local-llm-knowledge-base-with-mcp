@@ -72,6 +72,33 @@ function formatTimecode(ms: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
+// Splits a row's text on every case-insensitive occurrence of `query`,
+// returning alternating non-match / match segments for the renderer to
+// style. The empty-query branch is the hot path on every keystroke
+// before the user finishes typing — kept cheap with an early return.
+type TextSegment = { text: string; match: boolean };
+
+function highlightMatches(text: string, query: string): TextSegment[] {
+  if (!query) return [{ text, match: false }];
+  const lower = text.toLowerCase();
+  const needle = query.toLowerCase();
+  const segments: TextSegment[] = [];
+  let cursor = 0;
+  while (cursor < text.length) {
+    const at = lower.indexOf(needle, cursor);
+    if (at === -1) {
+      segments.push({ text: text.slice(cursor), match: false });
+      break;
+    }
+    if (at > cursor) {
+      segments.push({ text: text.slice(cursor, at), match: false });
+    }
+    segments.push({ text: text.slice(at, at + needle.length), match: true });
+    cursor = at + needle.length;
+  }
+  return segments;
+}
+
 export function TranscriptPane({
   video,
 }: Readonly<{ video: StrapiVideo }>) {
@@ -81,6 +108,30 @@ export function TranscriptPane({
     () => (segments && segments.length > 0 ? coalesceSegments(segments) : []),
     [segments],
   );
+
+  // Search state. When non-empty, the row list is filtered to matches
+  // and the playback-following auto-scroll is suspended — the user is
+  // navigating the transcript by query, not by playback position. The
+  // trimmed query is what we actually search/highlight against; the raw
+  // value drives the controlled input.
+  const [searchInput, setSearchInput] = useState('');
+  const query = searchInput.trim();
+  const isSearching = query.length > 0;
+
+  const filteredRows = useMemo(() => {
+    if (!isSearching) {
+      return rows.map((row, originalIdx) => ({ row, originalIdx }));
+    }
+    const needle = query.toLowerCase();
+    const out: { row: CoalescedRow; originalIdx: number }[] = [];
+    for (let i = 0; i < rows.length; i += 1) {
+      if (rows[i].text.toLowerCase().includes(needle)) {
+        out.push({ row: rows[i], originalIdx: i });
+      }
+    }
+    return out;
+  }, [rows, query, isSearching]);
+
   const activeIdx = useMemo(
     () => findActiveRowIndex(rows, currentSeconds),
     [rows, currentSeconds],
@@ -93,10 +144,15 @@ export function TranscriptPane({
   // (the previous default) skipped any row already in view, which read as
   // "the transcript isn't scrolling." `scroll-mt-24` on the row leaves
   // ~6rem of breathing room above the line for context.
+  //
+  // Suspend the autoscroll while a search is active — the user wants to
+  // browse matches, not be yanked back to the playback position on every
+  // tick. Resumes the moment the query is cleared.
   useEffect(() => {
+    if (isSearching) return;
     if (activeIdx < 0) return;
     activeRowRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
-  }, [activeIdx]);
+  }, [activeIdx, isSearching]);
 
   const [copied, setCopied] = useState(false);
 
@@ -141,44 +197,100 @@ export function TranscriptPane({
           {copied ? 'Copied!' : 'Copy transcript'}
         </Button>
       </header>
-      <ul className="divide-y divide-[var(--line)] rounded-xl border border-[var(--line)] bg-[var(--card)]">
-        {rows.map((row, idx) => {
-          const seconds = Math.floor(row.startMs / 1000);
-          const isActive = idx === activeIdx;
-          return (
-            <li
-              key={`${row.startMs}-${idx}`}
-              ref={isActive ? activeRowRef : null}
-              className="scroll-mt-24"
+
+      {/* Search controls. Substring (case-insensitive), filters rows
+          and highlights matches inline. Esc clears so the user can
+          escape back to playback-following. */}
+      <div className="mb-3 flex flex-wrap items-center gap-3">
+        <div className="relative flex-1 min-w-[200px]">
+          <input
+            type="search"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setSearchInput('');
+            }}
+            placeholder="Search transcript…"
+            aria-label="Search transcript"
+            className="h-9 w-full rounded-full border border-[var(--line)] bg-[var(--card)] px-4 text-sm text-[var(--ink)] placeholder:text-[var(--ink-muted)] focus:border-[var(--line-strong)] focus:outline-none"
+          />
+        </div>
+        {isSearching && (
+          <div className="flex items-center gap-2 text-xs text-[var(--ink-muted)]">
+            <span>
+              {filteredRows.length}{' '}
+              {filteredRows.length === 1 ? 'match' : 'matches'}
+            </span>
+            <button
+              type="button"
+              onClick={() => setSearchInput('')}
+              className="rounded-md px-2 py-0.5 text-xs text-[var(--ink-muted)] hover:bg-[var(--bg-subtle)] hover:text-[var(--ink)]"
             >
-              <button
-                type="button"
-                onClick={() => seekTo(seconds)}
-                className={`grid w-full grid-cols-[4.5rem_1fr] items-start gap-4 px-4 py-3 text-left transition focus:outline-none ${
-                  isActive
-                    ? 'bg-[var(--accent)]/10'
-                    : 'hover:bg-[var(--bg-subtle)] focus:bg-[var(--bg-subtle)]'
-                }`}
+              Clear
+            </button>
+          </div>
+        )}
+      </div>
+
+      {isSearching && filteredRows.length === 0 ? (
+        <p className="rounded-xl border border-dashed border-[var(--line)] bg-[var(--bg-subtle)] px-4 py-6 text-center text-sm text-[var(--ink-muted)]">
+          No lines match &ldquo;{query}&rdquo;.
+        </p>
+      ) : (
+        <ul className="divide-y divide-[var(--line)] rounded-xl border border-[var(--line)] bg-[var(--card)]">
+          {filteredRows.map(({ row, originalIdx }) => {
+            const seconds = Math.floor(row.startMs / 1000);
+            // Active highlighting only applies in playback-following
+            // mode — when searching, the visual emphasis goes on
+            // matches, not on the active playback row.
+            const isActive = !isSearching && originalIdx === activeIdx;
+            const segments = highlightMatches(row.text, query);
+            return (
+              <li
+                key={`${row.startMs}-${originalIdx}`}
+                ref={isActive ? activeRowRef : null}
+                className="scroll-mt-24"
               >
-                <span
-                  className={`font-mono text-xs tabular-nums ${
-                    isActive ? 'font-semibold text-[var(--accent)]' : 'text-[var(--accent)]'
+                <button
+                  type="button"
+                  onClick={() => seekTo(seconds)}
+                  className={`grid w-full grid-cols-[4.5rem_1fr] items-start gap-4 px-4 py-3 text-left transition focus:outline-none ${
+                    isActive
+                      ? 'bg-[var(--accent)]/10'
+                      : 'hover:bg-[var(--bg-subtle)] focus:bg-[var(--bg-subtle)]'
                   }`}
                 >
-                  {formatTimecode(row.startMs)}
-                </span>
-                <span
-                  className={`text-sm leading-relaxed ${
-                    isActive ? 'font-medium text-[var(--ink)]' : 'text-[var(--ink)]'
-                  }`}
-                >
-                  {row.text}
-                </span>
-              </button>
-            </li>
-          );
-        })}
-      </ul>
+                  <span
+                    className={`font-mono text-xs tabular-nums ${
+                      isActive ? 'font-semibold text-[var(--accent)]' : 'text-[var(--accent)]'
+                    }`}
+                  >
+                    {formatTimecode(row.startMs)}
+                  </span>
+                  <span
+                    className={`text-sm leading-relaxed ${
+                      isActive ? 'font-medium text-[var(--ink)]' : 'text-[var(--ink)]'
+                    }`}
+                  >
+                    {segments.map((seg, i) =>
+                      seg.match ? (
+                        <mark
+                          key={i}
+                          className="rounded-sm bg-yellow-300/60 px-0.5 text-[var(--ink)] dark:bg-yellow-400/40"
+                        >
+                          {seg.text}
+                        </mark>
+                      ) : (
+                        <span key={i}>{seg.text}</span>
+                      ),
+                    )}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </section>
   );
 }

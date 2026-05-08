@@ -1,7 +1,10 @@
 import { useState } from 'react';
 import { Link, useRouter } from '@tanstack/react-router';
 import { type StrapiVideo, type WatchVerdict } from '#/lib/services/videos';
-import { regenerateSummary } from '#/data/server-functions/videos';
+import {
+  regenerateSummary,
+  regenerateVideoSignals,
+} from '#/data/server-functions/videos';
 import { MATCH_TIER_LABEL, type MatchTier } from '#/lib/services/embeddings';
 
 const VERDICT_META: Record<
@@ -26,19 +29,118 @@ const VERDICT_META: Record<
 };
 
 function VerdictBlock({ video }: Readonly<{ video: StrapiVideo }>) {
+  // Pending generation: render a faint placeholder so the card body
+  // doesn't collapse into empty space below the caption while the LLM
+  // works. Cheap visual anchor — disappears the moment the verdict
+  // lands and the real chips render.
+  if (video.summaryStatus === 'pending') {
+    return (
+      <div
+        className="mt-3 flex items-center gap-2 rounded-lg border border-dashed border-[var(--line)] bg-[var(--bg-subtle)]/50 px-3 py-2"
+        aria-hidden="true"
+      >
+        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--ink-muted)]" />
+        <span className="text-xs italic text-[var(--ink-muted)]">
+          Verdict &amp; score appear here once the summary lands.
+        </span>
+      </div>
+    );
+  }
   if (!video.watchVerdict || !video.verdictSummary) return null;
   const meta = VERDICT_META[video.watchVerdict];
   return (
     <div className="mt-3 flex flex-col gap-2">
-      <span
-        className={`inline-flex w-fit items-center rounded-full border px-2.5 py-0.5 text-[0.65rem] font-semibold uppercase tracking-wider ${meta.className}`}
-      >
-        {meta.label}
-      </span>
+      <div className="flex flex-wrap items-center gap-2">
+        <span
+          className={`inline-flex w-fit items-center rounded-full border px-2.5 py-0.5 text-[0.65rem] font-semibold uppercase tracking-wider ${meta.className}`}
+        >
+          {meta.label}
+        </span>
+        <ContentScoreChip video={video} />
+      </div>
       <p className="text-sm leading-relaxed text-[var(--ink-soft)]">
         {video.verdictSummary}
       </p>
     </div>
+  );
+}
+
+// Color band for the signal score. Programmatic, deterministic, no
+// LLM — these thresholds map directly to the rubric defined in
+// `content-signals.ts`. Tuned to match the watchVerdict bands so the
+// chip's color reinforces the verdict badge without being identical
+// (the verdict badge is the LLM's call; this is the programmatic one).
+function scoreColorClass(score: number): string {
+  if (score >= 70) return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400';
+  if (score >= 50) return 'border-blue-500/25 bg-blue-500/10 text-blue-700 dark:text-blue-400';
+  if (score >= 30) return 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400';
+  return 'border-[var(--line)] bg-[var(--bg-subtle)] text-[var(--ink-muted)]';
+}
+
+// Renders the hybrid `finalScore` (LLM judgment + programmatic signals
+// blended). When finalScore is null (older row that hasn't been
+// backfilled), falls back to a "Generate score" button that runs the
+// per-video signal regen — which writes signalScore AND recomputes
+// finalScore, so one click populates the chip.
+function ContentScoreChip({ video }: Readonly<{ video: StrapiVideo }>) {
+  const router = useRouter();
+  const [generating, setGenerating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleGenerate = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (generating) return;
+    setGenerating(true);
+    setError(null);
+    try {
+      const result = await regenerateVideoSignals({
+        data: { videoId: video.youtubeVideoId },
+      });
+      if (result.status === 'error') {
+        setError(result.error);
+        return;
+      }
+      await router.invalidate();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Generate failed');
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  if (typeof video.finalScore === 'number') {
+    return (
+      <span
+        className={`ml-auto inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[0.65rem] font-semibold uppercase tracking-wider ${scoreColorClass(video.finalScore)}`}
+        title="Content score (0–100). Hybrid blend: 60% programmatic signals + 40% LLM judgment."
+        aria-label={`Content score: ${video.finalScore} out of 100`}
+      >
+        <span>Content score</span>
+        <span className="font-bold">{video.finalScore}</span>
+      </span>
+    );
+  }
+
+  // Score missing — usually a pre-backfill row. Quiet em-dash chip
+  // instead of a button-styled CTA so it doesn't fight for attention
+  // with real score chips on neighbouring cards. Still clickable to
+  // trigger a per-card recompute. Bulk path lives in Settings.
+  return (
+    <button
+      type="button"
+      onClick={handleGenerate}
+      disabled={generating}
+      className="ml-auto inline-flex items-center gap-1 rounded-full border border-dashed border-[var(--line)] bg-transparent px-2.5 py-0.5 text-[0.65rem] font-medium uppercase tracking-wider text-[var(--ink-muted)] transition hover:border-[var(--line-strong)] hover:text-[var(--ink)] disabled:opacity-60"
+      title={
+        error
+          ? error
+          : 'No content score yet. Click to compute, or run a bulk backfill from Settings.'
+      }
+    >
+      <span>Score</span>
+      <span aria-hidden="true">{generating ? '…' : '—'}</span>
+    </button>
   );
 }
 

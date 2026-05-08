@@ -2,6 +2,7 @@ import { chat } from '@tanstack/ai';
 import { createOllamaChat } from '@tanstack/ai-ollama';
 import { z } from 'zod';
 import {
+  computeFinalScore,
   createTranscriptService,
   fetchTranscriptByVideoIdService,
   fetchVideoByVideoIdService,
@@ -32,6 +33,10 @@ import {
   setStep as setGenerationStep,
   type GenerationStep,
 } from '#/lib/services/generation-state';
+import {
+  aggregateSignalScore,
+  computeSignalScores,
+} from '#/lib/services/content-signals';
 import { withRetry } from '#/lib/retry';
 import { fetchYouTubeTranscript } from '#/lib/services/youtube-transcript';
 import {
@@ -242,6 +247,14 @@ const SummarySchema = z.object({
     .describe(
       '2-4 sentences explaining the verdict. Cover what the video does well, what it assumes you already know, and who the ideal viewer is. MAX 1000 characters. No markdown.',
     ),
+  valueScore: z
+    .number()
+    .int()
+    .min(0)
+    .max(100)
+    .describe(
+      'Integer 0-100 reflecting signal-to-noise of the video. RUBRIC: 0–25 = mostly fluff/padding (sponsor reads, tangents, repetition, no concrete claims). 26–55 = mixed signal — some value but lots to skim. 56–80 = solid, specific information; worth the time if you care about the topic. 81–100 = exceptional density and specificity (rare; only for end-to-end actionable, original videos). Score MUST agree with watchVerdict: <26 → skip, 26–55 → skim, ≥56 → worth_it.',
+    ),
   overview: z
     .string()
     .describe(
@@ -378,6 +391,21 @@ function sanitizeSummary(
     });
   }
 
+  // Cross-check: model is supposed to keep `valueScore` and `watchVerdict`
+  // in agreement. Local 4B–8B models occasionally drift (e.g. emit
+  // worth_it with a score of 40). We log the disagreement but don't
+  // block — the verdict is the LLM's primary call; the score will be
+  // off by one band in those cases. Used for prompt-tuning telemetry.
+  const expectedBand =
+    raw.valueScore < 26 ? 'skip' : raw.valueScore < 56 ? 'skim' : 'worth_it';
+  if (expectedBand !== raw.watchVerdict) {
+    logPhase(videoId, 'ai ⚠ valueScore↔watchVerdict mismatch', {
+      score: raw.valueScore,
+      verdict: raw.watchVerdict,
+      expectedBand,
+    });
+  }
+
   return {
     ...raw,
     title,
@@ -408,6 +436,12 @@ const SUMMARY_SYSTEM = [
   ' • watchVerdict=skip — mostly generic advice or surface-level content. The summary is enough.',
   ' • verdictSummary — ONE sentence, format "Worth it if you care about X. Skip if you already know Y." Be specific about X and Y. No hedging like "it depends."',
   ' • verdictReason — 2-4 sentences on what the video does well, what it assumes you already know, and who the ideal viewer is.',
+  ' • valueScore — integer 0-100 with this rubric:',
+  '     0–25  = mostly fluff/padding (sponsor reads, tangents, repetition, no concrete claims) — corresponds to skip',
+  '    26–55  = mixed signal — some useful parts but lots to skim — corresponds to skim',
+  '    56–80  = solid, specific, actionable information — corresponds to worth_it',
+  '    81–100 = exceptional density and specificity (rare — reserve for videos that are dense, original, AND end-to-end actionable)',
+  '   The valueScore MUST agree with the watchVerdict band — these are two views of the same judgment, not independent signals.',
   ' • Judge the VIDEO ITSELF, not the topic. A well-known topic with dense novel framing = worth_it. A niche topic delivered as generic tips = skip.',
   '',
   'IMPORTANT — Do NOT emit timecodes. Leave `section.timeSec` unset (omit the field). Do not write `[mm:ss]` or `(mm:ss)` anywhere in section headings or bodies. Timecodes are recovered deterministically after your output via a transcript-match pass — if you try to produce them yourself they will be discarded.',
@@ -1007,6 +1041,28 @@ export async function generateVideoSummary(
     groundings: sectionGroundings,
   });
 
+  // Programmatic content-quality signals — deterministic, no LLM, runs
+  // in <100ms over the cleaned transcript. Stored alongside the LLM's
+  // valueScore for hybrid ranking. See content-signals.ts for the
+  // per-signal methodology.
+  const wordCount = prepared
+    ? prepared.wordStartMs.length
+    : (cleaned.match(/\b[\w'-]+\b/g) ?? []).length;
+  const signalScores = computeSignalScores({
+    rawText: transcriptResult.data.transcript,
+    cleanedText: cleaned,
+    wordCount,
+    durationSec: transcriptResult.data.durationSec,
+  });
+  const signalScore = aggregateSignalScore(signalScores);
+  // Hybrid score — both component scores are present in this code path
+  // (model-produced valueScore + freshly-computed signalScore), so the
+  // blend is straightforward. Helper handles the null fallbacks for
+  // partial-update paths.
+  const finalScore =
+    computeFinalScore(safe.valueScore, signalScore) ?? signalScore;
+  logPhase(videoId, 'signals ✓ computed', { signalScore, finalScore, signalScores });
+
   setGenerationStep(videoId, 'saving');
   const saveStart = performance.now();
   logPhase(videoId, 'db → saving summary');
@@ -1018,6 +1074,11 @@ export async function generateVideoSummary(
     watchVerdict: safe.watchVerdict,
     verdictSummary: safe.verdictSummary,
     verdictReason: safe.verdictReason,
+    valueScore: safe.valueScore,
+    valueScoreSource: 'model',
+    signalScores,
+    signalScore,
+    finalScore,
     aiModel: SUMMARY_MODEL,
     transcriptSegments,
     keyTakeaways: safe.keyTakeaways,
@@ -1373,4 +1434,155 @@ export async function prepareDigestChatPrompt(
     system: buildDigestChatSystemPrompt(videos, labeled),
     retrievedCount,
   };
+}
+
+// -----------------------------------------------------------------------------
+// Verdict-only regeneration
+//
+// Re-rates a single video's watchVerdict + valueScore + verdictSummary +
+// verdictReason WITHOUT touching the rest of the summary. Used by the
+// per-video "Regenerate verdict" UI and the Settings bulk regenerate.
+//
+// Why a separate path (vs. the existing full `generateVideoSummary`):
+//  • ~5–15s per video instead of 30–120s — Settings bulk over a full
+//    library finishes in minutes, not hours.
+//  • Keeps existing summary content untouched. Sections, takeaways, and
+//    action steps don't get re-rolled when only the verdict feels wrong.
+//  • Lets the bulk path replace placeholder backfill scores (20/40/70)
+//    with real model-produced numbers.
+// -----------------------------------------------------------------------------
+
+const VerdictOnlySchema = SummarySchema.pick({
+  watchVerdict: true,
+  verdictSummary: true,
+  verdictReason: true,
+  valueScore: true,
+});
+
+export type VerdictOnly = z.infer<typeof VerdictOnlySchema>;
+
+const VERDICT_SYSTEM = [
+  'You re-rate a YouTube video on a single dimension: should the user spend their time watching it?',
+  'Output ONLY the four verdict fields — watchVerdict, verdictSummary, verdictReason, valueScore. No other text.',
+  '',
+  'WATCH VERDICT — honest "should I watch this?" judgement:',
+  ' • watchVerdict=worth_it — the video contains specific, dense, actionable information.',
+  ' • watchVerdict=skim — mix of useful parts and filler/well-known material.',
+  ' • watchVerdict=skip — mostly generic advice or surface-level content.',
+  ' • verdictSummary — ONE sentence, MAX 280 chars, format "Worth it if you care about X. Skip if you already know Y." Be specific. No hedging.',
+  ' • verdictReason — 2-4 sentences on what the video does well, what it assumes you already know, and who the ideal viewer is. MAX 1000 chars.',
+  ' • valueScore — integer 0-100 with this rubric:',
+  '     0–25  = mostly fluff/padding (sponsor reads, tangents, repetition, no concrete claims) — corresponds to skip',
+  '    26–55  = mixed signal — some useful parts but lots to skim — corresponds to skim',
+  '    56–80  = solid, specific, actionable information — corresponds to worth_it',
+  '    81–100 = exceptional density and specificity (rare — reserve for videos that are dense, original, AND end-to-end actionable)',
+  '   The valueScore MUST agree with the watchVerdict band — these are two views of the same judgment, not independent signals.',
+  ' • Judge the VIDEO ITSELF, not the topic. A well-known topic with dense novel framing = worth_it. A niche topic delivered as generic tips = skip.',
+  ' • Be evidence-oriented. Avoid marketing fluff, generic advice, sentence-length filler.',
+].join('\n');
+
+export async function regenerateVerdictForVideo(
+  videoId: string,
+): Promise<ServiceResult<VerdictOnly>> {
+  const video = await fetchVideoByVideoIdService(videoId);
+  if (!video) return { success: false, error: 'Video not found' };
+
+  // Need a transcript to rate. If the video doesn't have one, the user
+  // should run the full Retry flow — this path doesn't fetch transcripts.
+  let cleanedTranscript: string | null = null;
+  if (video.transcript?.rawText) {
+    cleanedTranscript = cleanTranscript(video.transcript.rawText);
+  } else {
+    const byId = await fetchTranscriptByVideoIdService(videoId);
+    if (byId?.rawText) cleanedTranscript = cleanTranscript(byId.rawText);
+  }
+  if (!cleanedTranscript || cleanedTranscript.length < 50) {
+    return {
+      success: false,
+      error: 'No cached transcript — run a full Regenerate first.',
+    };
+  }
+
+  const displayTitle = video.videoTitle ?? video.summaryTitle ?? null;
+  const userPrompt = [
+    displayTitle ? `Video title: ${displayTitle}` : null,
+    video.videoAuthor ? `Channel: ${video.videoAuthor}` : null,
+    '',
+    'Transcript:',
+    cleanedTranscript,
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  const started = performance.now();
+  logPhase(videoId, 'verdict-regen → start', {
+    model: SUMMARY_MODEL,
+    transcriptChars: cleanedTranscript.length,
+  });
+
+  try {
+    const object = (await withRetry(
+      () =>
+        chat({
+          adapter: ollamaAdapter,
+          messages: [
+            { role: 'system', content: VERDICT_SYSTEM },
+            { role: 'user', content: userPrompt },
+          ] as never,
+          outputSchema: VerdictOnlySchema,
+          temperature: 0.3,
+        }),
+      {
+        attempts: 2,
+        onRetry: (err, attempt, delayMs) => {
+          logPhase(videoId, `verdict-regen ↻ retry ${attempt}/1 in ${delayMs}ms`, {
+            cause: err instanceof Error ? err.message : 'unknown',
+          });
+        },
+      },
+    )) as VerdictOnly;
+
+    // Clamp lengths defensively (model sometimes overshoots Strapi field limits).
+    const verdictSummary = object.verdictSummary.length > LIMITS.verdictSummary
+      ? clamp(object.verdictSummary, LIMITS.verdictSummary)
+      : object.verdictSummary;
+    const verdictReason = object.verdictReason.length > LIMITS.verdictReason
+      ? clamp(object.verdictReason, LIMITS.verdictReason)
+      : object.verdictReason;
+
+    // Cross-check: same warning as the full pipeline.
+    const expectedBand =
+      object.valueScore < 26
+        ? 'skip'
+        : object.valueScore < 56
+        ? 'skim'
+        : 'worth_it';
+    if (expectedBand !== object.watchVerdict) {
+      logPhase(videoId, 'verdict-regen ⚠ valueScore↔watchVerdict mismatch', {
+        score: object.valueScore,
+        verdict: object.watchVerdict,
+        expectedBand,
+      });
+    }
+
+    logPhase(videoId, 'verdict-regen ✓ done', {
+      took: ms(started),
+      score: object.valueScore,
+      verdict: object.watchVerdict,
+    });
+
+    return {
+      success: true,
+      data: {
+        watchVerdict: object.watchVerdict,
+        valueScore: object.valueScore,
+        verdictSummary,
+        verdictReason,
+      },
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'verdict regen failed';
+    logPhase(videoId, 'verdict-regen ✗ failed', { error: message });
+    return { success: false, error: message };
+  }
 }

@@ -66,6 +66,59 @@ export type SummaryStatus = 'pending' | 'generated' | 'failed';
 
 export type WatchVerdict = 'skip' | 'skim' | 'worth_it';
 
+// Threshold-based mapping for the numeric `valueScore`. New videos get
+// model-produced scores at generation time; this mapping only defines the
+// thresholds the verdict band falls into AND the backfill values for
+// pre-existing rows that have a verdict but no score yet.
+//
+// Tune-ability: change a number here, re-run the Settings backfill, every
+// row updates without touching the AI pipeline. The verdict↔score
+// thresholds let consumers query e.g. `valueScore >= 56` to filter to
+// "worth_it tier" without locking the meaning into the categorical.
+export const VERDICT_THRESHOLD = {
+  skip: { min: 0, max: 25, backfill: 20 },
+  skim: { min: 26, max: 55, backfill: 40 },
+  worth_it: { min: 56, max: 100, backfill: 70 },
+} as const;
+
+export function deriveVerdictFromScore(score: number): WatchVerdict {
+  if (score < 26) return 'skip';
+  if (score < 56) return 'skim';
+  return 'worth_it';
+}
+
+export function backfillScoreFromVerdict(verdict: WatchVerdict): number {
+  return VERDICT_THRESHOLD[verdict].backfill;
+}
+
+// Hybrid blend weights for `finalScore`. Programmatic dominant because
+// signalScore varies smoothly across the library; the LLM `valueScore`
+// adds contextual judgment (is this useful for someone who already
+// knows X) but clusters at mental anchor values. Tunable later — change
+// these and re-run the Settings backfill to update every row.
+export const FINAL_SCORE_WEIGHTS = {
+  signal: 0.6,
+  value: 0.4,
+} as const;
+
+// Compute the hybrid `finalScore` from the two component scores.
+// Fallbacks: if only one component exists, finalScore = that component
+// (unweighted — there's nothing to blend it with). Returns null only
+// when both components are null.
+export function computeFinalScore(
+  valueScore: number | null | undefined,
+  signalScore: number | null | undefined,
+): number | null {
+  const v = typeof valueScore === 'number' ? valueScore : null;
+  const s = typeof signalScore === 'number' ? signalScore : null;
+  if (v === null && s === null) return null;
+  if (v === null) return s;
+  if (s === null) return v;
+  return Math.round(
+    FINAL_SCORE_WEIGHTS.signal * s + FINAL_SCORE_WEIGHTS.value * v,
+  );
+}
+
 export type StrapiVideo = {
   id: number;
   documentId: string;
@@ -84,6 +137,39 @@ export type StrapiVideo = {
   watchVerdict: WatchVerdict | null;
   verdictSummary: string | null;
   verdictReason: string | null;
+  /** Canonical numeric score 0–100 for SQL queries / sort / threshold
+   * filtering. See `VERDICT_THRESHOLD` for the score↔verdict bands. */
+  valueScore: number | null;
+  /** How the score was produced:
+   *   • `'model'` — real, varied number from an Ollama call (new summaries
+   *     or the verdict-only regenerate). Trust for ranking.
+   *   • `'derived'` — placeholder midpoint (skip=20, skim=40, worth_it=70)
+   *     written by the cheap SQL backfill. Useful for filtering only;
+   *     UI surfaces should treat it as "needs upgrade" and offer to run
+   *     the AI regenerate.
+   *   • `null` — pre-feature row that was never scored, OR a video
+   *     summarized before this field existed. Same UI treatment as
+   *     `'derived'` — needs the AI regenerate. */
+  valueScoreSource: 'model' | 'derived' | null;
+  /** Per-signal sub-scores from `content-signals.ts`. Null on rows
+   * generated before this field existed. Stored alongside the composite
+   * for inspection and future re-tuning of the aggregation weights. */
+  signalScores: {
+    fillerDensity: number;
+    lexicalDensity: number;
+    compressionRatio: number;
+    speakingPace: number;
+    sponsorPresence: number;
+  } | null;
+  /** Composite of `signalScores` (weighted mean, 0–100). Deterministic,
+   * computed from the cleaned transcript at summary-generation time. */
+  signalScore: number | null;
+  /** Hybrid score: weighted blend of `valueScore` (LLM contextual
+   * judgment) and `signalScore` (programmatic signals). The canonical
+   * field for sort/filter/rank UI. Falls back to whichever of the two
+   * exists when only one is populated; null only when both are null.
+   * Computed via `computeFinalScore` whenever either input is written. */
+  finalScore: number | null;
   readableArticle: string | null;
   readableArticleGeneratedAt: string | null;
   readableArticleModel: string | null;
@@ -118,20 +204,64 @@ export type PaginatedVideos = {
   page: number;
   pageCount: number;
   total: number;
+  /** Set when the Strapi call failed. Distinguishes "library is empty"
+   * (videos=[], no error) from "backend is unreachable / errored"
+   * (videos=[], error set). UI uses this to show a banner instead of
+   * the regular empty state. */
+  error?: string;
 };
+
+// Translates a strapi-client failure into a UX-friendly message.
+// Status `0` = network error (DNS, connection refused, fetch threw).
+// 5xx = backend up but broken. 4xx = caller error (bad query/auth).
+function friendlyBackendError(status: number, raw: string): string {
+  if (status === 0) {
+    return 'Backend unreachable. Check that Strapi is running on port 1340.';
+  }
+  if (status >= 500) {
+    return 'Backend error. Strapi is up but rejected the request — check its console for details.';
+  }
+  return raw || `Backend error ${status}`;
+}
 
 // =============================================================================
 // Feed / search
 // =============================================================================
+
+export type FeedSort = 'recent' | 'score';
 
 export type FeedQuery = {
   page?: number;
   pageSize?: number;
   q?: string;
   tag?: string; // slug
+  /** Default `'recent'` (createdAt desc); `'score'` orders by signalScore
+   * desc so highest-quality videos surface first. */
+  sort?: FeedSort;
+  /** Lower bound on `finalScore` (0–100). Videos with no finalScore
+   * are excluded when this is set — "min score N" implies "must have
+   * a score". Omit/0 = no filter. */
+  minScore?: number;
 };
 
-function feedQuery({ page = 1, pageSize = 20, q, tag }: FeedQuery): StrapiQuery {
+// Strapi sort string per FeedSort. Multi-key sort puts the secondary
+// fallback in last position so paginated rows are stable when many
+// videos share the same score.
+const SORT_BY: Record<FeedSort, string[]> = {
+  recent: ['createdAt:desc'],
+  // Sort by the hybrid finalScore (60% programmatic + 40% LLM).
+  // Falls back to recency when scores tie.
+  score: ['finalScore:desc', 'createdAt:desc'],
+};
+
+function feedQuery({
+  page = 1,
+  pageSize = 20,
+  q,
+  tag,
+  sort = 'recent',
+  minScore,
+}: FeedQuery): StrapiQuery {
   // Keep the feed payload light. No component populate on the list view —
   // summary fields are only needed on the detail page.
   const filters: Record<string, unknown> = {};
@@ -147,9 +277,14 @@ function feedQuery({ page = 1, pageSize = 20, q, tag }: FeedQuery): StrapiQuery 
   if (tag) {
     filters.tags = { slug: { $eq: tag } };
   }
+  if (typeof minScore === 'number' && minScore > 0) {
+    // `$gte` excludes rows where finalScore is null, which is what we want:
+    // "min score 50" should hide unrated videos, not lump them in.
+    filters.finalScore = { $gte: minScore };
+  }
   return {
     populate: ['tags'],
-    sort: 'createdAt:desc',
+    sort: SORT_BY[sort],
     pagination: { page, pageSize, withCount: true },
     ...(Object.keys(filters).length > 0
       ? { filters: filters as StrapiQuery['filters'] }
@@ -162,7 +297,13 @@ export async function fetchFeedService(query: FeedQuery): Promise<PaginatedVideo
     query: feedQuery(query),
   });
   if (!result.ok) {
-    return { videos: [], page: query.page ?? 1, pageCount: 0, total: 0 };
+    return {
+      videos: [],
+      page: query.page ?? 1,
+      pageCount: 0,
+      total: 0,
+      error: friendlyBackendError(result.status, result.error),
+    };
   }
   return {
     videos: result.data ?? [],
@@ -228,6 +369,46 @@ export async function fetchVideoByVideoIdService(
     },
   });
   return result.ok ? (result.data?.[0] ?? null) : null;
+}
+
+// Sibling shape that distinguishes "video doesn't exist" (video=null,
+// error=null) from "couldn't reach the backend" (video=null, error
+// set). Used by route loaders so the UI can render a backend-down
+// banner instead of a generic "not found" page when Strapi is down.
+//
+// 404 from Strapi is treated as `video: null, error: null` — the row
+// simply doesn't exist. Other failures (status 0, 5xx, etc.) populate
+// `error` via friendlyBackendError. Existing callers that use
+// fetchVideoByVideoIdService directly are unaffected.
+export type VideoLookup = { video: StrapiVideo | null; error: string | null };
+
+export async function fetchVideoByDocumentIdWithStatusService(
+  documentId: string,
+): Promise<VideoLookup> {
+  const result = await strapiFetch<StrapiVideo>(
+    'GET',
+    `/api/videos/${documentId}`,
+    { query: detailQuery },
+  );
+  if (result.ok) return { video: result.data ?? null, error: null };
+  if (result.status === 404) return { video: null, error: null };
+  return { video: null, error: friendlyBackendError(result.status, result.error) };
+}
+
+export async function fetchVideoByVideoIdWithStatusService(
+  videoId: string,
+): Promise<VideoLookup> {
+  const result = await strapiFetch<StrapiVideo[]>('GET', '/api/videos', {
+    query: {
+      ...detailQuery,
+      filters: { youtubeVideoId: { $eq: videoId } },
+      pagination: { pageSize: 1 },
+    },
+  });
+  if (result.ok) return { video: result.data?.[0] ?? null, error: null };
+  // The list endpoint never 404s — an unknown id returns `data: []`.
+  // So any non-OK is a real backend failure.
+  return { video: null, error: friendlyBackendError(result.status, result.error) };
 }
 
 // =============================================================================
@@ -301,6 +482,25 @@ export type UpdateVideoSummaryInput = {
   watchVerdict: WatchVerdict;
   verdictSummary: string;
   verdictReason: string;
+  valueScore: number;
+  /** Always `'model'` when written through this path — full summary
+   * generation and the verdict-only regen both produce real scores. */
+  valueScoreSource: 'model';
+  /** Programmatic content-quality sub-scores (filler / lexical / etc).
+   * Computed by `computeSignalScores` in `content-signals.ts`. */
+  signalScores: {
+    fillerDensity: number;
+    lexicalDensity: number;
+    compressionRatio: number;
+    speakingPace: number;
+    sponsorPresence: number;
+  };
+  /** Composite weighted aggregate of `signalScores`. */
+  signalScore: number;
+  /** Hybrid blend of `valueScore` + `signalScore` (see `computeFinalScore`).
+   * Always derivable from the other two fields — caller computes and
+   * passes it. Storing avoids client-side post-processing for sort. */
+  finalScore: number;
   aiModel: string;
   transcriptSegments?: StoredTranscriptIndex;
   keyTakeaways: Array<{ text: string }>;
@@ -375,6 +575,70 @@ export async function markSummaryFailedService(documentId: string): Promise<void
   await strapiFetch('PUT', `/api/videos/${documentId}`, {
     body: { data: { summaryStatus: 'failed' } },
   });
+}
+
+// Partial-update path for the verdict-only fields (regenerate-verdict
+// surface). Touches ONLY the four verdict-shaped fields — leaves
+// summaryTitle / sections / takeaways / actionSteps / transcriptSegments
+// alone. Used by per-video "Regenerate verdict" and the Settings bulk.
+export async function updateVideoVerdictService(input: {
+  documentId: string;
+  watchVerdict: WatchVerdict;
+  verdictSummary: string;
+  verdictReason: string;
+  valueScore: number;
+  /** Recomputed hybrid score. Caller is expected to derive this from the
+   * new valueScore + the row's existing signalScore via
+   * `computeFinalScore` and pass it here so we keep all three fields
+   * in sync after a verdict-only regen. */
+  finalScore: number;
+}): Promise<{ success: true } | { success: false; error: string }> {
+  const result = await strapiFetch<StrapiVideo>(
+    'PUT',
+    `/api/videos/${input.documentId}`,
+    {
+      body: {
+        data: {
+          watchVerdict: input.watchVerdict,
+          verdictSummary: input.verdictSummary,
+          verdictReason: input.verdictReason,
+          valueScore: input.valueScore,
+          valueScoreSource: 'model',
+          finalScore: input.finalScore,
+        },
+      },
+    },
+  );
+  return result.ok ? { success: true } : { success: false, error: result.error };
+}
+
+// Partial-update path for the signal-score fields (programmatic content
+// signals). Touches ONLY the two signal fields — verdict + summary
+// fields stay untouched. Used by the Settings signal-scores backfill.
+export async function updateVideoSignalScoresService(input: {
+  documentId: string;
+  signalScores: NonNullable<StrapiVideo['signalScores']>;
+  signalScore: number;
+  /** Recomputed hybrid score. Caller derives this from the new
+   * signalScore + the row's existing valueScore via
+   * `computeFinalScore` and passes it here. Keeps all three fields in
+   * sync after a signal-only regen. */
+  finalScore: number;
+}): Promise<{ success: true } | { success: false; error: string }> {
+  const result = await strapiFetch<StrapiVideo>(
+    'PUT',
+    `/api/videos/${input.documentId}`,
+    {
+      body: {
+        data: {
+          signalScores: input.signalScores,
+          signalScore: input.signalScore,
+          finalScore: input.finalScore,
+        },
+      },
+    },
+  );
+  return result.ok ? { success: true } : { success: false, error: result.error };
 }
 
 // Manually set the timeSec of a single section on a Video row. Strapi's

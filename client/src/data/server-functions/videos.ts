@@ -1,10 +1,13 @@
 import { createServerFn } from '@tanstack/react-start';
 import { z } from 'zod';
 import {
+  backfillScoreFromVerdict,
+  computeFinalScore,
   createVideoService,
   fetchFeedService,
-  fetchVideoByDocumentIdService,
+  fetchVideoByDocumentIdWithStatusService,
   fetchVideoByVideoIdService,
+  fetchVideoByVideoIdWithStatusService,
   fetchTranscriptByVideoIdService,
   listAllVideosForEmbeddingService,
   markSummaryFailedService,
@@ -13,10 +16,18 @@ import {
   updateSectionTimecodeService,
   updateVideoEmbeddingService,
   updateVideoPassagesService,
+  updateVideoSignalScoresService,
+  updateVideoVerdictService,
   type PaginatedVideos,
   type StrapiTag,
   type StrapiVideo,
 } from '#/lib/services/videos';
+import {
+  aggregateSignalScore,
+  computeSignalScores,
+} from '#/lib/services/content-signals';
+import { cleanTranscript } from '#/lib/services/transcript';
+import { strapiFetch } from '#/lib/services/strapi-client';
 import {
   aggregateTagsFromNeighbors,
   computePassageIndex,
@@ -36,6 +47,7 @@ import {
   fetchYouTubeMeta,
   generateVideoSummary,
   askAboutVideoService,
+  regenerateVerdictForVideo,
   type ChatMessage,
   type GenerationStep,
 } from '#/lib/services/learning';
@@ -70,6 +82,8 @@ const FeedQuerySchema = z.object({
   pageSize: z.number().int().min(1).max(50).optional(),
   q: z.string().max(200).optional(),
   tag: z.string().max(80).optional(),
+  sort: z.enum(['recent', 'score']).optional(),
+  minScore: z.number().int().min(0).max(100).optional(),
 });
 
 export const getFeed = createServerFn({ method: 'GET' })
@@ -92,17 +106,30 @@ const VideoIdSchema = z.object({
 
 const DocumentIdSchema = z.object({ documentId: z.string().min(1) });
 
+// Route loaders need to distinguish "video doesn't exist" from "backend
+// is down" so they can render distinct UI. The two `*WithStatus`
+// services return `{ video, error }`, which these server fns proxy
+// directly. Internal callers (other server fns, services) keep using
+// the simpler nullable variants below.
 export const getVideoByDocumentId = createServerFn({ method: 'GET' })
   .inputValidator((data: { documentId: string }) => DocumentIdSchema.parse(data))
-  .handler(async ({ data }): Promise<StrapiVideo | null> => {
-    return await fetchVideoByDocumentIdService(data.documentId);
-  });
+  .handler(
+    async ({
+      data,
+    }): Promise<{ video: StrapiVideo | null; error: string | null }> => {
+      return await fetchVideoByDocumentIdWithStatusService(data.documentId);
+    },
+  );
 
 export const getVideoByVideoId = createServerFn({ method: 'GET' })
   .inputValidator((data: { videoId: string }) => VideoIdSchema.parse(data))
-  .handler(async ({ data }): Promise<StrapiVideo | null> => {
-    return await fetchVideoByVideoIdService(data.videoId);
-  });
+  .handler(
+    async ({
+      data,
+    }): Promise<{ video: StrapiVideo | null; error: string | null }> => {
+      return await fetchVideoByVideoIdWithStatusService(data.videoId);
+    },
+  );
 
 // =============================================================================
 // Share a video
@@ -874,7 +901,11 @@ export const relatedVideos = createServerFn({ method: 'GET' })
 
 const SemanticSearchSchema = z.object({
   query: z.string().min(1).max(500),
-  limit: z.number().int().min(1).max(50).optional(),
+  // Bumped from 50 → 100 to give the feed's client-side pagination
+  // enough rows to page through. The server-side cost is unchanged
+  // (cosine-vs-everything is the same work either way; only the
+  // top-N cutoff changes).
+  limit: z.number().int().min(1).max(100).optional(),
   minScore: z.number().min(-1).max(1).optional(),
 });
 
@@ -1428,4 +1459,432 @@ export const searchTags = createServerFn({ method: 'GET' })
   .inputValidator((data: z.input<typeof TagSearchSchema>) => TagSearchSchema.parse(data))
   .handler(async ({ data }): Promise<StrapiTag[]> => {
     return await searchTagsService(data.q);
+  });
+
+// =============================================================================
+// Verdict score backfill
+//
+// Walks every Video that already has a `watchVerdict` but no `valueScore`
+// and SQL-updates the score from the verdict via `backfillScoreFromVerdict`.
+// No AI calls — runs in milliseconds. Used by the Settings UI for older
+// rows generated before the `valueScore` field existed.
+// =============================================================================
+
+export type BackfillValueScoresResult = {
+  status: 'ok';
+  /** How many rows were updated this run. */
+  updated: number;
+  /** How many rows were eligible (had watchVerdict, no valueScore). */
+  total: number;
+};
+
+export const countMissingValueScores = createServerFn({ method: 'GET' })
+  .handler(async (): Promise<{ missing: number }> => {
+    const result = await strapiFetch<StrapiVideo[]>('GET', '/api/videos', {
+      query: {
+        filters: {
+          watchVerdict: { $notNull: true },
+          valueScore: { $null: true },
+        },
+        // Light fields — we just want the count via meta.pagination.total.
+        fields: ['documentId'],
+        pagination: { page: 1, pageSize: 1, withCount: true },
+      },
+    });
+    if (!result.ok) return { missing: 0 };
+    return { missing: result.meta?.pagination?.total ?? 0 };
+  });
+
+export const backfillValueScores = createServerFn({ method: 'POST' })
+  .handler(async (): Promise<BackfillValueScoresResult> => {
+    let updated = 0;
+    let total = 0;
+    // Page through all eligible rows. Cap at 50 pages × 100 rows = 5,000
+    // videos as a safety belt against an unbounded loop.
+    const PAGE_SIZE = 100;
+    for (let page = 1; page <= 50; page += 1) {
+      const result = await strapiFetch<StrapiVideo[]>('GET', '/api/videos', {
+        query: {
+          filters: {
+            watchVerdict: { $notNull: true },
+            valueScore: { $null: true },
+          },
+          fields: ['documentId', 'watchVerdict'],
+          pagination: { page, pageSize: PAGE_SIZE, withCount: true },
+        },
+      });
+      if (!result.ok) break;
+      const rows = result.data ?? [];
+      total = result.meta?.pagination?.total ?? total;
+      if (rows.length === 0) break;
+      for (const row of rows) {
+        if (!row.watchVerdict || !row.documentId) continue;
+        const score = backfillScoreFromVerdict(row.watchVerdict);
+        const finalScore = computeFinalScore(score, row.signalScore) ?? score;
+        const write = await strapiFetch<StrapiVideo>(
+          'PUT',
+          `/api/videos/${row.documentId}`,
+          {
+            body: {
+              data: {
+                valueScore: score,
+                // Tag the source so UI surfaces can treat this as a
+                // "needs upgrade" placeholder vs a real model score.
+                valueScoreSource: 'derived',
+                finalScore,
+              },
+            },
+          },
+        );
+        if (write.ok) updated += 1;
+      }
+      const pageCount = result.meta?.pagination?.pageCount ?? 1;
+      if (page >= pageCount) break;
+    }
+    return { status: 'ok', updated, total };
+  });
+
+// =============================================================================
+// AI verdict regeneration
+//
+// Re-rates ONE video's verdict (watchVerdict + valueScore + verdictSummary
+// + verdictReason) by running the verdict-only AI path. Used by the
+// per-video "Regenerate verdict" UI button.
+//
+// The Settings bulk path calls this in a loop, one video at a time. Loop
+// lives client-side so progress is naturally visible and the work is
+// cancellable by closing the page.
+// =============================================================================
+
+export type RegenerateVerdictResult =
+  | {
+      status: 'ok';
+      watchVerdict: 'skip' | 'skim' | 'worth_it';
+      valueScore: number;
+    }
+  | { status: 'error'; error: string };
+
+const RegenerateVerdictSchema = VideoIdSchema;
+
+export const regenerateVideoVerdict = createServerFn({ method: 'POST' })
+  .inputValidator((data: z.input<typeof RegenerateVerdictSchema>) =>
+    RegenerateVerdictSchema.parse(data),
+  )
+  .handler(async ({ data }): Promise<RegenerateVerdictResult> => {
+    const generation = await regenerateVerdictForVideo(data.videoId);
+    if (!generation.success) {
+      return { status: 'error', error: generation.error };
+    }
+
+    const video = await fetchVideoByVideoIdService(data.videoId);
+    if (!video) {
+      return { status: 'error', error: 'Video not found after regen' };
+    }
+
+    // Recompute the hybrid finalScore against the row's existing
+    // signalScore (which we don't touch in the verdict-only path).
+    const finalScore =
+      computeFinalScore(generation.data.valueScore, video.signalScore) ??
+      generation.data.valueScore;
+    const write = await updateVideoVerdictService({
+      documentId: video.documentId,
+      watchVerdict: generation.data.watchVerdict,
+      verdictSummary: generation.data.verdictSummary,
+      verdictReason: generation.data.verdictReason,
+      valueScore: generation.data.valueScore,
+      finalScore,
+    });
+    if (!write.success) {
+      return { status: 'error', error: write.error };
+    }
+
+    return {
+      status: 'ok',
+      watchVerdict: generation.data.watchVerdict,
+      valueScore: generation.data.valueScore,
+    };
+  });
+
+// Light list endpoint that returns just the videoIds eligible for verdict
+// regeneration (have a transcript, currently `summaryStatus: 'generated'`).
+// The Settings bulk path uses this to know which rows to iterate over.
+export type RegenerableVideo = {
+  videoId: string;
+  videoTitle: string | null;
+};
+
+export const listRegenerableVideos = createServerFn({ method: 'GET' })
+  .handler(async (): Promise<RegenerableVideo[]> => {
+    const out: RegenerableVideo[] = [];
+    const PAGE_SIZE = 100;
+    for (let page = 1; page <= 50; page += 1) {
+      const result = await strapiFetch<StrapiVideo[]>('GET', '/api/videos', {
+        query: {
+          filters: { summaryStatus: { $eq: 'generated' } },
+          fields: ['youtubeVideoId', 'videoTitle'],
+          sort: 'createdAt:desc',
+          pagination: { page, pageSize: PAGE_SIZE, withCount: true },
+        },
+      });
+      if (!result.ok) break;
+      const rows = result.data ?? [];
+      if (rows.length === 0) break;
+      for (const row of rows) {
+        if (row.youtubeVideoId) {
+          out.push({
+            videoId: row.youtubeVideoId,
+            videoTitle: row.videoTitle ?? null,
+          });
+        }
+      }
+      const pageCount = result.meta?.pagination?.pageCount ?? 1;
+      if (page >= pageCount) break;
+    }
+    return out;
+  });
+
+// =============================================================================
+// Signal-score backfill
+//
+// Walks every video that has a generated summary but no `signalScore`
+// computed yet, runs the deterministic content-signals pipeline against
+// the cached transcript, and writes the result. No LLM calls — the
+// whole library typically completes in seconds.
+//
+// Different from the verdict regenerate path:
+//  • verdict regen runs Ollama on each video (slow, ~5–15s/video)
+//  • signal backfill is pure text analysis (fast, ~50ms/video)
+// Both can run independently — a video can have signals but no real
+// verdict score, or vice versa.
+// =============================================================================
+
+type StrapiVideoWithTranscript = StrapiVideo & {
+  transcript?: { rawText?: string | null } | null;
+};
+
+export const countMissingSignalScores = createServerFn({ method: 'GET' })
+  .handler(async (): Promise<{ missing: number }> => {
+    const result = await strapiFetch<StrapiVideo[]>('GET', '/api/videos', {
+      query: {
+        filters: {
+          summaryStatus: { $eq: 'generated' },
+          signalScore: { $null: true },
+        },
+        fields: ['documentId'],
+        pagination: { page: 1, pageSize: 1, withCount: true },
+      },
+    });
+    if (!result.ok) return { missing: 0 };
+    return { missing: result.meta?.pagination?.total ?? 0 };
+  });
+
+export type BackfillSignalScoresResult = {
+  status: 'ok';
+  updated: number;
+  skipped: number;
+  total: number;
+};
+
+// Single-video signal regenerate. Used by the "Generate score" button on
+// the VideoCard — the bulk backfill is overkill for one row, and the
+// AI verdict regen path doesn't touch signalScore.
+const RegenerateSignalsSchema = VideoIdSchema;
+
+export type RegenerateSignalsResult =
+  | { status: 'ok'; signalScore: number }
+  | { status: 'error'; error: string };
+
+export const regenerateVideoSignals = createServerFn({ method: 'POST' })
+  .inputValidator((data: z.input<typeof RegenerateSignalsSchema>) =>
+    RegenerateSignalsSchema.parse(data),
+  )
+  .handler(async ({ data }): Promise<RegenerateSignalsResult> => {
+    // Strapi REST: filter by youtubeVideoId, populate transcript so we
+    // get rawText + durationSec in one call.
+    const fetched = await strapiFetch<StrapiVideoWithTranscript[]>(
+      'GET',
+      '/api/videos',
+      {
+        query: {
+          filters: { youtubeVideoId: { $eq: data.videoId } },
+          populate: { transcript: true },
+          pagination: { pageSize: 1 },
+        },
+      },
+    );
+    if (!fetched.ok || !fetched.data || fetched.data.length === 0) {
+      return { status: 'error', error: 'Video not found' };
+    }
+    const row = fetched.data[0];
+    const rawText = row.transcript?.rawText;
+    if (!row.documentId || !rawText) {
+      return {
+        status: 'error',
+        error: 'No cached transcript yet — full Regenerate first.',
+      };
+    }
+    const cleaned = cleanTranscript(rawText);
+    const wordCount = (cleaned.match(/\b[\w'-]+\b/g) ?? []).length;
+    const durationSec =
+      (row.transcript as { durationSec?: number | null } | null | undefined)
+        ?.durationSec ?? null;
+    const scores = computeSignalScores({
+      rawText,
+      cleanedText: cleaned,
+      wordCount,
+      durationSec,
+    });
+    const composite = aggregateSignalScore(scores);
+    // Recompute hybrid finalScore against the row's existing valueScore.
+    const finalScore = computeFinalScore(row.valueScore, composite) ?? composite;
+    const write = await updateVideoSignalScoresService({
+      documentId: row.documentId,
+      signalScores: scores,
+      signalScore: composite,
+      finalScore,
+    });
+    if (!write.success) return { status: 'error', error: write.error };
+    return { status: 'ok', signalScore: composite };
+  });
+
+export const backfillSignalScores = createServerFn({ method: 'POST' })
+  .handler(async (): Promise<BackfillSignalScoresResult> => {
+    let updated = 0;
+    let skipped = 0;
+    let total = 0;
+    const PAGE_SIZE = 50;
+    for (let page = 1; page <= 50; page += 1) {
+      const result = await strapiFetch<StrapiVideoWithTranscript[]>(
+        'GET',
+        '/api/videos',
+        {
+          query: {
+            filters: {
+              summaryStatus: { $eq: 'generated' },
+              signalScore: { $null: true },
+            },
+            // We need transcript.rawText for the actual signal computation
+            // and durationSec from the transcript row for speaking pace.
+            populate: { transcript: true },
+            pagination: { page, pageSize: PAGE_SIZE, withCount: true },
+          },
+        },
+      );
+      if (!result.ok) break;
+      const rows = result.data ?? [];
+      total = result.meta?.pagination?.total ?? total;
+      if (rows.length === 0) break;
+      for (const row of rows) {
+        const rawText = row.transcript?.rawText;
+        if (!row.documentId || !rawText) {
+          skipped += 1;
+          continue;
+        }
+        const cleaned = cleanTranscript(rawText);
+        const wordCount = (cleaned.match(/\b[\w'-]+\b/g) ?? []).length;
+        const durationSec =
+          (row.transcript as { durationSec?: number | null } | null | undefined)
+            ?.durationSec ?? null;
+        const scores = computeSignalScores({
+          rawText,
+          cleanedText: cleaned,
+          wordCount,
+          durationSec,
+        });
+        const composite = aggregateSignalScore(scores);
+        const finalScore =
+          computeFinalScore(row.valueScore, composite) ?? composite;
+        const write = await updateVideoSignalScoresService({
+          documentId: row.documentId,
+          signalScores: scores,
+          signalScore: composite,
+          finalScore,
+        });
+        if (write.success) updated += 1;
+        else skipped += 1;
+      }
+      const pageCount = result.meta?.pagination?.pageCount ?? 1;
+      if (page >= pageCount) break;
+    }
+    return { status: 'ok', updated, skipped, total };
+  });
+
+// =============================================================================
+// Final-score backfill
+//
+// Computes the hybrid `finalScore` (weighted blend of valueScore +
+// signalScore, see `computeFinalScore`) for any row that has at least
+// one of the two component scores but no finalScore yet. Pure SQL
+// pass — no LLM, no transcript reads. Runs in milliseconds for the
+// whole library.
+//
+// New videos get finalScore at summary-generation time. This path is
+// for the transition window where existing rows have valueScore +
+// signalScore but never had a finalScore field to write into.
+// =============================================================================
+
+export type BackfillFinalScoresResult = {
+  status: 'ok';
+  updated: number;
+  total: number;
+};
+
+export const countMissingFinalScores = createServerFn({ method: 'GET' })
+  .handler(async (): Promise<{ missing: number }> => {
+    const result = await strapiFetch<StrapiVideo[]>('GET', '/api/videos', {
+      query: {
+        filters: {
+          // Eligible: has at least one component score AND no finalScore.
+          $or: [
+            { valueScore: { $notNull: true } },
+            { signalScore: { $notNull: true } },
+          ],
+          finalScore: { $null: true },
+        },
+        fields: ['documentId'],
+        pagination: { page: 1, pageSize: 1, withCount: true },
+      },
+    });
+    if (!result.ok) return { missing: 0 };
+    return { missing: result.meta?.pagination?.total ?? 0 };
+  });
+
+export const backfillFinalScores = createServerFn({ method: 'POST' })
+  .handler(async (): Promise<BackfillFinalScoresResult> => {
+    let updated = 0;
+    let total = 0;
+    const PAGE_SIZE = 100;
+    for (let page = 1; page <= 50; page += 1) {
+      const result = await strapiFetch<StrapiVideo[]>('GET', '/api/videos', {
+        query: {
+          filters: {
+            $or: [
+              { valueScore: { $notNull: true } },
+              { signalScore: { $notNull: true } },
+            ],
+            finalScore: { $null: true },
+          },
+          fields: ['documentId', 'valueScore', 'signalScore'],
+          pagination: { page, pageSize: PAGE_SIZE, withCount: true },
+        },
+      });
+      if (!result.ok) break;
+      const rows = result.data ?? [];
+      total = result.meta?.pagination?.total ?? total;
+      if (rows.length === 0) break;
+      for (const row of rows) {
+        if (!row.documentId) continue;
+        const finalScore = computeFinalScore(row.valueScore, row.signalScore);
+        if (finalScore === null) continue;
+        const write = await strapiFetch<StrapiVideo>(
+          'PUT',
+          `/api/videos/${row.documentId}`,
+          { body: { data: { finalScore } } },
+        );
+        if (write.ok) updated += 1;
+      }
+      const pageCount = result.meta?.pagination?.pageCount ?? 1;
+      if (page >= pageCount) break;
+    }
+    return { status: 'ok', updated, total };
   });

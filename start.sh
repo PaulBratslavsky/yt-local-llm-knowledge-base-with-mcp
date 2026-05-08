@@ -80,6 +80,20 @@ else
   done
 fi
 
+# --- kill orphan node processes on the dev ports ---------------------------
+# A previous `yarn dev` that didn't clean up leaves a node process holding
+# 1340 (Strapi) or 3005 (client). When the new run tries to bind, it fails
+# with code 1 and `concurrently` SIGTERMs the whole stack — surfacing as
+# `[strapi] fetch failed` spam from the client. Killing orphans first
+# makes start.sh idempotent.
+for port in 1340 3005; do
+  pids=$(lsof -ti :$port 2>/dev/null || true)
+  if [ -n "$pids" ]; then
+    echo "→ Killing orphan process(es) on :$port — $pids"
+    echo "$pids" | xargs kill -9 2>/dev/null || true
+  fi
+done
+
 # --- start Strapi + client (delegates to existing yarn dev) ----------------
 echo "→ Starting Strapi (1340) + TanStack client (3005) via yarn dev..."
 echo ""

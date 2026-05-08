@@ -271,7 +271,7 @@ export function chunkForSummary(
 const BM25_K1 = 1.2;
 const BM25_B = 0.75;
 
-const STOPWORDS = new Set([
+export const STOPWORDS = new Set([
   'the',
   'a',
   'an',

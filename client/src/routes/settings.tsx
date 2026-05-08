@@ -1,4 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router';
+import { ContentSignalsPanel } from '#/components/ContentSignalsPanel';
 import { EmbeddingCoveragePanel } from '#/components/EmbeddingCoveragePanel';
 
 // App-level settings + infrastructure panels. Currently just embeddings;
@@ -18,7 +19,10 @@ function SettingsPage() {
         </span>
       </header>
 
-      <EmbeddingCoveragePanel />
+      <div className="grid gap-4">
+        <ContentSignalsPanel />
+        <EmbeddingCoveragePanel />
+      </div>
     </main>
   );
 }

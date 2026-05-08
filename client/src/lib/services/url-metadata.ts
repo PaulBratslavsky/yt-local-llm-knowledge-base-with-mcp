@@ -61,6 +61,9 @@ export function extractYoutubeVideoId(url: URL): string | null {
     if (url.pathname.startsWith('/shorts/')) {
       return url.pathname.slice('/shorts/'.length).split('/')[0] || null;
     }
+    if (url.pathname.startsWith('/live/')) {
+      return url.pathname.slice('/live/'.length).split('/')[0] || null;
+    }
   }
   return null;
 }

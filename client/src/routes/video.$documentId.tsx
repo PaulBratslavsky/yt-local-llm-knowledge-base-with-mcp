@@ -1,14 +1,15 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
+import { BackendErrorPanel } from '#/components/BackendErrorPanel';
 import { Button } from '#/components/ui/button';
 import { VideoCard } from '#/components/VideoCard';
 import { getVideoByDocumentId } from '#/data/server-functions/videos';
 
 export const Route = createFileRoute('/video/$documentId')({
   loader: async ({ params }) => {
-    const video = await getVideoByDocumentId({
+    const lookup = await getVideoByDocumentId({
       data: { documentId: params.documentId },
     });
-    return { video };
+    return lookup;
   },
   component: VideoPage,
   head: ({ loaderData }) => ({
@@ -23,7 +24,14 @@ export const Route = createFileRoute('/video/$documentId')({
 });
 
 function VideoPage() {
-  const { video } = Route.useLoaderData();
+  const { video, error } = Route.useLoaderData();
+  if (error) {
+    return (
+      <main className="page-wrap flex min-h-[60vh] items-center justify-center px-4 py-14">
+        <BackendErrorPanel message={error} />
+      </main>
+    );
+  }
   if (!video) return <NotFound />;
   return (
     <main className="page-wrap px-4 pb-20 pt-10 sm:pt-14">

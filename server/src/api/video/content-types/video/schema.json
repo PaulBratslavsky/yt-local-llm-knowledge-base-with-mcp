@@ -101,6 +101,28 @@
       "type": "text",
       "maxLength": 1000
     },
+    "valueScore": {
+      "type": "integer",
+      "min": 0,
+      "max": 100
+    },
+    "valueScoreSource": {
+      "type": "enumeration",
+      "enum": ["model", "derived"]
+    },
+    "signalScores": {
+      "type": "json"
+    },
+    "signalScore": {
+      "type": "integer",
+      "min": 0,
+      "max": 100
+    },
+    "finalScore": {
+      "type": "integer",
+      "min": 0,
+      "max": 100
+    },
     "summaryGeneratedAt": {
       "type": "datetime"
     },

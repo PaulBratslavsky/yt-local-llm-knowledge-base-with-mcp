@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { createFileRoute, useRouter } from '@tanstack/react-router';
+import { BackendErrorPanel } from '#/components/BackendErrorPanel';
 import { Button } from '#/components/ui/button';
+import { friendlyOllamaError } from '#/lib/services/ollama-errors';
 import {
   TimecodeMarkdown,
   stripInlineTimecodes,
@@ -21,6 +23,7 @@ import {
   getVideoByVideoId,
   regenerateSummary,
   regenerateVideoEmbedding,
+  regenerateVideoVerdict,
   triggerSummaryGeneration,
   type GenerationProgress,
 } from '#/data/server-functions/videos';
@@ -61,7 +64,11 @@ type LoaderData =
   | { status: 'ready'; video: StrapiVideo }
   | { status: 'pending'; video: StrapiVideo; progress: GenerationProgress }
   | { status: 'failed'; video: StrapiVideo; error?: string }
-  | { status: 'unshared' };
+  | { status: 'unshared' }
+  // Distinct from `unshared`: row lookup itself failed because Strapi
+  // is unreachable. Without this, a dead backend looked identical to
+  // "you haven't shared this video yet" — confusing the user.
+  | { status: 'backend-error'; error: string };
 
 // View the left pane is showing.
 //   `summary` = structured summary (sections, takeaways, verdict).
@@ -79,7 +86,9 @@ const LearnSearchSchema = z.object({
 export const Route = createFileRoute('/learn/$videoId')({
   validateSearch: LearnSearchSchema,
   loader: async ({ params }): Promise<LoaderData> => {
-    const video = await getVideoByVideoId({ data: { videoId: params.videoId } });
+    const lookup = await getVideoByVideoId({ data: { videoId: params.videoId } });
+    if (lookup.error) return { status: 'backend-error', error: lookup.error };
+    const video = lookup.video;
     if (!video) return { status: 'unshared' };
     if (video.summaryStatus === 'generated') return { status: 'ready', video };
     if (video.summaryStatus === 'failed') return { status: 'failed', video };
@@ -165,6 +174,13 @@ function LearnPage() {
 
   usePollingInvalidation(data.status === 'pending');
 
+  if (data.status === 'backend-error') {
+    return (
+      <main className="flex min-h-[60vh] items-center justify-center px-6 py-14 sm:px-10">
+        <BackendErrorPanel message={data.error} />
+      </main>
+    );
+  }
   if (data.status === 'unshared') return <UnsharedState videoId={videoId} />;
   if (data.status === 'pending')
     return <PendingState videoId={videoId} progress={data.progress} />;
@@ -329,28 +345,7 @@ function SummaryContent({
         )}
       </header>
       {video.watchVerdict && video.verdictSummary && (
-        <section
-          className={`mb-10 rounded-2xl border p-5 sm:p-6 ${VERDICT_PANEL[video.watchVerdict]}`}
-        >
-          <div className="flex items-center gap-2">
-            <span
-              className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[0.65rem] font-semibold uppercase tracking-wider ${VERDICT_BADGE[video.watchVerdict]}`}
-            >
-              {VERDICT_LABEL[video.watchVerdict]}
-            </span>
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--ink-muted)]">
-              Should I watch this?
-            </h2>
-          </div>
-          <p className="mt-3 text-base font-medium leading-relaxed text-[var(--ink)]">
-            {video.verdictSummary}
-          </p>
-          {video.verdictReason && (
-            <p className="mt-2 text-sm leading-relaxed text-[var(--ink-soft)]">
-              {video.verdictReason}
-            </p>
-          )}
-        </section>
+        <VerdictBlock video={video} />
       )}
       {video.summaryOverview && (
         <section className="mb-10">
@@ -470,6 +465,114 @@ function SummaryContent({
       </footer>
       <RelatedVideos videoId={video.youtubeVideoId} />
     </>
+  );
+}
+
+// Verdict + content-score panel with a per-video "Regenerate verdict" action.
+// Rendered above the summary overview when the video has a watchVerdict
+// + verdictSummary. The regenerate button re-rates ONLY the verdict
+// (watchVerdict, valueScore, verdictSummary, verdictReason) without
+// touching sections / takeaways / action steps — much faster than a full
+// summary regen. Use the existing summary "Regenerate" pill at the bottom
+// of the page for a complete redo.
+function VerdictBlock({ video }: Readonly<{ video: StrapiVideo }>) {
+  const router = useRouter();
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!video.watchVerdict || !video.verdictSummary) return null;
+
+  const handleRegenerate = async () => {
+    if (running) return;
+    setRunning(true);
+    setError(null);
+    try {
+      const result = await regenerateVideoVerdict({
+        data: { videoId: video.youtubeVideoId },
+      });
+      if (result.status === 'error') {
+        setError(result.error);
+        return;
+      }
+      await router.invalidate();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Regenerate failed');
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <section
+      className={`mb-10 rounded-2xl border p-5 sm:p-6 ${VERDICT_PANEL[video.watchVerdict]}`}
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span
+          className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[0.65rem] font-semibold uppercase tracking-wider ${VERDICT_BADGE[video.watchVerdict]}`}
+        >
+          {VERDICT_LABEL[video.watchVerdict]}
+        </span>
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--ink-muted)]">
+          Should I watch this?
+        </h2>
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          {typeof video.finalScore === 'number' && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full border border-[var(--line)] bg-[var(--card)] px-2.5 py-0.5 text-[0.65rem] font-semibold uppercase tracking-wider text-[var(--ink-muted)]"
+              title="Content score (0–100). Hybrid blend: 60% programmatic signals + 40% LLM judgement. Sub-scores below."
+              aria-label={`Content score: ${video.finalScore} out of 100`}
+            >
+              <span>Content score</span>
+              <span className="text-[var(--ink)]">{video.finalScore}</span>
+            </span>
+          )}
+          {typeof video.signalScore === 'number' && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full border border-[var(--line)] bg-[var(--bg-subtle)] px-2 py-0.5 text-[0.6rem] font-medium uppercase tracking-wider text-[var(--ink-muted)]"
+              title="Programmatic signal score: filler density, lexical density, compression ratio, speaking pace, sponsor presence."
+            >
+              <span>Signals</span>
+              <span className="text-[var(--ink-soft)]">{video.signalScore}</span>
+            </span>
+          )}
+          {typeof video.valueScore === 'number' && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full border border-[var(--line)] bg-[var(--bg-subtle)] px-2 py-0.5 text-[0.6rem] font-medium uppercase tracking-wider text-[var(--ink-muted)]"
+              title="LLM verdict score: model's contextual 'is this worth your time' judgement."
+            >
+              <span>LLM</span>
+              <span className="text-[var(--ink-soft)]">{video.valueScore}</span>
+            </span>
+          )}
+        </div>
+      </div>
+      <p className="mt-3 text-base font-medium leading-relaxed text-[var(--ink)]">
+        {video.verdictSummary}
+      </p>
+      {video.verdictReason && (
+        <p className="mt-2 text-sm leading-relaxed text-[var(--ink-soft)]">
+          {video.verdictReason}
+        </p>
+      )}
+      <div className="mt-4 flex items-center justify-between gap-3">
+        {error ? (
+          <p className="text-xs text-destructive">{error}</p>
+        ) : (
+          <span className="text-[0.7rem] text-[var(--ink-muted)]">
+            Re-rates only the verdict, not the full summary.
+          </span>
+        )}
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={handleRegenerate}
+          disabled={running}
+        >
+          {running ? 'Regenerating…' : 'Regenerate verdict'}
+        </Button>
+      </div>
+    </section>
   );
 }
 
@@ -655,8 +758,15 @@ function FailedState({
 
   const handleRetry = async () => {
     setRetrying(true);
-    await clearSummaryFailure({ data: { videoId: video.youtubeVideoId } });
-    await triggerSummaryGeneration({ data: { videoId: video.youtubeVideoId } });
+    // Use `regenerateSummary` (not `triggerSummaryGeneration`) here — the
+    // latter doesn't flip the DB row from `failed` → `pending`, so the
+    // loader keeps seeing `failed` on `router.invalidate()` and re-renders
+    // this same FailedState screen indefinitely (background job runs but
+    // the UI never sees it because FailedState doesn't poll). Regenerate
+    // does the flip in its `beforeStart` hook + clears the recent-failure
+    // marker, so the next loader run sees `pending` and the polling UI
+    // takes over correctly.
+    await regenerateSummary({ data: { videoId: video.youtubeVideoId } });
     await router.invalidate();
     setRetrying(false);
   };
@@ -671,7 +781,7 @@ function FailedState({
         </p>
         {error && (
           <p className="mt-3 rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2 text-left text-xs text-destructive">
-            {error}
+            {friendlyOllamaError(error)}
           </p>
         )}
         <div className="mt-6 flex justify-center gap-2">

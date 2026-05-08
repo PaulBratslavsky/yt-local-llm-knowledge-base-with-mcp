@@ -11,6 +11,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
+import { friendlyOllamaError } from '#/lib/services/ollama-errors';
 
 export type Citation = {
   index: number;
@@ -90,7 +91,11 @@ async function streamAsk(
     signal,
   });
   if (!res.ok || !res.body) {
-    throw new Error(`Request failed: ${res.status}`);
+    // Pull the body so the upstream message survives — previously this
+    // collapsed every non-OK response to "Request failed: 500", which
+    // hid the actual cause (Ollama down, retrieval errored, etc).
+    const text = await res.text().catch(() => '');
+    throw new Error(text || `Request failed: ${res.status}`);
   }
 
   const reader = res.body.getReader();
@@ -181,7 +186,11 @@ export function useLibraryChat() {
     onError: (err, { assistantId }) => {
       // Aborted by user — state already cleaned up by caller.
       if (abortRef.current?.signal.aborted) return;
-      const msg = err instanceof Error ? err.message : 'Ask failed';
+      const raw = err instanceof Error ? err.message : 'Ask failed';
+      // Translate raw connection / model errors into a recovery hint.
+      // Other failures pass through unchanged so we don't hide useful
+      // error detail behind a generic message.
+      const msg = friendlyOllamaError(raw);
       setState((s) => ({
         ...s,
         messages: s.messages.map((m) =>

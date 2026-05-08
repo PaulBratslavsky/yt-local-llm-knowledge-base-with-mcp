@@ -53,7 +53,9 @@ export type CreateVideoInput = z.infer<typeof CreateVideoInputSchema>;
 
 // Accepts any common YouTube URL shape and pulls the video id, or returns
 // null if the URL doesn't match. Covers: youtube.com/watch?v=ID, youtu.be/ID,
-// youtube.com/embed/ID, youtube.com/shorts/ID, and mobile variants.
+// youtube.com/embed/ID, youtube.com/shorts/ID, youtube.com/live/ID, and
+// mobile variants. Live URLs become regular archived videos once the stream
+// ends, so the same id works for transcript/oEmbed lookups.
 export function extractYouTubeVideoId(input: string): string | null {
   const trimmed = input.trim();
   if (!trimmed) return null;
@@ -75,7 +77,7 @@ export function extractYouTubeVideoId(input: string): string | null {
       if (v && /^[\w-]{11}$/.test(v)) return v;
 
       const pathMatch = parsed.pathname.match(
-        /^\/(embed|shorts|v)\/([\w-]{11})/,
+        /^\/(embed|shorts|v|live)\/([\w-]{11})/,
       );
       if (pathMatch) return pathMatch[2];
     }
