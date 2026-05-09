@@ -2,7 +2,14 @@
 
 Deep dive into how yt-knowledge-base is wired. Covers data model, generation pipeline, retrieval, chat, tool use, grounding, and the UI surfaces that sit on top.
 
-For setup and usage, see the [README](../README.md). For the notes-section plan, see [notes-section-plan.md](./notes-section-plan.md).
+> **Where to look first:**
+> - **Setup + usage:** [README](../README.md).
+> - **Why the codebase looks the way it does:** [`./adr/`](./adr/) — seven ADRs covering local-first AI, Strapi, BM25-vs-embeddings, deterministic timecodes, hybrid scoring, digest upsert, and error translation.
+> - **Field-by-field schema reference:** [`./data-model.md`](./data-model.md). Section 2 below is a short overview; the detailed table is there.
+> - **When something breaks:** [`./operations.md`](./operations.md) (runbook).
+> - **MCP integration:** [`./mcp.md`](./mcp.md).
+>
+> This document covers the **flows** — share, generation, chat, retrieval, scoring. For static facts about a field or a decision, follow one of the links above.
 
 > **Post-refactor note (2026-05-05):** five subsystems were extracted into their own Modules during the architecture review — see [`./architecture-review/`](./architecture-review/) for grilling notes per module. The high-level flows below still apply; specific file-and-line citations have been updated to point at the new homes:
 > - **Chat retrieval** (rewrite + multi-query BM25 + RRF) → `client/src/lib/services/chat-retrieval.ts`
@@ -12,6 +19,12 @@ For setup and usage, see the [README](../README.md). For the notes-section plan,
 > - **YouTube player** (react-player wrapper + reactive `currentSeconds` for transcript auto-highlight) → `client/src/components/player/`
 >
 > The original section 6.1 (retrieval), 6.2 (streaming endpoint), 7.1–7.2 (Learn-page layout + manual timecode override), 8.1–8.2 (inflight + progress) describe the same pipelines; the implementation now lives behind the modules above. Future deeper passes should update those sections in place.
+
+> **Subsequent additions (2026-05-08):** four subsystems shipped after the post-refactor note. Section 11 below covers them. Briefly:
+> - **Hybrid Content score** (LLM `valueScore` + programmatic `signalScore` → `finalScore`) — see [ADR 0005](./adr/0005-hybrid-content-score-llm-plus-programmatic.md) and `client/src/lib/services/content-signals.ts`.
+> - **Cross-video discovery** (per-video embeddings powering Related videos + semantic search on `/feed`) — see [ADR 0003](./adr/0003-bm25-for-chat-embeddings-for-discovery.md) and `client/src/lib/services/embeddings.ts`.
+> - **Boundary-layer error translation** (Strapi unreachable / Ollama down → recovery hints, not raw stack traces) — see [ADR 0007](./adr/0007-error-translation-strapi-ollama.md).
+> - **Per-video transcript search** (substring filter + highlight + click-to-seek on the Learn page transcript tab).
 
 ---
 
@@ -61,55 +74,52 @@ flowchart TB
 
 ## 2. Data model
 
-Three Strapi content types. `client/src/lib/services/videos.ts` wraps the REST API.
+Five Strapi content types. **The detailed field reference lives in [`./data-model.md`](./data-model.md).** This section sketches the relationships and the rationale for the splits.
 
 ```mermaid
 erDiagram
-    Video ||--o{ Tag : "many-to-many"
     Video ||--o| Transcript : "one-to-one"
+    Video }o--o{ Tag : "many-to-many"
+    Video }o--o{ Note : "many-to-many"
+    Video }o--o{ Digest : "many-to-many"
 
     Transcript {
-      string youtubeVideoId PK "unique"
-      string title
-      string author
-      string language
-      int    durationSec
-      json   rawSegments "caption segments with ms timings"
-      richtext rawText
-      datetime fetchedAt
+      string youtubeVideoId PK "unique, immutable cache key"
+      json   rawSegments "ms-precise caption segments"
     }
-
     Video {
-      string  youtubeVideoId
-      string  url
-      string  caption
-      string  videoTitle
-      string  videoAuthor
-      string  videoThumbnailUrl
-      enumeration summaryStatus "pending|generated|failed"
-      string  summaryTitle
-      string  summaryDescription
-      richtext overview
-      json    keyTakeaways
-      json    sections "[{heading, body, timeSec}]"
-      json    actionSteps
-      json    transcriptSegments "BM25 index + rawSegments"
-      richtext notes "user markdown"
-      string  aiModel
+      string  youtubeVideoId "unique"
+      enum    summaryStatus  "pending|generated|failed"
+      json    transcriptSegments "BM25 index"
+      json    summaryEmbedding   "Tier 1 (per-video)"
+      json    passageEmbeddings  "Tier 2 (per-passage)"
+      int     valueScore signalScore finalScore "see ADR 0005"
     }
-
+    Note {
+      enum source "chat | digest-chat | mcp | manual"
+    }
+    Digest {
+      string videoSetKey "unique, see ADR 0006"
+    }
     Tag {
-      string name PK "lowercase-normalized via middleware"
+      string name "lowercase-normalized"
     }
 ```
 
+`client/src/lib/services/videos.ts`, `notes.ts`, `digests.ts` wrap the REST API on the client side.
+
 ### Why split `Video` and `Transcript`?
 
-A Transcript is **immutable per `youtubeVideoId`**; a Video is **your instance** (summary, sections, action steps, retrieval index, your notes, your tags). Splitting them means:
+A Transcript is **immutable per `youtubeVideoId`**; a Video is **your instance** (summary, sections, action steps, retrieval index, scores, embeddings, notes, tags). Splitting them means:
 
 - YouTube is hit **at most once** per video across all regenerations. If AI generation crashes after the transcript is fetched, the Transcript row survives and the next retry starts from summarization.
 - The expensive youtubei.js call is deduped even if the same video is shared from different UI flows.
 - You can nuke and regenerate the AI output cleanly without re-hitting captions.
+
+### Why `Note` and `Digest` as separate collections?
+
+- **Note** is many-to-many with Video so a single chat-summary note about (A, B, C) shows up under each source video. Four sources (`chat`, `digest-chat`, `mcp`, `manual`) drive the Notes pane sub-grouping.
+- **Digest** is identified by the source-video *set* (`videoSetKey`), not a serial id, so re-saving the same selection upserts in place. See [ADR 0006](./adr/0006-digest-upsert-by-video-set-key.md).
 
 ---
 
@@ -463,6 +473,8 @@ flowchart TB
 
 Sections sort by `timeSec` ascending so the walkthrough is always chronological. Every section heading gets a clickable `[mm:ss]` chip that seeks the player. **Player control is mediated by the [`components/player/`](../client/src/components/player/) Module** — consumers call `usePlayerControl()` (returns `{ seekTo, play, pause, currentSeconds, isPlaying, isReady }`) instead of receiving an `onSeek` prop or reaching into the iframe directly. The `TranscriptPane` uses `currentSeconds` to auto-highlight + auto-scroll the active row as the video plays.
 
+The transcript tab also has a **substring search** (Section 11.8) — input in the header, matches are filtered + highlighted with `<mark>`, click-to-seek still works on each row. Auto-scroll-to-playback is suspended while searching so the user isn't yanked away from a match by the player advancing.
+
 ### 7.2 Manual timecode override
 
 Right-click any section's timecode chip → Radix Popover opens with:
@@ -566,37 +578,148 @@ Where to plug in new features without tearing out existing scaffolding.
 ```
 client/src/
 ├── components/
+│   ├── BackendErrorPanel.tsx      — shared "can't reach Strapi" card with retry
+│   ├── ContentSignalsPanel.tsx    — Settings: refresh scores, advanced AI re-rate
+│   ├── DigestChat.tsx             — chat over a /digest
+│   ├── EmbeddingCoveragePanel.tsx — Settings: embedding backfill (Tier 1 + Tier 2)
 │   ├── GenerationModeSelect.tsx   — shared mode selector
+│   ├── LibraryChat.tsx            — dock-style cross-video chat (consumes useLibraryChat)
 │   ├── NewPostForm.tsx            — /new-post form
+│   ├── NotesPane.tsx              — Notes tab on learn page
 │   ├── SectionTimecodeEditor.tsx  — right-click manual timecode override
 │   ├── TimecodeMarkdown.tsx       — renderer that chip-ifies [mm:ss]
-│   └── VideoChat.tsx              — chat UI, SSE parser, tool-call panel
+│   ├── TranscriptPane.tsx         — transcript tab + per-video substring search
+│   ├── VideoCard.tsx              — feed/grid card with verdict + Content score chip
+│   ├── VideoChat.tsx              — per-video chat UI, SSE parser, tool-call panel
+│   └── player/                    — react-player wrapper + Context + usePlayerControl()
 ├── data/server-functions/
-│   └── videos.ts                  — shareVideo, trigger, regenerate, notes
-├── components/player/             — react-player wrapper + Context + usePlayerControl()
+│   └── videos.ts                  — shareVideo, trigger, regenerate, score backfills, notes
+├── lib/hooks/
+│   └── useLibraryChat.ts          — library chat state + SSE + localStorage persistence
 ├── lib/services/
-│   ├── chat-retrieval.ts          — rewrite + multi-query BM25 + RRF (chat seam)
+│   ├── ask-library.ts             — Tier 2 passage retrieval for /api/ask
+│   ├── chat-retrieval.ts          — rewrite + multi-query BM25 + RRF (per-video chat)
 │   ├── chat-stream.ts             — AG-UI SSE → typed StreamEvent generator
 │   ├── chat-tools.ts              — web_search toolDefinition
+│   ├── content-signals.ts         — programmatic score signals (filler, lexical, etc)
+│   ├── digest.ts / digests.ts     — digest synthesis pipeline + Strapi service
+│   ├── embeddings.ts              — Tier 1 per-video topical embedding
 │   ├── generation-state.ts        — inflight/progress/recent-failure state machine
-│   ├── learning.ts                — generation pipeline, prompts, retrieval
+│   ├── learning.ts                — generation pipeline, prompts, scoring writes
+│   ├── library-tools.ts           — tool definitions for /api/ask
+│   ├── notes.ts                   — Strapi service for Note collection
+│   ├── ollama-errors.ts           — friendlyOllamaError (recovery hint translation)
+│   ├── reader.ts                  — readableArticle generation pipeline
 │   ├── strapi-client.ts           — strapiFetch + StrapiQuery (auth, populate, filters)
 │   ├── transcript.ts              — clean, chunk, BM25, grounding
-│   ├── videos.ts                  — Strapi-shaped service layer (uses strapi-client)
+│   ├── videos.ts                  — Strapi service + finalScore + WithStatus helpers
 │   ├── web-search.ts              — DDG HTML scraper
 │   └── youtube-transcript.ts      — youtubei.js wrapper
 ├── lib/validations/
-│   └── post.ts                    — Zod schemas (ShareVideoFormSchema, GenerationModeSchema)
+│   └── post.ts                    — Zod schemas + extractYouTubeVideoId
 └── routes/
-    ├── api.chat.tsx               — SSE streaming chat endpoint
-    ├── feed.tsx                   — video grid
+    ├── api.ask.tsx                — library QA SSE endpoint (cross-video)
+    ├── api.chat.tsx               — per-video chat SSE endpoint
+    ├── api.digest-chat.tsx        — digest chat SSE endpoint
+    ├── api.notes.compose.tsx      — chat → markdown note synthesis
+    ├── digest.tsx                 — /digest synthesis page
+    ├── digests.tsx                — saved digests list
+    ├── feed.tsx                   — video grid + score filter + sort
+    ├── learn.$videoId.tsx         — summary + chat + tabs
     ├── new-post.tsx               — share form page
-    └── learn.$videoId.tsx         — summary + chat page
+    ├── settings.tsx               — content scoring + embedding backfill
+    └── video.$documentId.tsx      — single-video card view
 
-server/src/api/
-├── video/                          — per-user Video content type
-├── transcript/                     — immutable Transcript cache
-└── tag/                            — lowercase-normalized Tag
-
-server/src/index.ts                 — Strapi bootstrap, middleware, role grants
+server/src/
+├── api/
+│   ├── digest/                    — saved cross-video digests
+│   ├── note/                      — markdown notes (4 sources)
+│   ├── tag/                       — lowercase-normalized Tag
+│   ├── transcript/                — immutable Transcript cache
+│   └── video/                     — main Video content type
+├── components/content/             — repeatable component schemas (section, takeaway, etc)
+├── mcp/                            — MCP server, tools, transport
+└── index.ts                       — Strapi bootstrap, middleware, role grants
 ```
+
+---
+
+## 11. Recent subsystems (post-2026-05-05)
+
+The five Modules documented in the post-refactor note are stable; these are the **flow-shaping additions** since then. Each is covered in depth elsewhere — this section is a map.
+
+### 11.1 Hybrid Content score
+
+Three score fields per video:
+
+- `valueScore` (0–100) — LLM judgement, set during summary generation.
+- `signalScore` (0–100) — programmatic composite of five signals (filler density, lexical density, gzip compression ratio, speaking pace, sponsor presence) in `client/src/lib/services/content-signals.ts`.
+- `finalScore` (0–100) — `0.6 × signalScore + 0.4 × valueScore` (`FINAL_SCORE_WEIGHTS` in `videos.ts`). **The canonical user-visible "Content score."** Drives feed sort (`?sort=score`), threshold filter (`?minScore=70`), card chip, learn-page primary chip.
+
+Three writers update these (summary save in `learning.ts`, verdict-only re-rate `regenerateVideoVerdict`, signal-only recompute `regenerateVideoSignals`); a Settings backfill recomputes for older rows. **All three writers must write `finalScore` consistently** — guarded by `content-signals.test.ts`.
+
+See [ADR 0005](./adr/0005-hybrid-content-score-llm-plus-programmatic.md) for the why and the deferred Phase 3 calibration.
+
+### 11.2 Cross-video discovery (embeddings)
+
+Two retrieval layers, one app — see [ADR 0003](./adr/0003-bm25-for-chat-embeddings-for-discovery.md).
+
+- **Tier 1 — per-video topical embedding** (`Video.summaryEmbedding`). One vector per video over `(title + summaryOverview + keyTakeaways + section headings + tags)`, computed via `nomic-embed-text` through Ollama. In-memory cosine scan in `client/src/lib/services/embeddings.ts` powers Related Videos on the learn page and library-wide semantic search on `/feed?mode=semantic`. Personal-KB scale (<1000 videos): ~1–2 ms.
+- **Tier 2 — per-passage embeddings** (`Video.passageEmbeddings`) drives moment search via `client/src/lib/services/ask-library.ts` and the `/api/ask` library chat. Self-contained blob with `{ model, version, generatedAt, chunks }` so invalidation is independent from Tier 1.
+
+**Embedding invalidation:** stored `embeddingModel` + `embeddingVersion` on each row. Mismatch with current env flags stale; the Settings panel offers backfill (missing / stale / all). **Bump `EMBEDDING_VERSION` whenever the text-builder changes** — without it, old vectors silently survive a meaning-changing edit.
+
+### 11.3 Library chat (`/api/ask`)
+
+Cross-video QA with deterministic citations. Distinct from per-video chat (Section 6) which uses single-video BM25.
+
+```
+question → retrievePassagesForQuery (Tier 2 embeddings, top-k passages
+                                     across top-N videos)
+         → buildLibraryTools (load_passages / search_library / get_video_details
+                              / list_videos_by_topic — escape hatches)
+         → chat() with progressive retrieval prompt
+         → SSE stream with CITATIONS frame up-front + text deltas
+```
+
+Implementation in `client/src/routes/api.ask.tsx` (server) and `client/src/lib/hooks/useLibraryChat.ts` (client SSE consumer + persistence). Library chat panel survives navigation (state in localStorage) and is dock-style on every page.
+
+### 11.4 Digest pipeline
+
+Cross-video synthesis of 2–5 videos. Distinct from library chat — this produces a **structured, saveable artifact**, not a streamed conversation.
+
+```
+/feed → user picks 2-5 videos → /digest?videos=A,B,C
+      → loader checks videoSetKey, hits cached row OR runs synthesis
+      → renders structured components (sharedThemes / uniqueInsights /
+        contradictions / viewingOrder + bottomLine + overallTheme)
+      → optional Article toggle generates articleMarkdown long-form
+      → Save persists, upserts on videoSetKey
+```
+
+Identity is the source-video set, not a serial id ([ADR 0006](./adr/0006-digest-upsert-by-video-set-key.md)). Code in `client/src/lib/services/digests.ts` and the `/digest` route loader.
+
+### 11.5 Notes
+
+Markdown content attached many-to-many to videos. Four sources (`chat`, `digest-chat`, `mcp`, `manual`) drive the Notes pane's sub-grouping on the learn page. Notes from in-app chat are produced by clicking "Summarize to note" on a per-video or digest chat — the conversation + transcript get synthesized into personal-voice markdown with preserved `[mm:ss]` chips. MCP-authored notes come in via the `saveNote` tool from external clients (Claude Desktop, etc.).
+
+Code in `client/src/lib/services/notes.ts`, `client/src/components/NotesPane.tsx`, `client/src/routes/api.notes.compose.tsx`.
+
+### 11.6 MCP server
+
+`server/src/mcp/` exposes 14 tools (videos, transcripts, tags, notes) over Streamable HTTP at `/api/mcp` with bearer-token auth. Drives the knowledge base from Claude Desktop / Code / Cursor when you want a frontier model. **Tools are defined once in Strapi** — the in-app Ollama chat does not use MCP. See [`./mcp.md`](./mcp.md) and [ADR 0001](./adr/0001-local-first-no-cloud-ai.md).
+
+### 11.7 Boundary-layer error translation
+
+Two helpers translate raw failures into recovery hints — see [ADR 0007](./adr/0007-error-translation-strapi-ollama.md).
+
+- **Strapi:** `friendlyBackendError(status, raw)` in `videos.ts`. Service helpers `fetchVideoByVideoIdWithStatusService` / `fetchVideoByDocumentIdWithStatusService` return `{ video, error }` so route loaders can render the shared `BackendErrorPanel` instead of falling back to "empty" / "not found". `PaginatedVideos` carries an optional `error` field.
+- **Ollama:** `friendlyOllamaError(raw)` in `client/src/lib/services/ollama-errors.ts`. Pattern-matches host-unreachable / model-not-found / timeout. Wired into `useLibraryChat`, `VideoChat`, `DigestChat`, and the `FailedState` on the learn page.
+
+New chat surfaces should pipe caught errors through `friendlyOllamaError` before `setError`; new route loaders should use the `*WithStatusService` helpers and render `BackendErrorPanel` on failure.
+
+### 11.8 Per-video transcript search
+
+Substring filter + highlight on the Learn page transcript tab. Search input lives in the `TranscriptPane` header; matches are filtered (rows hidden), the matched substrings are wrapped in `<mark>`, click-to-seek still works on each row. The playback-following auto-scroll is **suspended while searching** — the user is navigating by query, not by playback. Esc clears.
+
+Cross-video moment search is a separate question — Tier 2 embeddings (Section 11.2) cover the semantic-similarity case via `/api/ask`. A deterministic substring search across all transcripts (Cmd-F-across-the-library) is deliberately not built; revisit if usage proves the semantic path insufficient.
