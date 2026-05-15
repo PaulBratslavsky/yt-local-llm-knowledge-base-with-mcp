@@ -14,6 +14,7 @@ import {
   markSummaryPendingService,
   searchTagsService,
   updateSectionTimecodeService,
+  stripVideoForClient,
   updateVideoEmbeddingService,
   updateVideoPassagesService,
   updateVideoSignalScoresService,
@@ -59,7 +60,7 @@ import {
 import {
   buildBM25Index,
   extractCitationsWithEvidence,
-  isStoredIndex,
+  loadStoredIndex,
   searchBM25,
   tokenize,
   type EvidenceCitation,
@@ -184,7 +185,9 @@ export const shareVideo = createServerFn({ method: 'POST' })
     }
 
     const alreadyExists = await fetchVideoByVideoIdService(videoId);
-    if (alreadyExists) return { status: 'exists', video: alreadyExists };
+    if (alreadyExists) {
+      return { status: 'exists', video: stripVideoForClient(alreadyExists)! };
+    }
 
     const parsed = CreateVideoInputSchema.parse({
       videoId,
@@ -207,19 +210,23 @@ export const shareVideo = createServerFn({ method: 'POST' })
     });
 
     if (!result.success) {
-      if (result.kind === 'exists') return { status: 'exists', video: result.video };
+      if (result.kind === 'exists') {
+        return { status: 'exists', video: stripVideoForClient(result.video)! };
+      }
 
       // Race recovery — if the server dedupe check caught what our pre-check
       // missed, re-fetch and surface as 'exists' for clean redirect.
       if (/already exists/i.test(result.error)) {
         const recovered = await fetchVideoByVideoIdService(videoId);
-        if (recovered) return { status: 'exists', video: recovered };
+        if (recovered) {
+          return { status: 'exists', video: stripVideoForClient(recovered)! };
+        }
       }
       return { status: 'error', error: result.error };
     }
 
     kickoffSummaryGeneration(videoId, data.mode);
-    return { status: 'created', video: result.video };
+    return { status: 'created', video: stripVideoForClient(result.video)! };
   });
 
 // =============================================================================
@@ -243,7 +250,7 @@ export const triggerSummaryGeneration = createServerFn({ method: 'POST' })
     const existing = await fetchVideoByVideoIdService(data.videoId);
     if (existing && existing.summaryStatus === 'generated') {
       clearRecentFailure(data.videoId);
-      return { status: 'found', video: existing };
+      return { status: 'found', video: stripVideoForClient(existing)! };
     }
 
     const result = await ensureGenerationRunning(
@@ -441,11 +448,9 @@ export const getChatResponseEvidence = createServerFn({ method: 'POST' })
   )
   .handler(async ({ data }): Promise<EvidenceCitation[]> => {
     const video = await fetchVideoByVideoIdService(data.videoId);
-    if (!video || !isStoredIndex(video.transcriptSegments)) return [];
-    return extractCitationsWithEvidence(
-      data.responseText,
-      video.transcriptSegments.bm25,
-    );
+    const stored = video ? loadStoredIndex(video.transcriptSegments) : null;
+    if (!stored) return [];
+    return extractCitationsWithEvidence(data.responseText, stored.bm25);
   });
 
 // =============================================================================
@@ -1005,7 +1010,15 @@ export const semanticSearchVideos = createServerFn({ method: 'GET' })
       .filter((x) => x.cosineScore >= minScore)
       .slice(0, limit)
       .map(({ i, cosineScore }) => ({
-        video: { ...candidates[i], summaryEmbedding: null },
+        // Strip server-only heavy fields before crossing the seroval
+        // boundary: the BM25 token tables (transcriptSegments) and the
+        // 768-d vectors (summaryEmbedding) are pure server retrieval
+        // state and never read by the UI.
+        video: {
+          ...candidates[i],
+          summaryEmbedding: null,
+          transcriptSegments: null,
+        },
         score: cosineScore,
       }));
 

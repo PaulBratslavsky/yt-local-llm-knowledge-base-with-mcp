@@ -19,7 +19,7 @@ import {
   cleanTranscript,
   estimateTokens,
   findEvidenceForQuote,
-  isStoredIndex,
+  loadStoredIndex,
   makeSectionContextualizer,
   prepareSegmentedTranscript,
   searchBM25,
@@ -1361,12 +1361,9 @@ async function retrieveChunksForDigest(
   video: StrapiVideo,
   query: string,
 ): Promise<TranscriptChunk[]> {
-  if (!isStoredIndex(video.transcriptSegments)) return [];
-  return searchBM25(
-    video.transcriptSegments.bm25,
-    query,
-    DIGEST_CHAT_TOP_K_PER_VIDEO,
-  );
+  const stored = loadStoredIndex(video.transcriptSegments);
+  if (!stored) return [];
+  return searchBM25(stored.bm25, query, DIGEST_CHAT_TOP_K_PER_VIDEO);
 }
 
 function formatMultiVideoChunks(

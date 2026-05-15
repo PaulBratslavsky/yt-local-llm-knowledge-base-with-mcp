@@ -305,8 +305,11 @@ export async function fetchFeedService(query: FeedQuery): Promise<PaginatedVideo
       error: friendlyBackendError(result.status, result.error),
     };
   }
+  const cleaned = (result.data ?? []).map(
+    (v) => stripVideoForClient(v) as StrapiVideo,
+  );
   return {
-    videos: result.data ?? [],
+    videos: cleaned,
     page: result.meta?.pagination?.page ?? 1,
     pageCount: result.meta?.pagination?.pageCount ?? 0,
     total: result.meta?.pagination?.total ?? 0,
@@ -340,13 +343,22 @@ export async function listAllVideosForEmbeddingService(): Promise<StrapiVideo[]>
       },
     });
     if (!result.ok) break;
-    all.push(...(result.data ?? []));
+    for (const v of result.data ?? []) {
+      const cleaned = stripVideoForClient(v);
+      if (cleaned) all.push(cleaned);
+    }
     const pageCount = result.meta?.pagination?.pageCount ?? 1;
     if (page >= pageCount) break;
   }
   return all;
 }
 
+// NOTE: these two fetchers return the FULL video row including
+// `transcriptSegments`. They're used by server-internal callers (chat
+// retrieval, evidence extraction, digest chat) that read the BM25 index.
+// Server functions / route loaders that ship a video to the client must
+// pass it through `stripVideoForClient` before returning, or use the
+// `*WithStatus` siblings below which strip automatically.
 export async function fetchVideoByDocumentIdService(
   documentId: string,
 ): Promise<StrapiVideo | null> {
@@ -382,6 +394,22 @@ export async function fetchVideoByVideoIdService(
 // fetchVideoByVideoIdService directly are unaffected.
 export type VideoLookup = { video: StrapiVideo | null; error: string | null };
 
+// Strip `transcriptSegments` from any video that's about to cross the
+// server→client serialization boundary. Seroval rejects ANY object with
+// `constructor` (and other reserved Object.prototype names) as own
+// properties — even with clean number values — so a BM25 token table
+// containing a token like "constructor" or "toString" crashes the loader
+// stream regardless of whether the values are corrupted. The UI never
+// reads `transcriptSegments` (it's pure server-side BM25 cache for chat
+// retrieval / evidence extraction), so stripping it at the boundary is
+// both the only correct fix and a bandwidth win. Internal callers that
+// need the BM25 data (chat / evidence / digest retrieval) use the
+// non-stripping fetchers below.
+export function stripVideoForClient(video: StrapiVideo | null): StrapiVideo | null {
+  if (!video) return video;
+  return { ...video, transcriptSegments: null };
+}
+
 export async function fetchVideoByDocumentIdWithStatusService(
   documentId: string,
 ): Promise<VideoLookup> {
@@ -390,7 +418,9 @@ export async function fetchVideoByDocumentIdWithStatusService(
     `/api/videos/${documentId}`,
     { query: detailQuery },
   );
-  if (result.ok) return { video: result.data ?? null, error: null };
+  if (result.ok) {
+    return { video: stripVideoForClient(result.data ?? null), error: null };
+  }
   if (result.status === 404) return { video: null, error: null };
   return { video: null, error: friendlyBackendError(result.status, result.error) };
 }
@@ -405,7 +435,9 @@ export async function fetchVideoByVideoIdWithStatusService(
       pagination: { pageSize: 1 },
     },
   });
-  if (result.ok) return { video: result.data?.[0] ?? null, error: null };
+  if (result.ok) {
+    return { video: stripVideoForClient(result.data?.[0] ?? null), error: null };
+  }
   // The list endpoint never 404s — an unknown id returns `data: []`.
   // So any non-OK is a real backend failure.
   return { video: null, error: friendlyBackendError(result.status, result.error) };

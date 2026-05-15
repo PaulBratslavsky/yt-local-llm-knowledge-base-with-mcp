@@ -10,6 +10,7 @@ import {
   findEvidenceForQuote,
   groundSectionsToTranscript,
   isStoredIndex,
+  loadStoredIndex,
   makeSectionContextualizer,
   prepareSegmentedTranscript,
   searchBM25,
@@ -269,6 +270,43 @@ describe('BM25', () => {
     expect(searchBM25(index, 'mcp', 5).length).toBeGreaterThan(0);
   });
 
+  it('handles tokens that collide with Object.prototype property names', () => {
+    // Regression: when the BM25 maps were plain `{}` they inherited
+    // Object.prototype, so `localTf['constructor']` returned the native
+    // Object function instead of undefined, and `+ 1` stringified it to
+    // "function Object() { [native code] }1". That corrupted the index
+    // and crashed seroval at the route boundary. Token maps must be
+    // null-prototype so any reserved-name token is treated as fresh.
+    const chunks = [
+      { id: 0, text: 'first the constructor pattern and toString method', startWord: 0, timeSec: 0 },
+      { id: 1, text: 'second the hasOwnProperty and valueOf check', startWord: 10, timeSec: 30 },
+      ...makeBm25Filler(8),
+    ];
+    const index = buildBM25Index(chunks);
+
+    // Every tf entry must be a finite number — anything else is the
+    // prototype-collision bug.
+    for (const tfMap of index.tf) {
+      for (const value of Object.values(tfMap)) {
+        expect(typeof value).toBe('number');
+        expect(Number.isFinite(value)).toBe(true);
+      }
+    }
+    for (const value of Object.values(index.idf)) {
+      expect(typeof value).toBe('number');
+      expect(Number.isFinite(value)).toBe(true);
+    }
+
+    // And the index must survive JSON serialization without producing
+    // function-shaped values (which is what seroval ultimately chokes on).
+    const roundtripped = JSON.parse(JSON.stringify(index));
+    for (const tfMap of roundtripped.tf) {
+      for (const value of Object.values(tfMap)) {
+        expect(typeof value).toBe('number');
+      }
+    }
+  });
+
   it('uses contextualizer when building index but stores original chunk text', () => {
     const chunks = [
       { id: 0, text: 'mcp', startWord: 0, timeSec: 10 },
@@ -284,6 +322,37 @@ describe('BM25', () => {
     expect(index.chunks[0].text).toBe('mcp');
     // But BM25 scored against the contextualized text → "architecture" hits.
     expect(searchBM25(index, 'architecture', 5).length).toBeGreaterThan(0);
+  });
+});
+
+describe('loadStoredIndex (repair path for pre-fix corrupted rows)', () => {
+  it('drops string-valued tf/idf entries that come from prototype collisions', () => {
+    // Shape that a pre-fix `buildBM25Index` would have produced when a
+    // transcript chunk contained the token "constructor": the value is the
+    // stringified result of `Function + 1`, not a number.
+    const corruptedStored = {
+      version: 1,
+      bm25: {
+        chunks: [{ id: 0, text: 'hello world', startWord: 0, timeSec: 0 }],
+        tf: [{ hello: 1, world: 1, constructor: 'function Object() { [native code] }1' }],
+        idf: { hello: 0.5, world: 0.5, constructor: 'function Object() { [native code] }1' },
+        lengths: [2],
+        avgLength: 2,
+      },
+    };
+
+    const cleaned = loadStoredIndex(corruptedStored);
+    expect(cleaned).not.toBeNull();
+    expect(cleaned!.bm25.tf[0].constructor).toBeUndefined();
+    expect(cleaned!.bm25.idf.constructor).toBeUndefined();
+    expect(cleaned!.bm25.tf[0].hello).toBe(1);
+    expect(cleaned!.bm25.idf.hello).toBe(0.5);
+  });
+
+  it('returns null for invalid shapes', () => {
+    expect(loadStoredIndex(null)).toBeNull();
+    expect(loadStoredIndex({ version: 2 })).toBeNull();
+    expect(loadStoredIndex({ version: 1, bm25: { chunks: null } })).toBeNull();
   });
 });
 

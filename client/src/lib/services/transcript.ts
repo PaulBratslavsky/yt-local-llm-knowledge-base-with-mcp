@@ -396,19 +396,28 @@ export type BM25Index = {
 // plain BM25 over chunk.text.
 export type Contextualizer = (chunk: TranscriptChunk) => string;
 
+// Token maps are keyed by user-controlled strings from transcripts, so they
+// must be null-prototype objects. A plain `{}` inherits Object.prototype, and
+// `m['constructor']` would return the native `Object` function instead of
+// `undefined` — turning the counter into a string and corrupting the index
+// (and crashing seroval downstream). `Object.create(null)` avoids that.
+function emptyTokenMap(): Record<string, number> {
+  return Object.create(null) as Record<string, number>;
+}
+
 export function buildBM25Index(
   chunks: TranscriptChunk[],
   contextualize?: Contextualizer,
 ): BM25Index {
   const tf: Array<Record<string, number>> = [];
-  const df: Record<string, number> = {};
+  const df: Record<string, number> = emptyTokenMap();
   const lengths: number[] = [];
 
   for (const chunk of chunks) {
     const textForIndex = contextualize ? contextualize(chunk) : chunk.text;
     const terms = tokenize(textForIndex);
     lengths.push(terms.length);
-    const localTf: Record<string, number> = {};
+    const localTf: Record<string, number> = emptyTokenMap();
     const seen = new Set<string>();
     for (const term of terms) {
       localTf[term] = (localTf[term] ?? 0) + 1;
@@ -421,7 +430,7 @@ export function buildBM25Index(
   }
 
   const N = chunks.length;
-  const idf: Record<string, number> = {};
+  const idf: Record<string, number> = emptyTokenMap();
   for (const [term, frequency] of Object.entries(df)) {
     // BM25 IDF with the +1 smoothing (guaranteed non-negative for terms
     // that appear in more than half the corpus).
@@ -589,6 +598,39 @@ export function isStoredIndex(value: unknown): value is StoredTranscriptIndex {
   if (!value || typeof value !== 'object') return false;
   const v = value as Partial<StoredTranscriptIndex>;
   return v.version === 1 && !!v.bm25 && Array.isArray(v.bm25.chunks);
+}
+
+// Strip non-numeric tf/df/idf entries. Indexes generated before the
+// null-prototype fix could have a `constructor` (or other reserved-name)
+// entry whose value was corrupted to a string like
+// "function Object() { [native code] }1". Seroval refuses to serialize
+// those, so unsanitized rows crash the loader stream. Numeric values pass
+// through unchanged; anything else (function, string, undefined) is dropped.
+function sanitizeNumberMap(input: unknown): Record<string, number> {
+  const out: Record<string, number> = emptyTokenMap();
+  if (!input || typeof input !== 'object') return out;
+  for (const key of Object.keys(input)) {
+    const value = (input as Record<string, unknown>)[key];
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+function sanitizeBM25Index(idx: BM25Index): BM25Index {
+  return {
+    ...idx,
+    tf: idx.tf.map(sanitizeNumberMap),
+    idf: sanitizeNumberMap(idx.idf),
+  };
+}
+
+// One-step "is this a usable stored index, and if so give it to me cleaned"
+// — replaces the `isStoredIndex(x) ? x.bm25 : null` pattern at call sites.
+export function loadStoredIndex(value: unknown): StoredTranscriptIndex | null {
+  if (!isStoredIndex(value)) return null;
+  return { ...value, bm25: sanitizeBM25Index(value.bm25) };
 }
 
 // Rough token count — 1 token ≈ 4 chars for English. Good enough for the

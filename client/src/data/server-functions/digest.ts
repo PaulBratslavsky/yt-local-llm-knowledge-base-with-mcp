@@ -7,7 +7,7 @@ import {
   DIGEST_MIN_VIDEOS,
   type Digest,
 } from '#/lib/services/digest';
-import type { StrapiVideo } from '#/lib/services/videos';
+import { stripVideoForClient, type StrapiVideo } from '#/lib/services/videos';
 
 // =============================================================================
 // Generate digest (ephemeral — no DB row)
@@ -31,7 +31,11 @@ export const generateDigest = createServerFn({ method: 'POST' })
   .handler(async ({ data }): Promise<GenerateDigestResult> => {
     const result = await generateDigestByIds(data.videoIds);
     if (!result.success) return { status: 'error', error: result.error };
-    return { status: 'ok', digest: result.digest, videos: result.videos };
+    return {
+      status: 'ok',
+      digest: result.digest,
+      videos: result.videos.map((v) => stripVideoForClient(v)!),
+    };
   });
 
 // =============================================================================
@@ -50,6 +54,10 @@ export const generateDigestArticle = createServerFn({ method: 'POST' })
   .handler(async ({ data }): Promise<GenerateDigestArticleResult> => {
     const result = await generateDigestArticleByIds(data.videoIds);
     if (!result.success) return { status: 'error', error: result.error };
-    return { status: 'ok', article: result.article, videos: result.videos };
+    return {
+      status: 'ok',
+      article: result.article,
+      videos: result.videos.map((v) => stripVideoForClient(v)!),
+    };
   });
 

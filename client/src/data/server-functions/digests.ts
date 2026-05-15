@@ -21,6 +21,7 @@ import { OLLAMA_MODEL } from '#/lib/env';
 import {
   fetchVideoByVideoIdService,
   fetchVideoByDocumentIdService,
+  stripVideoForClient,
   type StrapiVideo,
 } from '#/lib/services/videos';
 
@@ -166,7 +167,7 @@ export const loadDigest = createServerFn({ method: 'GET' })
       return {
         status: 'ok',
         digest: strapiRowToDigest(lookup.data),
-        videos,
+        videos: videos.map((v) => stripVideoForClient(v)!),
         savedDigest: lookup.data,
         cached: true,
       };
@@ -178,7 +179,7 @@ export const loadDigest = createServerFn({ method: 'GET' })
     return {
       status: 'ok',
       digest: result.digest,
-      videos: result.videos,
+      videos: result.videos.map((v) => stripVideoForClient(v)!),
       savedDigest: null,
       cached: false,
     };

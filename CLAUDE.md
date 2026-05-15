@@ -34,9 +34,15 @@ All run from the **repo root** unless noted.
 yarn --cwd client test                         # full vitest suite (~165 tests)
 yarn --cwd client test path/to/file.test.ts    # single file
 yarn --cwd client test -t "name fragment"      # filter by test name
+yarn --cwd client test:e2e                     # Playwright smoke (needs stack up)
 ```
 
-Tests are vitest, in `client/` only. The server has no test suite.
+Unit tests are vitest, in `client/src/` only. The server has no test suite.
+Playwright e2e specs live in `client/e2e/*.spec.ts` and assume the full
+stack is already running (`yarn dev`/`yarn start` from the repo root) —
+they do not boot it. They guard the seroval server→client boundary on the
+video-shipping surfaces (`/feed`, semantic feed, `/learn`, `/search`).
+`vite.config.ts`'s `test.exclude` keeps vitest out of `e2e/`.
 
 ### Typecheck
 

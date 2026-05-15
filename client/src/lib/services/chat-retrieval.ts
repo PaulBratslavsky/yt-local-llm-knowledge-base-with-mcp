@@ -10,7 +10,7 @@
 import { chat } from '@tanstack/ai';
 import { createOllamaChat } from '@tanstack/ai-ollama';
 import {
-  isStoredIndex,
+  loadStoredIndex,
   searchBM25,
   searchBM25MultiQuery,
   type BM25Index,
@@ -133,8 +133,9 @@ export async function getChatEvidenceForVideo(
   video: StrapiVideo,
   query: string,
 ): Promise<TranscriptChunk[]> {
-  if (!isStoredIndex(video.transcriptSegments)) return [];
-  return getChatEvidence(video.transcriptSegments.bm25, query, {
+  const stored = loadStoredIndex(video.transcriptSegments);
+  if (!stored) return [];
+  return getChatEvidence(stored.bm25, query, {
     videoId: video.youtubeVideoId,
   });
 }
