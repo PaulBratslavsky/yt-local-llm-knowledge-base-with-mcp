@@ -17,18 +17,16 @@
     "upgrade:dry": "npx @strapi/upgrade latest --dry"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.26.0",
-    "@strapi/plugin-cloud": "5.42.0",
-    "@strapi/plugin-users-permissions": "5.42.0",
-    "@strapi/strapi": "5.42.0",
+    "@strapi/plugin-cloud": "5.49.0",
+    "@strapi/plugin-users-permissions": "5.49.0",
+    "@strapi/strapi": "5.49.0",
     "better-sqlite3": "12.8.0",
     "react": "^18.0.0",
     "react-dom": "^18.0.0",
     "react-router-dom": "^6.0.0",
     "styled-components": "^6.0.0",
     "youtubei.js": "^17.0.1",
-    "zod": "^4.3.5",
-    "zod-to-json-schema": "^3.24.1"
+    "zod": "^4.3.5"
   },
   "devDependencies": {
     "@types/node": "^20",

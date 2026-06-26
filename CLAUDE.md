@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Two-package monorepo with an unversioned root:
 
 - `client/` — TanStack Start (Vite + React 19) app on port **3005**. Server functions and Nitro API routes live alongside the React routes.
-- `server/` — Strapi 5 (SQLite for dev) on port **1340**. Hosts the data model, REST API, the MCP server at `/api/mcp`, and the `seed-data/` archive.
+- `server/` — Strapi 5 (SQLite for dev) on port **1340**. Hosts the data model, REST API, the official Strapi MCP server at `/mcp`, and the `seed-data/` archive.
 - `docs/` — design notes, planning docs, and architecture deep-dive (`architecture.md`).
 - Root `package.json` is a shell that delegates to the two packages via `yarn` workspaces-style scripts. **Do not run app code from the root** — it has no `src/`.
 
@@ -101,7 +101,9 @@ Single-pass for short transcripts; long ones split into 2500-word windows (50-wo
 
 ### MCP server lives in Strapi
 
-`server/src/mcp/` exposes 14 tools (videos, transcripts, tags, notes) over Streamable HTTP at `/api/mcp` with bearer-token auth. **Tools are defined once here** — the in-app Ollama chat does not use MCP, and reusing tool implementations across the two worlds is intentionally avoided to keep local inference protocol-free. See `docs/mcp.md`.
+The **official Strapi MCP server** (built into Strapi 5.47+, enabled via `server.mcp.enabled` in `config/server.ts`) serves Streamable HTTP at `/mcp`, gated by **admin** API tokens. yt-kb's 22 domain tools (videos, transcripts, tags, notes) register onto it from `src/index.ts` `register()` via the adapter in `server/src/mcp-official/` (permissions, adapter, tools list) — which **reuses the tool bodies** in `server/src/mcp/tools/`. Three custom admin permissions tier the tools: `api::yt-kb-mcp.read` (14 read), `.write` (4 mutations), `.maintenance` (4 expensive/external-side-effect). A token sees only the tools its permissions allow. **Tool bodies are defined once** in `src/mcp/tools/` — the in-app Ollama chat does not use MCP, keeping local inference protocol-free. The previous hand-rolled `/api/mcp` server was retired. See `docs/mcp.md`.
+
+**Adding a tool:** author a `ToolDef` in `src/mcp/tools/`, then add a zod-3 entry (`@strapi/utils`) with a read/write/maintenance tier to `src/mcp-official/tools.ts`. Schemas are zod-3 there (not the app's zod-4) because the MCP SDK's schema conversion needs zod 3 — see `docs/mcp.md`.
 
 ## Routing and aliases
 

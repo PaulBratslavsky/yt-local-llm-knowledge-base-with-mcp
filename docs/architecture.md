@@ -707,7 +707,7 @@ Code in `client/src/lib/services/notes.ts`, `client/src/components/NotesPane.tsx
 
 ### 11.6 MCP server
 
-`server/src/mcp/` exposes 14 tools (videos, transcripts, tags, notes) over Streamable HTTP at `/api/mcp` with bearer-token auth. Drives the knowledge base from Claude Desktop / Code / Cursor when you want a frontier model. **Tools are defined once in Strapi** — the in-app Ollama chat does not use MCP. See [`./mcp.md`](./mcp.md) and [ADR 0001](./adr/0001-local-first-no-cloud-ai.md).
+The **official Strapi MCP server** (built into Strapi 5.47+, enabled via `server.mcp.enabled`) serves Streamable HTTP at `/mcp` with **admin**-token auth. yt-kb's 22 domain tools (videos, transcripts, tags, notes) register onto it from `server/src/index.ts` via the adapter in `server/src/mcp-official/`, reusing the tool bodies in `server/src/mcp/tools/`; three custom admin permissions (`api::yt-kb-mcp.read` / `.write` / `.maintenance`) tier the tools so a token sees only what it's scoped to. Drives the knowledge base from Claude Desktop / Code / Cursor when you want a frontier model. **Tool bodies are defined once in Strapi** — the in-app Ollama chat does not use MCP. The previous hand-rolled `/api/mcp` server was retired. See [`./mcp.md`](./mcp.md) and [ADR 0001](./adr/0001-local-first-no-cloud-ai.md).
 
 ### 11.7 Boundary-layer error translation
 

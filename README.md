@@ -14,7 +14,7 @@ No accounts. No cloud AI. Runs entirely on your machine against a local [Ollama]
 - **Cross-video digests** — synthesize 2–5 videos into structured themes, contradictions, unique insights, and a long-form article. Saved digests are upserted by a deterministic `videoSetKey` so re-saving the same selection updates in place instead of duplicating.
 - **Notes that stick** — "Summarize to note" turns a chat conversation into a markdown note attached to the video. MCP clients (Claude Desktop, etc.) can also leave notes. Every note is markdown; every note renders timecode chips back into the player.
 - **Semantic discovery** — per-video embeddings from the summary layer power "Related videos" on the learn page and library-wide semantic search on the feed. Same `embeddings.ts` infra ready to layer onto transcript chunks for moment-level search.
-- **Frontier-model bridge via MCP** — Strapi exposes an [MCP server](https://modelcontextprotocol.io) at `/api/mcp` so you can drive the knowledge base from Claude Desktop / Claude Code / Cursor with a bigger model when you need one. Tools cover transcripts, videos, tags, notes — defined once in Strapi, no duplication with the in-app chat. See [`docs/mcp.md`](./docs/mcp.md).
+- **Frontier-model bridge via MCP** — the official [Strapi MCP server](https://modelcontextprotocol.io) (built into Strapi 5.47+) at `/mcp` lets you drive the knowledge base from Claude Desktop / Claude Code / Cursor with a bigger model when you need one. 22 tools cover transcripts, videos, tags, notes — tiered read/write/maintenance, defined once in Strapi, no duplication with the in-app chat. See [`docs/mcp.md`](./docs/mcp.md).
 - **Handles long videos** — map-reduce summary pipeline kicks in past ~25K tokens. Transcript caching means regeneration never re-hits YouTube.
 - **Fully TanStack stack** — [TanStack Start](https://tanstack.com/start) (Vite + React 19) + [TanStack Router](https://tanstack.com/router) + TanStack AI + [Tailwind v4](https://tailwindcss.com).
 
@@ -29,7 +29,7 @@ No accounts. No cloud AI. Runs entirely on your machine against a local [Ollama]
 | Chat/summary model | Any Ollama chat model — default `gemma4-kb:latest` (custom [Gemma 4](https://ollama.com/library/gemma4) Modelfile, Q4) |
 | Embedding model | [`nomic-embed-text`](https://ollama.com/library/nomic-embed-text) via Ollama (768-dim, ~137MB). One vector per video; cosine similarity in-memory |
 | Backend | [Strapi 5](https://strapi.io) (SQLite for dev, Postgres-ready) |
-| MCP server | [`@modelcontextprotocol/sdk`](https://github.com/modelcontextprotocol/sdk) Streamable HTTP transport at `/api/mcp`, auth via Strapi API tokens |
+| MCP server | Official Strapi MCP server (Strapi 5.47+) — Streamable HTTP at `/mcp`, auth via Strapi **admin** API tokens |
 | Transcripts | [youtubei.js](https://github.com/LuanRT/YouTube.js) directly against YouTube caption tracks |
 
 ---
@@ -161,19 +161,26 @@ From any video chat, click **Summarize to note** — the conversation + full tra
 The in-app chat stays local (Ollama). When you want a frontier model (Claude, GPT, etc.) to reason across your knowledge base — or when you want multiple videos in a single context — connect to the built-in MCP server.
 
 ```
-Claude Desktop ──▶ POST /api/mcp  (Streamable HTTP + Bearer token)
+Claude Desktop ──▶ POST /mcp  (Streamable HTTP + admin Bearer token)
                    │
                    ▼
-                 Strapi MCP server
+                 Official Strapi MCP server (5.47+)
                  ├── listVideos / getVideo / searchVideos / addVideo / saveSummary
                  ├── listTranscripts / getTranscript / searchTranscript / findTranscripts / fetchTranscript
-                 └── listTags / tagVideo / untagVideo / saveNote
+                 └── listTags / tagVideo / untagVideo / saveNote / …  (22 tools, tiered read/write/maintenance)
 ```
 
 **Quick setup:**
 
 1. Start Strapi (`yarn server`).
-2. Admin UI → **Settings → API Tokens → Create new** → type `Custom` → check **Mcp → handle** → Save → copy the token.
+2. Mint an **admin** API token (the official MCP server rejects content tokens). Stop the dev server first, then from `server/`:
+
+   ```bash
+   printf '%s\n' \
+     "const u=(await strapi.db.query('admin::user').findMany({populate:['roles']}))[0]; const t=await strapi.service('admin::api-token-admin').create({name:'claude-'+Date.now(), description:'MCP', lifespan:null, adminUserOwner:u.id, adminPermissions:[{action:'api::yt-kb-mcp.read'},{action:'api::yt-kb-mcp.write'},{action:'api::yt-kb-mcp.maintenance'}]}, u); console.log('TOKEN='+t.accessKey);" \
+     ".exit" | npx strapi console
+   ```
+
 3. Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
    ```json
@@ -183,7 +190,7 @@ Claude Desktop ──▶ POST /api/mcp  (Streamable HTTP + Bearer token)
          "command": "npx",
          "args": [
            "-y", "mcp-remote",
-           "http://localhost:1340/api/mcp",
+           "http://localhost:1340/mcp",
            "--header", "Authorization: Bearer YOUR_TOKEN"
          ]
        }
@@ -191,9 +198,11 @@ Claude Desktop ──▶ POST /api/mcp  (Streamable HTTP + Bearer token)
    }
    ```
 
-4. ⌘Q Claude Desktop and reopen. The connector toggles on; 14 tools appear.
+4. ⌘Q Claude Desktop and reopen. The connector toggles on; 22 tools appear (or fewer for a read-only token).
 
-Full walkthrough (Claude Code, Cursor, MCP Inspector, auth rotation) in [`docs/mcp.md`](./docs/mcp.md).
+For Claude Code: `claude mcp add yt-knowledge-base --transport http http://localhost:1340/mcp -H "Authorization: Bearer YOUR_TOKEN"`.
+
+Full walkthrough (Cursor, MCP Inspector, permission tiers, auth rotation) in [`docs/mcp.md`](./docs/mcp.md).
 
 **Design constraint: no tool duplication.** Tools are defined once in `server/src/mcp/tools/` and consumed via MCP. The in-app Ollama chat does not use MCP — it stays on its BM25 + `web_search` path so local inference doesn't pay the protocol overhead. The two worlds meet at the same Strapi data layer, not at the tool definitions.
 
