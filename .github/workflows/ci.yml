@@ -1,0 +1,48 @@
+# Minimal CI — the static gates from CLAUDE.md: typecheck both packages and
+# run the vitest suite. Both live-backend test families self-skip headless:
+# embeddings.ranking.test.ts probes Ollama and videos.smoke.test.ts probes
+# Strapi, so neither needs services here.
+#
+# One job, three installs (root + client + server). Each package owns its
+# dependencies — there is no workspace and no hoisting. Keeping Strapi's
+# React 18 unreachable from the React 19 client is deliberate: sharing a
+# root lets the two majors meet, which breaks SSR.
+#
+# Caching keys on every lockfile, so a change in any package busts it.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: yarn
+          cache-dependency-path: |
+            yarn.lock
+            server/yarn.lock
+            client/yarn.lock
+
+      - name: Install all packages
+        run: yarn install:all
+
+      # Typecheck is per-package: each has its own tsconfig and there is no
+      # project-wide script. The client is the one with real coverage; the
+      # server's is thinner but catches Strapi API drift across upgrades.
+      - name: Typecheck client
+        run: npx tsc --noEmit
+        working-directory: client
+
+      - name: Typecheck server
+        run: npx tsc --noEmit
+        working-directory: server
+
+      - name: Test
+        run: yarn test
