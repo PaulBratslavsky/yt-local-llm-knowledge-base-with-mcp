@@ -13,6 +13,8 @@
 const HOST_PATTERNS = [
   /fetch failed/i,
   /econnrefused/i,
+  /econnreset/i,
+  /socket hang ?up/i, // connection dropped mid-stream — e.g. the Ollama process was killed
   /network ?error/i,
   /failed to fetch/i,
   /11434/, // hardcoded port — strong signal it's the Ollama URL
