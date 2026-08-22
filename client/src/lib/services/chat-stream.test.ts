@@ -163,6 +163,45 @@ describe('streamChatSSE', () => {
     ]);
   });
 
+  // The whole fix rests on keying pending input by toolCallId rather than
+  // stream position — two tool calls can be in flight at once (the model
+  // requests both, then they execute concurrently server-side), and their
+  // TOOL_CALL_RESULT events are not guaranteed to arrive in request order.
+  // Call B's END/RESULT interleave with call A's here, and B's RESULT
+  // arrives before A's, to prove each result lands on the correct call.
+  it('keeps concurrent tool calls correctly paired when their results arrive out of order', async () => {
+    const events = await collect(
+      streamingResponse([
+        'data: {"type":"TOOL_CALL_START","toolCallId":"call_a","toolName":"web_search"}\n\n',
+        'data: {"type":"TOOL_CALL_START","toolCallId":"call_b","toolName":"get_video_details"}\n\n',
+        'data: {"type":"TOOL_CALL_END","toolCallId":"call_a","toolName":"web_search","input":{"query":"a-query"}}\n\n',
+        'data: {"type":"TOOL_CALL_END","toolCallId":"call_b","toolName":"get_video_details","input":{"youtubeVideoId":"b-video"}}\n\n',
+        // B resolves first even though A was requested first.
+        'data: {"type":"TOOL_CALL_RESULT","toolCallId":"call_b","content":"b-result"}\n\n',
+        'data: {"type":"TOOL_CALL_RESULT","toolCallId":"call_a","content":"a-result"}\n\n',
+        'data: [DONE]\n\n',
+      ]),
+    );
+    expect(events).toEqual([
+      { kind: 'tool_start', id: 'call_a', name: 'web_search' },
+      { kind: 'tool_start', id: 'call_b', name: 'get_video_details' },
+      {
+        kind: 'tool_end',
+        id: 'call_b',
+        name: 'get_video_details',
+        input: { youtubeVideoId: 'b-video' },
+        result: 'b-result',
+      },
+      {
+        kind: 'tool_end',
+        id: 'call_a',
+        name: 'web_search',
+        input: { query: 'a-query' },
+        result: 'a-result',
+      },
+    ]);
+  });
+
   it('handles a frame split across multiple chunks', async () => {
     // The first read ends mid-JSON; the parser must buffer and only
     // emit when it sees the `\n\n` block delimiter.

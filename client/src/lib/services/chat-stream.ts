@@ -148,7 +148,13 @@ function parseSseEventBlock(
       // (e.g. the continuation-replay path in @tanstack/ai's engine). If
       // so, this frame is already complete — emit now and mark it done so
       // a later TOOL_CALL_RESULT for the same id doesn't duplicate it.
+      // Guarded by `emitted` the same way the TOOL_CALL_RESULT branch below
+      // is: `buildToolResultChunks` can replay a full
+      // START/ARGS/END(result)/RESULT sequence for an id that already
+      // resolved (continuation re-execution), and without this check that
+      // replay would double-emit a second tool_end for the same call.
       if (event.result !== undefined) {
+        if (emitted.has(id)) return null;
         emitted.add(id);
         pendingInput.delete(id);
         return { kind: 'tool_end', id, name, input, result: event.result ?? null };
