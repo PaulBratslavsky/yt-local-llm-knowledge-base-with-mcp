@@ -395,16 +395,19 @@ export async function fetchVideoByVideoIdService(
 export type VideoLookup = { video: StrapiVideo | null; error: string | null };
 
 // Strip `transcriptSegments` from any video that's about to cross the
-// server→client serialization boundary. Seroval rejects ANY object with
-// `constructor` (and other reserved Object.prototype names) as own
-// properties — even with clean number values — so a BM25 token table
-// containing a token like "constructor" or "toString" crashes the loader
-// stream regardless of whether the values are corrupted. The UI never
-// reads `transcriptSegments` (it's pure server-side BM25 cache for chat
-// retrieval / evidence extraction), so stripping it at the boundary is
-// both the only correct fix and a bandwidth win. Internal callers that
-// need the BM25 data (chat / evidence / digest retrieval) use the
-// non-stripping fetchers below.
+// server→client serialization boundary. `transcriptSegments` is a large,
+// server-only BM25 token table (chat retrieval / evidence extraction
+// cache) that the UI never reads, so stripping it at the boundary is both
+// payload hygiene and a bandwidth win. It's also defense in depth: through
+// seroval 1.5.x, a BM25 token table containing a reserved Object.prototype
+// name as an own key (e.g. a transcript that says "constructor") crashed
+// the loader stream outright. seroval 1.6.2 (pulled in by the 2026-08-22
+// TanStack router/Start bump) fixed that — reserved-name own properties now
+// round-trip with full fidelity (see seroval-safety.test.ts) — so the strip
+// is no longer load-bearing for correctness, just good hygiene against a
+// field the client has no business receiving. Internal callers that need
+// the BM25 data (chat / evidence / digest retrieval) use the non-stripping
+// fetchers below.
 export function stripVideoForClient(video: StrapiVideo | null): StrapiVideo | null {
   if (!video) return video;
   return { ...video, transcriptSegments: null };
