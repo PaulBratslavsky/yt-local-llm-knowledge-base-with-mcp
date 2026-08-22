@@ -292,7 +292,7 @@ yarn server         # Strapi only
 yarn --cwd client test    # Run vitest suite
 ```
 
-The `server/` and `client/` directories are independent git repos; the monorepo root is unversioned. The `tanstack-ai-migration` branch in `client/` is where active development has happened — merge to `main` when ready.
+`server/` and `client/` are one unified git repo rooted here (no nested `.git` directories, no independent history) — active development happens on feature branches off `main`, merged in when ready.
 
 ---
 
