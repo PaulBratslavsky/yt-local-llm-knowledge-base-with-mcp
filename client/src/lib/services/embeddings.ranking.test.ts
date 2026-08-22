@@ -265,6 +265,22 @@ describe('embeddings — retrieval quality', () => {
     // tie carrying no semantic meaning — while sitting ~0.096 clear of
     // every filler. A top-2 cutoff made the suite flaky on noise without
     // testing anything real.
+    //
+    // Trade-off, stated explicitly: this is a genuine loosening, not a
+    // strict strengthening. Against the full 14-doc MODEL_CORPUS, the old
+    // top-2 check required gemma to beat 12 of 13 other docs, which
+    // implicitly pinned its rank relative to kimi/rust (it had to beat
+    // whichever of the two wasn't first). The top-3 check only requires
+    // beating 11 of 13 and no longer constrains gemma's standing against
+    // kimi/rust specifically — a regression that degrades gemma only
+    // relative to kimi/rust (leaving qwen and every filler untouched)
+    // would now pass silently, where the old assertion would have caught
+    // it (at the cost of also failing on the noise this test was
+    // rewritten to stop failing on). The margin check below is what
+    // pays for that: it adds a magnitude property the old test never
+    // checked at all, but its headroom is not huge — measured gap is
+    // 0.0964 against a 0.05 floor, i.e. only ~0.046 (~48% of the
+    // current margin) of erosion before the test would start failing.
     const topThreeIds = cosine.slice(0, 3).map((c) => c.id);
     expect(topThreeIds).toContain('gemma');
 
