@@ -93,6 +93,76 @@ describe('streamChatSSE', () => {
     ]);
   });
 
+  // @tanstack/ai 0.47 (verified against live Ollama traffic, 2026-08-22):
+  // the ai-ollama adapter's TOOL_CALL_END carries only `input` — no
+  // `result` field at all — and the actual execution output arrives later
+  // on a separate TOOL_CALL_RESULT event keyed only by `toolCallId`
+  // (`content`, no tool name). The parser must merge these into one
+  // `tool_end` StreamEvent so VideoChat/DigestChat (which treat `tool_end`
+  // as the single source of truth for both input and result) still work.
+  it('merges a real-0.47-shaped TOOL_CALL_END (input only) with a later TOOL_CALL_RESULT (content only) into one tool_end', async () => {
+    const events = await collect(
+      streamingResponse([
+        'data: {"type":"TOOL_CALL_START","toolCallId":"call_1","toolCallName":"web_search","toolName":"web_search"}\n\n',
+        'data: {"type":"TOOL_CALL_ARGS","toolCallId":"call_1","args":"{\\"query\\":\\"x\\"}"}\n\n',
+        'data: {"type":"TOOL_CALL_END","toolCallId":"call_1","toolCallName":"web_search","toolName":"web_search","input":{"query":"x"}}\n\n',
+        'data: {"type":"TOOL_CALL_RESULT","toolCallId":"call_1","content":"{\\"results\\":[]}","role":"tool"}\n\n',
+        'data: [DONE]\n\n',
+      ]),
+    );
+    expect(events).toEqual([
+      { kind: 'tool_start', id: 'call_1', name: 'web_search' },
+      {
+        kind: 'tool_end',
+        id: 'call_1',
+        name: 'web_search',
+        input: { query: 'x' },
+        result: '{"results":[]}',
+      },
+    ]);
+  });
+
+  it('still surfaces a tool_end with a null result if TOOL_CALL_RESULT never arrives (stream cut short)', async () => {
+    const events = await collect(
+      streamingResponse([
+        'data: {"type":"TOOL_CALL_START","toolCallId":"call_2","toolName":"web_search"}\n\n',
+        'data: {"type":"TOOL_CALL_END","toolCallId":"call_2","toolName":"web_search","input":{"query":"y"}}\n\n',
+        'data: [DONE]\n\n',
+      ]),
+    );
+    expect(events).toEqual([
+      { kind: 'tool_start', id: 'call_2', name: 'web_search' },
+      {
+        kind: 'tool_end',
+        id: 'call_2',
+        name: 'web_search',
+        input: { query: 'y' },
+        result: null,
+      },
+    ]);
+  });
+
+  it('does not double-emit tool_end when TOOL_CALL_END already carries a result and TOOL_CALL_RESULT follows for the same id', async () => {
+    const events = await collect(
+      streamingResponse([
+        'data: {"type":"TOOL_CALL_START","toolCallId":"call_3","toolName":"web_search"}\n\n',
+        'data: {"type":"TOOL_CALL_END","toolCallId":"call_3","toolName":"web_search","input":{"query":"z"},"result":"ok"}\n\n',
+        'data: {"type":"TOOL_CALL_RESULT","toolCallId":"call_3","content":"ok"}\n\n',
+        'data: [DONE]\n\n',
+      ]),
+    );
+    expect(events).toEqual([
+      { kind: 'tool_start', id: 'call_3', name: 'web_search' },
+      {
+        kind: 'tool_end',
+        id: 'call_3',
+        name: 'web_search',
+        input: { query: 'z' },
+        result: 'ok',
+      },
+    ]);
+  });
+
   it('handles a frame split across multiple chunks', async () => {
     // The first read ends mid-JSON; the parser must buffer and only
     // emit when it sees the `\n\n` block delimiter.
@@ -147,6 +217,31 @@ describe('streamChatSSE', () => {
   it('throws when the response has no body', async () => {
     const empty = new Response(null, { status: 200 });
     await expect(collect(empty)).rejects.toThrow(/empty response body/);
+  });
+
+  // Verified live (2026-08-22, task-10-report.md): when Ollama dies
+  // mid-stream, @tanstack/ai's `toServerSentEventsResponse` gracefully
+  // sends a `RUN_ERROR` frame rather than just dropping the connection —
+  // e.g. `data: {"type":"RUN_ERROR","message":"proxy error: Error: socket
+  // hang up"}`. Before this fix, RUN_ERROR fell into the parser's
+  // `default` case and vanished silently: no thrown error, no partial
+  // text — the caller's `catch` block (the only place that calls
+  // `friendlyOllamaError`) never ran and the user saw the stream just
+  // stop with no feedback at all.
+  it('throws on a RUN_ERROR frame so the caller can surface it via friendlyOllamaError', async () => {
+    const events: StreamEvent[] = [];
+    const iterate = async () => {
+      for await (const event of streamChatSSE(
+        streamingResponse([
+          'data: {"type":"TEXT_MESSAGE_CONTENT","delta":"partial"}\n\n',
+          'data: {"type":"RUN_ERROR","message":"proxy error: Error: socket hang up"}\n\n',
+        ]),
+      )) {
+        events.push(event);
+      }
+    };
+    await expect(iterate()).rejects.toThrow(/socket hang up/);
+    expect(events).toEqual([{ kind: 'text', delta: 'partial' }]);
   });
 
   it('flushes a trailing block that lacks the final \\n\\n', async () => {
