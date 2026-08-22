@@ -41,7 +41,7 @@ type ChatMessage = {
 };
 
 type ModelMessage = {
-  role: 'user' | 'assistant' | 'tool' | 'system';
+  role: 'user' | 'assistant' | 'tool';
   content: string | null;
   toolCalls?: Array<{
     id: string;
@@ -157,19 +157,10 @@ export const Route = createFileRoute('/api/chat')({
         );
 
         const adapter = createOllamaChat(CHAT_MODEL, OLLAMA_HOST);
-        // Workaround: @tanstack/ai-ollama@0.6.6 silently drops
-        // `systemPrompts` in its chatStream implementation. Ollama
-        // natively accepts `{ role: 'system', ... }` as the first message.
-        const messagesWithSystem: ModelMessage[] = [
-          { role: 'system', content: system },
-          ...expanded,
-        ];
         const stream = chat({
           adapter,
-          // `as never` because TanStack AI's ConstrainedModelMessage union
-          // excludes 'system' role, but the Ollama adapter passes role
-          // straight through and Ollama accepts it.
-          messages: messagesWithSystem as never,
+          messages: expanded,
+          systemPrompts: [system],
           // Agent loop: model can call `web_search(query)` when the
           // retrieved transcript passages don't answer the question.
           // Execution happens server-side; tool events stream as

@@ -500,18 +500,12 @@ async function generateSummarySinglePass(
     // parsed, zod-validated object directly. Same constraint-decoding
     // reliability as our previous @ai-sdk/openai + /v1 path, one fewer
     // hop (native Ollama client vs OpenAI-compat shim).
-    //
-    // systemPrompts workaround: @tanstack/ai-ollama@0.6.6 silently drops
-    // the `systemPrompts` option — we prepend a system-role message
-    // instead, which the adapter passes through to Ollama as expected.
     const object = (await withRetry(
       () =>
         chat({
           adapter: ollamaAdapter,
-          messages: [
-            { role: 'system', content: SUMMARY_SYSTEM },
-            { role: 'user', content: userPrompt },
-          ] as never,
+          messages: [{ role: 'user', content: userPrompt }],
+          systemPrompts: [SUMMARY_SYSTEM],
           outputSchema: SummarySchema,
           // Low temp for summarization: cuts confabulated specifics in
           // action steps / section bodies. Ollama default is 1.0, which
