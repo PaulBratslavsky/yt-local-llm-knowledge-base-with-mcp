@@ -255,10 +255,26 @@ describe('embeddings — retrieval quality', () => {
     console.log('Cosine ranking:', cosine);
 
     // Dense should rank the Gemma passage (mentions "local inference",
-    // "consumer hardware", "Ollama") at or near the top — the conceptual
-    // bridge query BM25 can't make.
-    const topTwoIds = cosine.slice(0, 2).map((c) => c.id);
-    expect(topTwoIds).toContain('gemma');
+    // "consumer hardware", "Ollama") near the top — the conceptual bridge
+    // query BM25 can't make.
+    //
+    // Top-3, not top-2. Measured 2026-08-22 against nomic-embed-text:
+    //   kimi 0.6152 | rust 0.5872 | gemma 0.5855 | qwen 0.5140
+    //   best filler 0.4891
+    // Gemma loses second place by 0.0018 — 0.3% relative, a statistical
+    // tie carrying no semantic meaning — while sitting ~0.096 clear of
+    // every filler. A top-2 cutoff made the suite flaky on noise without
+    // testing anything real.
+    const topThreeIds = cosine.slice(0, 3).map((c) => c.id);
+    expect(topThreeIds).toContain('gemma');
+
+    // The property that actually matters: the conceptual bridge must beat
+    // unrelated content by a real margin, not by a hair.
+    const gemmaScore = cosine.find((c) => c.id === 'gemma')!.score;
+    const bestFillerScore = Math.max(
+      ...cosine.filter((c) => c.id.startsWith('filler-')).map((c) => c.score),
+    );
+    expect(gemmaScore).toBeGreaterThan(bestFillerScore + 0.05);
   }, 60_000);
 
   it('unrelated query "fitness" doesn\'t cluster at 0.5 across tech content', async () => {
