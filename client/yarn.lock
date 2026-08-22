@@ -7,6 +7,11 @@
   resolved "https://registry.yarnpkg.com/@acemir/cssom/-/cssom-0.9.31.tgz#bd5337d290fb8be2ac18391f37386bc53778b0bc"
   integrity sha512-ZnR3GSaH+/vJ0YlHau21FjfLYjMpYVIzTD8M8vIEQvIGxeOXyXdzCI140rrCY862p/C/BbzWsjc1dgnM9mkoTA==
 
+"@ag-ui/core@0.1.1-canary.beta.0":
+  version "0.1.1-canary.beta.0"
+  resolved "https://registry.yarnpkg.com/@ag-ui/core/-/core-0.1.1-canary.beta.0.tgz#b79accbfaac3bb0ceb1cce3962d9b288b6e5d670"
+  integrity sha512-zcP3RH5p3HJTZ0kyQxNOL1blnVFTDpaShitR7UMS/thwFdl48V6CAG+WQBcYEu/dfa8mKonRez88N0Ok+nEI+w==
+
 "@asamuzakjp/css-color@^5.0.1":
   version "5.1.11"
   resolved "https://registry.yarnpkg.com/@asamuzakjp/css-color/-/css-color-5.1.11.tgz#28a0aac8220a4cc19045ac3bd9a813d4060bd375"
@@ -1850,6 +1855,11 @@
   resolved "https://registry.yarnpkg.com/@solid-primitives/utils/-/utils-6.4.0.tgz#45257521d258cffd563b40d62163058af75496ae"
   integrity sha512-AeGTBg8Wtkh/0s+evyLtP8piQoS4wyqqQaAFs2HJcFMMjYAtUgo+ZPduRXLjPlqKVc2ejeR544oeqpbn8Egn8A==
 
+"@standard-schema/spec@^1.1.0":
+  version "1.1.0"
+  resolved "https://registry.yarnpkg.com/@standard-schema/spec/-/spec-1.1.0.tgz#a79b55dbaf8604812f52d140b2c9ab41bc150bb8"
+  integrity sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==
+
 "@strapi/client@^1.6.1":
   version "1.6.1"
   resolved "https://registry.yarnpkg.com/@strapi/client/-/client-1.6.1.tgz#6f25f79b80ecd5e0cd1b12c63f570cef6bcaf5f0"
@@ -2007,26 +2017,35 @@
     "@tailwindcss/oxide" "4.2.2"
     tailwindcss "4.2.2"
 
-"@tanstack/ai-event-client@0.2.3":
-  version "0.2.3"
-  resolved "https://registry.yarnpkg.com/@tanstack/ai-event-client/-/ai-event-client-0.2.3.tgz#da726304aa29e6602d3b5d175678261a1b5131a6"
-  integrity sha512-LVZHPJAZKyZw0dMKBFDhf7ZpteZtRZv98oS6QYEy1hjuRaV3kXANR4S/yUL5otgAbGaaoCUTIuZ+DwLE6VW1wg==
+"@tanstack/ai-event-client@^0.9.0":
+  version "0.9.0"
+  resolved "https://registry.yarnpkg.com/@tanstack/ai-event-client/-/ai-event-client-0.9.0.tgz#e85c6fe3c81a86e8373fc569f1c42ec1f3c26d2b"
+  integrity sha512-R4jd8Gt6ZGFezteh9nH3E2Zii5b2x6Pv6Y3Gk3MoU8f9vMxCLckm3rohkC6JqYY1zESiS9ZG0mxrkJAZc+p+GA==
   dependencies:
     "@tanstack/devtools-event-client" "^0.4.1"
 
-"@tanstack/ai-ollama@^0.6.6":
-  version "0.6.6"
-  resolved "https://registry.yarnpkg.com/@tanstack/ai-ollama/-/ai-ollama-0.6.6.tgz#f48360cfb0448ad521bd43d26fbd287c9d88d2b1"
-  integrity sha512-DUrEo04eL4Dh+tjPCOKdt+QOTCqD0d/XiKlKfwWc1N5eKYTd2ul2QSgFKR9yo1ZJzsmhbY8INaHcRdbAaqKOuQ==
+"@tanstack/ai-ollama@0.9.3":
+  version "0.9.3"
+  resolved "https://registry.yarnpkg.com/@tanstack/ai-ollama/-/ai-ollama-0.9.3.tgz#8348dd207596ab391cff69b2718b25600c0e00cb"
+  integrity sha512-1KJZynKDlHPYlrav+aDJh5vMpWfQ6gwRhW7PE76UKXjcyK+nMGn3TKtJrm67+L0AP3guY3N/UciMyC1FRSFTqA==
   dependencies:
+    "@tanstack/ai-utils" "^0.4.0"
     ollama "^0.6.3"
 
-"@tanstack/ai@^0.10.3":
-  version "0.10.3"
-  resolved "https://registry.yarnpkg.com/@tanstack/ai/-/ai-0.10.3.tgz#de01bbb54e9582cf74153a7da72e3abda66ccf1a"
-  integrity sha512-vYyDc2j6dYgxOJT2p6UpIlaQZYZBtv9nwqEHb9uclLYLDqocdWZrSu+g6z+6aZcNsnmolFFNrdB0Nvyj/hCYFA==
+"@tanstack/ai-utils@^0.4.0":
+  version "0.4.0"
+  resolved "https://registry.yarnpkg.com/@tanstack/ai-utils/-/ai-utils-0.4.0.tgz#d4ee407d446471d0ba1c500348e6b5be22e481ad"
+  integrity sha512-xqvAgPJkIuGk1m+jZKyb7vBTQIaBmUD9EVzlPkDWWMp80n69uwL0TnBZCVk+OwL9goTQiFy648dnBfLsiJgl6A==
+
+"@tanstack/ai@0.47.1":
+  version "0.47.1"
+  resolved "https://registry.yarnpkg.com/@tanstack/ai/-/ai-0.47.1.tgz#87f62c32a6e646f929c7e91ff92fd6d1c4fe2ead"
+  integrity sha512-s7eom47qQCtPY8lzDNSeu33TWImKjb34XKodGSOc+Pf6UtFcM2KJV32SNJXQko8mvS+9hbo4Ettt6tPIHRcOTQ==
   dependencies:
-    "@tanstack/ai-event-client" "0.2.3"
+    "@ag-ui/core" "0.1.1-canary.beta.0"
+    "@standard-schema/spec" "^1.1.0"
+    "@tanstack/ai-event-client" "^0.9.0"
+    "@tanstack/ai-utils" "^0.4.0"
     partial-json "^0.1.7"
 
 "@tanstack/devtools-client@0.0.6":
