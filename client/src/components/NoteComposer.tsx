@@ -30,6 +30,7 @@ import { MarkdownEditor } from './MarkdownEditor';
 import { listSkills, type Skill } from '#/lib/skills';
 import { createNote, updateNote, deleteNote } from '#/data/server-functions/notes';
 import type { StrapiNote } from '#/lib/services/notes';
+import { friendlyOllamaError } from '#/lib/services/ollama-errors';
 
 type Props = {
   videoDocumentId: string;
@@ -39,7 +40,7 @@ type Props = {
   onSaved: () => void;
 };
 
-async function* streamCompose(input: {
+export async function* streamCompose(input: {
   videoId: string;
   prompt: string;
   currentContent?: string;
@@ -71,13 +72,26 @@ async function* streamCompose(input: {
       if (!frame.startsWith('data:')) continue;
       const payload = frame.slice(5).trim();
       if (payload === '[DONE]') return;
+      let ev: { type?: string; delta?: string; message?: string };
       try {
-        const ev = JSON.parse(payload) as { type?: string; delta?: string };
-        if (ev.type === 'TEXT_MESSAGE_CONTENT' && ev.delta) {
-          yield ev.delta;
-        }
+        ev = JSON.parse(payload);
       } catch {
         // Non-JSON frame (run-start/end/etc.) — ignore.
+        continue;
+      }
+      if (ev.type === 'TEXT_MESSAGE_CONTENT' && ev.delta) {
+        yield ev.delta;
+      } else if (ev.type === 'RUN_ERROR') {
+        // @tanstack/ai emits a graceful RUN_ERROR frame (rather than just
+        // dropping the connection) when the backend dies mid-stream — see
+        // chat-stream.ts and task-10-report.md. This reader previously had
+        // no case for it: the generator just returned as if the compose
+        // had finished, and handleGenerate wrote whatever partial markdown
+        // had accumulated into the editor with no error shown. Throwing
+        // here propagates the failure to handleGenerate's catch block.
+        throw new Error(
+          typeof ev.message === 'string' ? ev.message : 'AI run failed',
+        );
       }
     }
   }
@@ -150,7 +164,8 @@ export function NoteComposer({
       // Keep the prompt so the user can edit + run again; they can
       // clear it manually if they want a fresh direction.
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Compose failed');
+      const raw = err instanceof Error ? err.message : 'Compose failed';
+      setError(friendlyOllamaError(raw));
     } finally {
       setStreaming(false);
     }
