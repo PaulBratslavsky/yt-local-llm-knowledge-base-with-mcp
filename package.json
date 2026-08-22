@@ -15,7 +15,9 @@
     "start": "./start.sh",
     "start:fresh": "./start.sh --restart-ollama",
     "export": "yarn --cwd ./server export",
-    "seed": "yarn --cwd ./server seed"
+    "seed": "yarn --cwd ./server seed",
+    "test": "yarn --cwd ./client test",
+    "install:all": "yarn install --frozen-lockfile && yarn --cwd server install --frozen-lockfile && yarn --cwd client install --frozen-lockfile"
   },
   "dependencies": {
     "concurrently": "^8.2.2",
