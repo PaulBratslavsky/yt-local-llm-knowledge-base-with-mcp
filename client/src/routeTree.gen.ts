@@ -9,49 +9,24 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as SettingsRouteImport } from './routes/settings'
-import { Route as SearchRouteImport } from './routes/search'
-import { Route as NewPostRouteImport } from './routes/new-post'
-import { Route as FeedRouteImport } from './routes/feed'
-import { Route as DigestsRouteImport } from './routes/digests'
-import { Route as DigestRouteImport } from './routes/digest'
-import { Route as AboutRouteImport } from './routes/about'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as VideoDocumentIdRouteImport } from './routes/video.$documentId'
-import { Route as LearnVideoIdRouteImport } from './routes/learn.$videoId'
-import { Route as ApiDigestChatRouteImport } from './routes/api.digest-chat'
-import { Route as ApiChatRouteImport } from './routes/api.chat'
+import { Route as AboutRouteImport } from './routes/about'
+import { Route as DigestRouteImport } from './routes/digest'
+import { Route as DigestsRouteImport } from './routes/digests'
+import { Route as FeedRouteImport } from './routes/feed'
+import { Route as NewPostRouteImport } from './routes/new-post'
+import { Route as SearchRouteImport } from './routes/search'
+import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ApiAskRouteImport } from './routes/api.ask'
+import { Route as ApiChatRouteImport } from './routes/api.chat'
+import { Route as ApiDigestChatRouteImport } from './routes/api.digest-chat'
+import { Route as LearnVideoIdRouteImport } from './routes/learn.$videoId'
+import { Route as VideoDocumentIdRouteImport } from './routes/video.$documentId'
 import { Route as ApiNotesComposeRouteImport } from './routes/api.notes.compose'
 
-const SettingsRoute = SettingsRouteImport.update({
-  id: '/settings',
-  path: '/settings',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SearchRoute = SearchRouteImport.update({
-  id: '/search',
-  path: '/search',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const NewPostRoute = NewPostRouteImport.update({
-  id: '/new-post',
-  path: '/new-post',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const FeedRoute = FeedRouteImport.update({
-  id: '/feed',
-  path: '/feed',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DigestsRoute = DigestsRouteImport.update({
-  id: '/digests',
-  path: '/digests',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DigestRoute = DigestRouteImport.update({
-  id: '/digest',
-  path: '/digest',
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AboutRoute = AboutRouteImport.update({
@@ -59,24 +34,39 @@ const AboutRoute = AboutRouteImport.update({
   path: '/about',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const DigestRoute = DigestRouteImport.update({
+  id: '/digest',
+  path: '/digest',
   getParentRoute: () => rootRouteImport,
 } as any)
-const VideoDocumentIdRoute = VideoDocumentIdRouteImport.update({
-  id: '/video/$documentId',
-  path: '/video/$documentId',
+const DigestsRoute = DigestsRouteImport.update({
+  id: '/digests',
+  path: '/digests',
   getParentRoute: () => rootRouteImport,
 } as any)
-const LearnVideoIdRoute = LearnVideoIdRouteImport.update({
-  id: '/learn/$videoId',
-  path: '/learn/$videoId',
+const FeedRoute = FeedRouteImport.update({
+  id: '/feed',
+  path: '/feed',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiDigestChatRoute = ApiDigestChatRouteImport.update({
-  id: '/api/digest-chat',
-  path: '/api/digest-chat',
+const NewPostRoute = NewPostRouteImport.update({
+  id: '/new-post',
+  path: '/new-post',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SearchRoute = SearchRouteImport.update({
+  id: '/search',
+  path: '/search',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAskRoute = ApiAskRouteImport.update({
+  id: '/api/ask',
+  path: '/api/ask',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiChatRoute = ApiChatRouteImport.update({
@@ -84,9 +74,19 @@ const ApiChatRoute = ApiChatRouteImport.update({
   path: '/api/chat',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiAskRoute = ApiAskRouteImport.update({
-  id: '/api/ask',
-  path: '/api/ask',
+const ApiDigestChatRoute = ApiDigestChatRouteImport.update({
+  id: '/api/digest-chat',
+  path: '/api/digest-chat',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LearnVideoIdRoute = LearnVideoIdRouteImport.update({
+  id: '/learn/$videoId',
+  path: '/learn/$videoId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const VideoDocumentIdRoute = VideoDocumentIdRouteImport.update({
+  id: '/video/$documentId',
+  path: '/video/$documentId',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiNotesComposeRoute = ApiNotesComposeRouteImport.update({
@@ -214,46 +214,11 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/settings': {
-      id: '/settings'
-      path: '/settings'
-      fullPath: '/settings'
-      preLoaderRoute: typeof SettingsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/search': {
-      id: '/search'
-      path: '/search'
-      fullPath: '/search'
-      preLoaderRoute: typeof SearchRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/new-post': {
-      id: '/new-post'
-      path: '/new-post'
-      fullPath: '/new-post'
-      preLoaderRoute: typeof NewPostRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/feed': {
-      id: '/feed'
-      path: '/feed'
-      fullPath: '/feed'
-      preLoaderRoute: typeof FeedRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/digests': {
-      id: '/digests'
-      path: '/digests'
-      fullPath: '/digests'
-      preLoaderRoute: typeof DigestsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/digest': {
-      id: '/digest'
-      path: '/digest'
-      fullPath: '/digest'
-      preLoaderRoute: typeof DigestRouteImport
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/about': {
@@ -263,32 +228,53 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AboutRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+    '/digest': {
+      id: '/digest'
+      path: '/digest'
+      fullPath: '/digest'
+      preLoaderRoute: typeof DigestRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/video/$documentId': {
-      id: '/video/$documentId'
-      path: '/video/$documentId'
-      fullPath: '/video/$documentId'
-      preLoaderRoute: typeof VideoDocumentIdRouteImport
+    '/digests': {
+      id: '/digests'
+      path: '/digests'
+      fullPath: '/digests'
+      preLoaderRoute: typeof DigestsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/learn/$videoId': {
-      id: '/learn/$videoId'
-      path: '/learn/$videoId'
-      fullPath: '/learn/$videoId'
-      preLoaderRoute: typeof LearnVideoIdRouteImport
+    '/feed': {
+      id: '/feed'
+      path: '/feed'
+      fullPath: '/feed'
+      preLoaderRoute: typeof FeedRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/digest-chat': {
-      id: '/api/digest-chat'
-      path: '/api/digest-chat'
-      fullPath: '/api/digest-chat'
-      preLoaderRoute: typeof ApiDigestChatRouteImport
+    '/new-post': {
+      id: '/new-post'
+      path: '/new-post'
+      fullPath: '/new-post'
+      preLoaderRoute: typeof NewPostRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/search': {
+      id: '/search'
+      path: '/search'
+      fullPath: '/search'
+      preLoaderRoute: typeof SearchRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/ask': {
+      id: '/api/ask'
+      path: '/api/ask'
+      fullPath: '/api/ask'
+      preLoaderRoute: typeof ApiAskRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/chat': {
@@ -298,11 +284,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiChatRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/ask': {
-      id: '/api/ask'
-      path: '/api/ask'
-      fullPath: '/api/ask'
-      preLoaderRoute: typeof ApiAskRouteImport
+    '/api/digest-chat': {
+      id: '/api/digest-chat'
+      path: '/api/digest-chat'
+      fullPath: '/api/digest-chat'
+      preLoaderRoute: typeof ApiDigestChatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/learn/$videoId': {
+      id: '/learn/$videoId'
+      path: '/learn/$videoId'
+      fullPath: '/learn/$videoId'
+      preLoaderRoute: typeof LearnVideoIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/video/$documentId': {
+      id: '/video/$documentId'
+      path: '/video/$documentId'
+      fullPath: '/video/$documentId'
+      preLoaderRoute: typeof VideoDocumentIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/notes/compose': {

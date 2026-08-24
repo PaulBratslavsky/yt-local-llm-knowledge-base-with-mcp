@@ -11,6 +11,11 @@ describe('friendlyOllamaError', () => {
       'NetworkError when attempting to fetch',
       'Failed to fetch',
       'Request to http://localhost:11434/api/chat failed',
+      // Ollama process killed mid-stream — observed live via an AG-UI
+      // RUN_ERROR event (see chat-stream.ts) when the backend dies during
+      // an in-flight chat.
+      'Error: socket hang up',
+      'read ECONNRESET',
     ])('detects %j as host unreachable', (raw) => {
       expect(friendlyOllamaError(raw)).toMatch(/AI server unreachable/);
     });

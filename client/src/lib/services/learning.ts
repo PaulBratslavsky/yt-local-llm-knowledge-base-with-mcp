@@ -500,24 +500,26 @@ async function generateSummarySinglePass(
     // parsed, zod-validated object directly. Same constraint-decoding
     // reliability as our previous @ai-sdk/openai + /v1 path, one fewer
     // hop (native Ollama client vs OpenAI-compat shim).
-    //
-    // systemPrompts workaround: @tanstack/ai-ollama@0.6.6 silently drops
-    // the `systemPrompts` option — we prepend a system-role message
-    // instead, which the adapter passes through to Ollama as expected.
     const object = (await withRetry(
       () =>
         chat({
           adapter: ollamaAdapter,
-          messages: [
-            { role: 'system', content: SUMMARY_SYSTEM },
-            { role: 'user', content: userPrompt },
-          ] as never,
+          messages: [{ role: 'user', content: userPrompt }],
+          systemPrompts: [SUMMARY_SYSTEM],
           outputSchema: SummarySchema,
           // Low temp for summarization: cuts confabulated specifics in
           // action steps / section bodies. Ollama default is 1.0, which
           // is great for chat but invites creative drift in structured
           // tasks where we want grounded prose.
-          temperature: 0.3,
+          //
+          // Lives in modelOptions since @tanstack/ai 0.47 — provider-native
+          // keys, not top-level chat options. `model` is required in the
+          // object too: SUMMARY_MODEL is a dynamic (non-literal) string, so
+          // the adapter's per-model options type falls back to ollama-js's
+          // raw ChatRequest, which types `model` as required — the adapter
+          // ignores modelOptions.model at runtime and uses the model bound
+          // to the adapter instead.
+          modelOptions: { model: SUMMARY_MODEL, options: { temperature: 0.3 } },
         }),
       {
         attempts: 2,
@@ -713,7 +715,15 @@ async function generateSummaryMapReduce(
           outputSchema: SummarySchema,
           // Same low-temp rationale as the single-pass call: structured
           // output + grounding-over-creativity.
-          temperature: 0.3,
+          //
+          // Lives in modelOptions since @tanstack/ai 0.47 — provider-native
+          // keys, not top-level chat options. `model` is required in the
+          // object too: SUMMARY_MODEL is a dynamic (non-literal) string, so
+          // the adapter's per-model options type falls back to ollama-js's
+          // raw ChatRequest, which types `model` as required — the adapter
+          // ignores modelOptions.model at runtime and uses the model bound
+          // to the adapter instead.
+          modelOptions: { model: SUMMARY_MODEL, options: { temperature: 0.3 } },
         }),
       {
         attempts: 2,
@@ -1527,7 +1537,14 @@ export async function regenerateVerdictForVideo(
             { role: 'user', content: userPrompt },
           ] as never,
           outputSchema: VerdictOnlySchema,
-          temperature: 0.3,
+          // Lives in modelOptions since @tanstack/ai 0.47 — provider-native
+          // keys, not top-level chat options. `model` is required in the
+          // object too: SUMMARY_MODEL is a dynamic (non-literal) string, so
+          // the adapter's per-model options type falls back to ollama-js's
+          // raw ChatRequest, which types `model` as required — the adapter
+          // ignores modelOptions.model at runtime and uses the model bound
+          // to the adapter instead.
+          modelOptions: { model: SUMMARY_MODEL, options: { temperature: 0.3 } },
         }),
       {
         attempts: 2,

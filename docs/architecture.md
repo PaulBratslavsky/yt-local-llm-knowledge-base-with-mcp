@@ -274,7 +274,7 @@ flowchart TD
 
 ### 5.2 Structured output
 
-TanStack AI's `chat({ outputSchema })` uses Ollama's native JSON mode to constrain the response to a Zod schema:
+TanStack AI's `chat({ outputSchema })` uses Ollama's native JSON mode to constrain the response to a Zod schema. yt-kb runs `@tanstack/ai` 0.47.1 + `@tanstack/ai-ollama` 0.9.3 (exact-pinned — see ADR 0010), which changed the shape of two options since the version this doc previously described:
 
 ```ts
 // lib/services/learning.ts
@@ -299,20 +299,23 @@ const SummarySchema = z.object({
 
 const object = await chat({
   adapter: ollamaAdapter,
+  messages: [{ role: 'user', content: transcript.transcript }],
+  systemPrompts: [SUMMARY_SYSTEM],
   outputSchema: SummarySchema,
-  messages: [
-    { role: 'system', content: SUMMARY_SYSTEM },
-    { role: 'user', content: transcript.transcript },
-  ],
-  temperature: 0.3,
+  modelOptions: { model: SUMMARY_MODEL, options: { temperature: 0.3 } },
 });
 ```
+
+Two things changed at 0.47.1, both documented in `docs/tanstack-ai-upgrade-record.md`:
+
+- **`systemPrompts`** replaces the old workaround of prepending a `{ role: 'system' }` message and casting `messages ... as never` to defeat the `ConstrainedModelMessage` union (`ai-ollama` 0.6.6 silently dropped `systemPrompts`; 0.9.3 honors it, so the cast is gone). This migration covers only the two sites documented here (`learning.ts`'s summary-generation `chat()` call and `api.chat.tsx`'s per-video chat call). Fourteen other `chat()` call sites still use the older prepend-plus-cast pattern (`learning.ts`, `reader.ts`, `notes.ts`, `chat-retrieval.ts`, `digest.ts`, `api.notes.compose.tsx`, `api.ask.tsx`, `api.digest-chat.tsx`) — migrating those is tracked follow-up work, not done in this branch.
+- **`modelOptions`** replaces the removed top-level `temperature`. The `model` field inside `modelOptions` is required here (not just `options.temperature`) because `SUMMARY_MODEL` is a dynamic, non-literal string — the adapter's per-model options type only special-cases string-literal models, so a dynamic model string falls back to `ollama-js`'s raw `ChatRequest`, which requires `model`. The adapter ignores `modelOptions.model` at runtime (it uses the model already bound to the adapter instance), so this is a required-but-inert field, not a second source of truth.
 
 **Anti-confabulation measures:**
 
 - Explicit system-prompt rule: "Do NOT emit timecodes. Leave `timeSec` unset. Timecodes are recovered deterministically after your output."
 - Explicit rule for action steps: "Only include steps grounded in concrete advice from the video. Do not invent generic best practices."
-- `temperature: 0.3` to suppress creative drift.
+- `temperature: 0.3` (via `modelOptions.options`) to suppress creative drift.
 
 Clamping: Strapi's field-length validators reject the whole document on any overflow, so we trim over-long fields on the client before save.
 
@@ -707,7 +710,7 @@ Code in `client/src/lib/services/notes.ts`, `client/src/components/NotesPane.tsx
 
 ### 11.6 MCP server
 
-The **official Strapi MCP server** (built into Strapi 5.47+, enabled via `server.mcp.enabled`) serves Streamable HTTP at `/mcp` with **admin**-token auth. yt-kb's 22 domain tools (videos, transcripts, tags, notes) register onto it from `server/src/index.ts` via the adapter in `server/src/mcp-official/`, reusing the tool bodies in `server/src/mcp/tools/`; three custom admin permissions (`api::yt-kb-mcp.read` / `.write` / `.maintenance`) tier the tools so a token sees only what it's scoped to. Drives the knowledge base from Claude Desktop / Code / Cursor when you want a frontier model. **Tool bodies are defined once in Strapi** — the in-app Ollama chat does not use MCP. The previous hand-rolled `/api/mcp` server was retired. See [`./mcp.md`](./mcp.md) and [ADR 0001](./adr/0001-local-first-no-cloud-ai.md).
+The **official Strapi MCP server** (built into Strapi 5.47+, enabled via `server.mcp.enabled`) serves Streamable HTTP at `/mcp` with **admin**-token auth. yt-kb's 22 domain tools (videos, transcripts, tags, notes) register onto it from `server/src/index.ts` via the adapter in `server/src/mcp-official/`, reusing the tool bodies in `server/src/mcp/tools/`; three custom admin permissions (`api::yt-kb-mcp.read` / `.write` / `.maintenance`) tier the tools so a token sees only what it's scoped to. Drives the knowledge base from Claude Desktop / Code / Cursor when you want a frontier model. **Tool bodies are defined once in Strapi** — the in-app Ollama chat does not use MCP. The previous hand-rolled `/api/mcp` server was retired. See [`./mcp.md`](./mcp.md), [ADR 0001](./adr/0001-local-first-no-cloud-ai.md), and [ADR 0008](./adr/0008-official-strapi-mcp-over-hand-rolled.md).
 
 ### 11.7 Boundary-layer error translation
 

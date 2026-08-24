@@ -1,0 +1,19 @@
+#!/bin/sh
+# Pre-push gate — runs the client's production build before any push, so
+# TypeScript / Vite errors get caught locally instead of in CI.
+#
+# The build rather than `tsc --noEmit` on purpose: in the sibling music-kb
+# repo, --noEmit passed twice while the real build failed on genuine type
+# errors. `vite build` is the honest gate for a TanStack Start app.
+#
+# Enable once per clone:
+#   git config core.hooksPath .githooks
+#
+# Skip with --no-verify if you need to push an unrelated WIP branch
+# (sparingly — that's how broken builds reach main).
+
+set -e
+
+echo "→ pre-push: running client build…"
+yarn --cwd "$(git rev-parse --show-toplevel)/client" build > /dev/null
+echo "✓ pre-push: build clean."

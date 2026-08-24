@@ -27,22 +27,48 @@ All run from the **repo root** unless noted.
 | `yarn client` | Client only (assumes Strapi is up). |
 | `yarn seed` | Imports `server/seed-data/seed.tar.gz`. **Run before starting Strapi** — needs exclusive write to SQLite. |
 | `yarn export` | Exports current Strapi DB to `server/seed-data/seed.tar.gz`. |
+| `yarn test` | Full vitest suite via `client/`, 181 tests (Strapi + Ollama down). Also runs as the sole step of CI's `Test` job. |
+| `yarn install:all` | `yarn install --frozen-lockfile` for the root, `server/`, and `client/` package.json's. What CI runs to install everything. |
+
+Strapi's own upgrade codemod is run from `server/`, not the root:
+`yarn --cwd server upgrade:dry` (review the diff first), then
+`yarn --cwd server strapi:upgrade`. **It is named `strapi:upgrade`, not
+`upgrade`** — `yarn upgrade` is a Yarn Classic built-in that would silently
+bulk-upgrade every dependency in `server/package.json` instead of running
+the Strapi codemod. Do not rename it back.
 
 ### Tests
 
 ```bash
-yarn --cwd client test                         # full vitest suite (~165 tests)
+yarn test                                      # from repo root — full vitest suite, 181 tests
+yarn --cwd client test                         # same suite, run from client/
 yarn --cwd client test path/to/file.test.ts    # single file
 yarn --cwd client test -t "name fragment"      # filter by test name
 yarn --cwd client test:e2e                     # Playwright smoke (needs stack up)
 ```
 
 Unit tests are vitest, in `client/src/` only. The server has no test suite.
+The root `yarn test` script just delegates to `yarn --cwd client test` — it
+exists as one obvious entry point and for CI symmetry with `yarn install:all`
+(also at the repo root, `yarn install --frozen-lockfile` for each of the
+three `package.json`s — root, `server/`, `client/`).
+
+**181 is measured with Strapi and Ollama both down.** `videos.smoke.test.ts`
+and `embeddings.ranking.test.ts` both self-skip when their live dependency
+is unreachable rather than failing, so the count is environment-dependent —
+see the gotcha below before trusting a different number you see locally.
+
 Playwright e2e specs live in `client/e2e/*.spec.ts` and assume the full
 stack is already running (`yarn dev`/`yarn start` from the repo root) —
 they do not boot it. They guard the seroval server→client boundary on the
 video-shipping surfaces (`/feed`, semantic feed, `/learn`, `/search`).
-`vite.config.ts`'s `test.exclude` keeps vitest out of `e2e/`.
+Test config lives in `client/vitest.config.ts` (not `vite.config.ts` —
+they're separate files; vitest prefers its own config when present), which
+excludes `e2e/**` so vitest's default glob doesn't try to run browser specs.
+
+**One-time setup:** run `git config core.hooksPath .githooks` once per
+clone to enable the pre-push hook (runs the client build before every
+push — see `docs/adr/0009-ci-and-static-gates.md`).
 
 ### Typecheck
 
@@ -125,4 +151,5 @@ The **official Strapi MCP server** (built into Strapi 5.47+, enabled via `server
 - **`yarn seed` requires Strapi stopped.** SQLite needs exclusive write access for the import; running it against a live Strapi corrupts the DB.
 - **Bump `EMBEDDING_VERSION` when changing the text-builder.** Otherwise old vectors silently survive a meaning-changing edit.
 - **Orphan node on :1340 or :3005** breaks `yarn dev` with cryptic `[strapi] fetch failed` spam from the client. `start.sh` kills these pre-flight; if you're running `yarn dev` directly, do it yourself with `lsof -ti :1340 -ti :3005 | xargs kill -9`.
-- **The `tanstack-ai-migration` branch in `client/` is the active branch**, not `main`. The two packages have independent git history.
+- **Pin pre-1.0 dependencies exactly.** On a `0.x` package a caret is a silent ceiling — `^0.10.3` means `<0.11.0`. `@tanstack/ai` sat 37 minors behind on a caret while the exact-pinned router family stayed current. The rule applies to new `0.x` deps going forward; four pre-existing carets in `client/package.json` (`class-variance-authority`, `next-themes`, `tiptap-markdown`, `@tailwindcss/typography`) are known exceptions awaiting a follow-up pass, not a rejection of the rule. See ADR 0010.
+- **`yarn test` is environment-dependent.** 181 passed with Strapi and Ollama both down. `videos.smoke.test.ts`'s tag-creation test fails when Strapi is live — a pre-existing bug (Strapi core doesn't auto-populate `uid` fields outside the admin UI), not something this repo's changes caused. If you run the suite against a live stack and see one failure there, it isn't yours.

@@ -75,7 +75,7 @@ function newId(): string {
 // Returned mutation resolves when the stream completes (or rejects on
 // error/abort). The mutation's `isPending` mirrors "a question is in
 // flight", which is what the UI cares about.
-async function streamAsk(
+export async function streamAsk(
   question: string,
   handlers: {
     assistantId: string;
@@ -115,33 +115,48 @@ async function streamAsk(
       if (!line.startsWith('data:')) continue;
       const payload = line.slice(5).trim();
       if (payload === '[DONE]') continue;
+      let event: {
+        type: string;
+        citations?: Citation[];
+        delta?: string;
+        message?: string;
+      };
       try {
-        const event = JSON.parse(payload) as {
-          type: string;
-          citations?: Citation[];
-          delta?: string;
-        };
-        if (event.type === 'CITATIONS' && event.citations) {
-          citations = event.citations;
-          setState((s) => ({
-            ...s,
-            messages: s.messages.map((m) =>
-              m.id === assistantId ? { ...m, citations } : m,
-            ),
-          }));
-        } else if (event.type === 'TEXT_MESSAGE_CONTENT' && event.delta) {
-          accumulated += event.delta;
-          setState((s) => ({
-            ...s,
-            messages: s.messages.map((m) =>
-              m.id === assistantId
-                ? { ...m, content: accumulated, status: 'streaming' }
-                : m,
-            ),
-          }));
-        }
+        event = JSON.parse(payload);
       } catch {
         // Non-JSON frame; ignore.
+        continue;
+      }
+      if (event.type === 'CITATIONS' && event.citations) {
+        citations = event.citations;
+        setState((s) => ({
+          ...s,
+          messages: s.messages.map((m) =>
+            m.id === assistantId ? { ...m, citations } : m,
+          ),
+        }));
+      } else if (event.type === 'TEXT_MESSAGE_CONTENT' && event.delta) {
+        accumulated += event.delta;
+        setState((s) => ({
+          ...s,
+          messages: s.messages.map((m) =>
+            m.id === assistantId
+              ? { ...m, content: accumulated, status: 'streaming' }
+              : m,
+          ),
+        }));
+      } else if (event.type === 'RUN_ERROR') {
+        // @tanstack/ai emits a graceful RUN_ERROR frame (rather than just
+        // dropping the connection) when the backend dies mid-stream — see
+        // chat-stream.ts and task-10-report.md. This hand-rolled reader
+        // previously had no case for it: the loop just fell through to the
+        // next frame, the stream ended "normally", and the caller's
+        // onError (the only place that calls friendlyOllamaError) never
+        // ran. Throwing here rejects streamAsk's promise so `onError`
+        // fires as designed.
+        throw new Error(
+          typeof event.message === 'string' ? event.message : 'AI run failed',
+        );
       }
     }
   }

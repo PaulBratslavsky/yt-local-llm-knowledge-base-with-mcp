@@ -289,7 +289,14 @@ export async function summarizeConversationToNote(input: {
             { role: 'user', content: userPrompt },
           ] as never,
           stream: false,
-          temperature: 0.3,
+          // Lives in modelOptions since @tanstack/ai 0.47 — provider-native
+          // keys, not top-level chat options. `model` is required in the
+          // object too: OLLAMA_MODEL is a dynamic (non-literal) string, so
+          // the adapter's per-model options type falls back to ollama-js's
+          // raw ChatRequest, which types `model` as required — the adapter
+          // ignores modelOptions.model at runtime and uses the model bound
+          // to the adapter instead.
+          modelOptions: { model: OLLAMA_MODEL, options: { temperature: 0.3 } },
         }),
       { attempts: 2 },
     )) as string;
