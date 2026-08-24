@@ -261,7 +261,14 @@ export function VideoChat({ videoId, onNoteCreated, className }: Readonly<Props>
       }
     } catch (err) {
       const raw = err instanceof Error ? err.message : 'Chat failed';
-      setMessages((prev) => prev.slice(0, -1));
+      // Drop the empty assistant placeholder if nothing streamed yet, but
+      // keep any partial answer that already made it to screen (e.g. the
+      // model produced 400 good tokens before Ollama OOM'd mid-stream).
+      setMessages((prev) => {
+        const last = prev[prev.length - 1];
+        if (last && last.role === 'assistant' && !last.content) return prev.slice(0, -1);
+        return prev;
+      });
       // Translate Ollama-specific errors (server unreachable, model
       // missing, timeout) to a recovery hint. Other errors pass through.
       setError(friendlyOllamaError(raw));
