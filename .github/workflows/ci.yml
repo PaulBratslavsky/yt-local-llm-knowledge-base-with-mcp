@@ -46,3 +46,13 @@ jobs:
 
       - name: Test
         run: yarn test
+
+      # `tsc --noEmit` and the real Vite build check different things
+      # (module resolution edge cases, asset imports, Rollup tree-shaking) —
+      # ADR 0009 documents `--noEmit` passing twice while `vite build` failed
+      # for real in the sibling repo. The pre-push hook already runs this
+      # build locally, but that hook is opt-in per clone and skippable with
+      # --no-verify, so CI runs it too as the one gate nobody can bypass.
+      - name: Build client
+        run: yarn build
+        working-directory: client
