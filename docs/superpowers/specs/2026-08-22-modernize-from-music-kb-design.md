@@ -357,7 +357,7 @@ comes first and Phase 1 comes before anything that changes behaviour.
 
 - `yarn test` green from the root; CI green on a pushed branch.
 - All nine dependencies at their target versions, AI family exact-pinned.
-- Zero `as never` casts remaining at `chat()` call sites.
+- Zero `as never` casts remaining at `chat()` call sites. **Carried forward, not met:** only the two documented workaround sites were migrated; 14 other call sites still cast, tracked as follow-up work (see `architecture.md`).
 - All 11 temperature settings verifiably reaching Ollama via `modelOptions`.
 - Per-video chat, cross-video semantic search, summary generation, digests, and
   the notes composer all working against local Ollama.

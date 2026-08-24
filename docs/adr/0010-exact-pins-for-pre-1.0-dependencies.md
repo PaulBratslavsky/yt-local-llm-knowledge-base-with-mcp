@@ -35,5 +35,6 @@ Concretely in this branch: `@tanstack/ai` and `@tanstack/ai-ollama` both moved f
 
 **What's enforced in code.**
 
-- No `0.x` dependency should carry a caret (`^`) or tilde (`~`) range in either package's `package.json`. A PR introducing one should be corrected before merge.
+- The rule applies going forward: a PR introducing a new `0.x` dependency with a caret (`^`) or tilde (`~`) range should be corrected before merge, and the TanStack AI family this ADR was written about is exact-pinned per the Decision above.
+- It is **not** yet true of every existing `0.x` dependency. `client/package.json` currently still carets four pre-1.0 packages that predate this ADR and were out of scope for this branch: `class-variance-authority` (`^0.7.1`), `next-themes` (`^0.4.6`), `tiptap-markdown` (`^0.9.0`), and `@tailwindcss/typography` (`^0.5.16`). None of the four has shown the silent-drift failure mode this ADR is about, but they are exceptions to the stated rule, not exempt from it — pinning them is tracked as follow-up work, not a rejected idea.
 - See `CLAUDE.md`'s Don't/Gotchas list for the day-to-day version of this rule.

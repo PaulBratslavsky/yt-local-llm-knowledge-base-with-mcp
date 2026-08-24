@@ -308,7 +308,7 @@ const object = await chat({
 
 Two things changed at 0.47.1, both documented in `docs/tanstack-ai-upgrade-record.md`:
 
-- **`systemPrompts`** replaces the old workaround of prepending a `{ role: 'system' }` message and casting `messages ... as never` to defeat the `ConstrainedModelMessage` union (`ai-ollama` 0.6.6 silently dropped `systemPrompts`; 0.9.3 honors it, so the cast is gone).
+- **`systemPrompts`** replaces the old workaround of prepending a `{ role: 'system' }` message and casting `messages ... as never` to defeat the `ConstrainedModelMessage` union (`ai-ollama` 0.6.6 silently dropped `systemPrompts`; 0.9.3 honors it, so the cast is gone). This migration covers only the two sites documented here (`learning.ts`'s summary-generation `chat()` call and `api.chat.tsx`'s per-video chat call). Fourteen other `chat()` call sites still use the older prepend-plus-cast pattern (`learning.ts`, `reader.ts`, `notes.ts`, `chat-retrieval.ts`, `digest.ts`, `api.notes.compose.tsx`, `api.ask.tsx`, `api.digest-chat.tsx`) — migrating those is tracked follow-up work, not done in this branch.
 - **`modelOptions`** replaces the removed top-level `temperature`. The `model` field inside `modelOptions` is required here (not just `options.temperature`) because `SUMMARY_MODEL` is a dynamic, non-literal string — the adapter's per-model options type only special-cases string-literal models, so a dynamic model string falls back to `ollama-js`'s raw `ChatRequest`, which requires `model`. The adapter ignores `modelOptions.model` at runtime (it uses the model already bound to the adapter instance), so this is a required-but-inert field, not a second source of truth.
 
 **Anti-confabulation measures:**

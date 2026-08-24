@@ -25,7 +25,7 @@ Separately, a local pre-push gate was wanted so type errors and build failures a
 
 **What we gain.**
 
-- The two typecheck errors and the tag-creation bug are now both visible and documented rather than silently tolerated — CI would fail loudly on a regression of the first; the second is recorded as a known, pre-existing gap (see the CLAUDE.md gotcha and Task 7's ledger entry) rather than an invisible skip.
+- The six typecheck errors and the tag-creation bug are now both visible and documented rather than silently tolerated — CI would fail loudly on a regression of the first; the second is recorded as a known, pre-existing gap (see the CLAUDE.md gotcha and Task 7's ledger entry) rather than an invisible skip.
 - Every push gets a real build check locally, before CI even runs, catching the class of error `--noEmit` alone misses.
 - CI installs are cheap (three lockfile-pinned installs, no service containers) and fast, which keeps the feedback loop tight for a personal-scale project.
 
