@@ -359,13 +359,16 @@ export function tokenize(input: string): string[] {
   // → "gpt-4" + "gpt". Without this, a query "qwen" finds zero documents
   // whose title says "Qwen3" (or "Qwen 3.6", etc.) — a major recall hole
   // for model/product names that incorporate version numbers.
+  //
+  // Repeats are preserved: the output is a token *stream*, not a token set.
+  // BM25 needs real term frequencies on both sides — document TF drives k1
+  // saturation, and query TF drives the doc-as-query weighting in
+  // `searchBM25`. Deduping here silently flattened every `tf` to 1 and made
+  // `lengths` a unique-term count, which degraded the scorer to plain IDF
+  // coverage. Callers that genuinely want a set wrap this in `new Set(...)`.
   const out: string[] = [];
-  const seen = new Set<string>();
   const push = (t: string) => {
-    if (t.length > 1 && !STOPWORDS.has(t) && !seen.has(t)) {
-      out.push(t);
-      seen.add(t);
-    }
+    if (t.length > 1 && !STOPWORDS.has(t)) out.push(t);
   };
   for (const t of base) {
     push(t);
