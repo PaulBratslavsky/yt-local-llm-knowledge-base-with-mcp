@@ -23,13 +23,16 @@ type Props = {
 
 // Semantic-neighbor block below the summary. Silently absent when the
 // target has no embedding yet, or when nothing clears the similarity
-// threshold. When present, doubles as a digest seeder: top two neighbors
-// are pre-selected and the header button jumps straight to /digest.
+// threshold — but a backend failure renders an alert instead, so a dead
+// Strapi can't masquerade as "no neighbours". When present, doubles as a
+// digest seeder: top two neighbors are pre-selected and the header button
+// jumps straight to /digest.
 export function RelatedVideos({ videoId, limit = 6 }: Readonly<Props>) {
   const navigate = useNavigate();
   const [state, setState] = useState<
     | { kind: 'loading' }
     | { kind: 'ready'; results: RelatedVideo[] }
+    | { kind: 'failed'; error: string }
     | { kind: 'hidden' }
   >({ kind: 'loading' });
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -41,7 +44,15 @@ export function RelatedVideos({ videoId, limit = 6 }: Readonly<Props>) {
         data: { videoId, limit },
       });
       if (cancelled) return;
-      if (res.status !== 'ok' || res.results.length === 0) {
+      // 'hidden' is for the legitimately-empty cases: no embedding on the
+      // target yet, or nothing clearing the similarity threshold. A backend
+      // failure is not one of them — hiding it made "Strapi is down" look
+      // identical to "this video has no neighbours" (ADR-0007).
+      if (res.status === 'error') {
+        setState({ kind: 'failed', error: res.error });
+        return;
+      }
+      if (res.results.length === 0) {
         setState({ kind: 'hidden' });
         return;
       }
@@ -58,6 +69,20 @@ export function RelatedVideos({ videoId, limit = 6 }: Readonly<Props>) {
       cancelled = true;
     };
   }, [videoId, limit]);
+
+  if (state.kind === 'failed') {
+    return (
+      <section
+        role="alert"
+        className="mt-10 rounded-2xl border border-amber-500/30 bg-amber-500/5 p-5 text-sm text-[var(--ink-soft)]"
+      >
+        <p className="text-xs font-medium uppercase tracking-wide text-amber-700 dark:text-amber-400">
+          Related videos unavailable
+        </p>
+        <p className="mt-2">{state.error}</p>
+      </section>
+    );
+  }
 
   if (state.kind !== 'ready') return null;
 

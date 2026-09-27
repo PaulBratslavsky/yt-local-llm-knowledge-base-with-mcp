@@ -73,7 +73,12 @@ export async function retrievePassagesForQuery(
   const minScore = opts.minScore ?? 0.35;
 
   const qVec = await embedText(query, 'query');
-  const all = await listAllVideosForEmbeddingService();
+  const { videos: all, error: corpusError } =
+    await listAllVideosForEmbeddingService();
+  // Throwing rather than answering from a partial library: /api/ask wraps
+  // this call and reports the failure, where empty passages would have the
+  // model confidently answer "nothing in your library covers that".
+  if (corpusError) throw new Error(corpusError);
 
   // Flatten every current passage into one corpus.
   type Flat = {

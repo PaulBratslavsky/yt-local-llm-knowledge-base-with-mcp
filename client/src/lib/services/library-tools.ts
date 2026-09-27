@@ -213,7 +213,11 @@ export const listVideosByTopicTool = toolDefinition({
   outputSchema: ListVideosByTopicOutput,
 }).server(async ({ topic }) => {
   const needle = topic.toLowerCase().trim();
-  const all = await listAllVideosForEmbeddingService();
+  const { videos: all, error: corpusError } =
+    await listAllVideosForEmbeddingService();
+  // Surface the failure to the model as a tool error. Returning `videos: []`
+  // would read as "your library has nothing on that topic".
+  if (corpusError) throw new Error(corpusError);
   const matched = all.filter((v) => {
     if (v.videoTitle?.toLowerCase().includes(needle)) return true;
     if (v.videoAuthor?.toLowerCase().includes(needle)) return true;

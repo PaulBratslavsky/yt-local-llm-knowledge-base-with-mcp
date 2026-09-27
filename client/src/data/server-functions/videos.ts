@@ -555,11 +555,25 @@ export type EmbeddingCoverage = {
   missing: number;
   currentModel: string;
   currentVersion: number;
+  /** Set when the library couldn't be read. The counts above are then
+   *  meaningless — render the error, not "0 stale". */
+  error?: string;
 };
 
 export const getEmbeddingCoverage = createServerFn({ method: 'GET' }).handler(
   async (): Promise<EmbeddingCoverage> => {
-    const videos = await listAllVideosForEmbeddingService();
+    const { videos, error } = await listAllVideosForEmbeddingService();
+    if (error) {
+      return {
+        total: 0,
+        current: 0,
+        stale: 0,
+        missing: 0,
+        currentModel: CURRENT_EMBEDDING_MODEL,
+        currentVersion: CURRENT_EMBEDDING_VERSION,
+        error,
+      };
+    }
     let current = 0;
     let stale = 0;
     let missing = 0;
@@ -610,7 +624,7 @@ export type ReindexResult = {
   failed: number;
   errors: Array<{ youtubeVideoId: string; error: string }>;
   tookMs: number;
-};
+} | { status: 'error'; error: string };
 
 export const reindexAllEmbeddings = createServerFn({ method: 'POST' })
   .inputValidator((data: z.input<typeof ReindexSchema>) =>
@@ -618,7 +632,10 @@ export const reindexAllEmbeddings = createServerFn({ method: 'POST' })
   )
   .handler(async ({ data }): Promise<ReindexResult> => {
     const started = performance.now();
-    const videos = await listAllVideosForEmbeddingService();
+    const { videos, error } = await listAllVideosForEmbeddingService();
+    // Backfilling a partial library would report success having skipped
+    // whatever didn't load. Refuse instead.
+    if (error) return { status: 'error', error };
 
     const candidates = data.force
       ? videos
@@ -734,7 +751,9 @@ export const relatedVideos = createServerFn({ method: 'GET' })
     }
     const targetVec = target.summaryEmbedding as number[];
 
-    const all = await listAllVideosForEmbeddingService();
+    const { videos: all, error: corpusError } =
+      await listAllVideosForEmbeddingService();
+    if (corpusError) return { status: 'error', error: corpusError };
     const limit = data.limit ?? 6;
     const minScore = data.minScore ?? 0.5;
 
@@ -940,7 +959,9 @@ export const semanticSearchVideos = createServerFn({ method: 'GET' })
       };
     }
 
-    const all = await listAllVideosForEmbeddingService();
+    const { videos: all, error: corpusError } =
+      await listAllVideosForEmbeddingService();
+    if (corpusError) return { status: 'error', error: corpusError };
     const limit = data.limit ?? 20;
     const minScore = data.minScore ?? 0.35;
 
@@ -1059,11 +1080,24 @@ export type PassageCoverage = {
   missing: number;
   currentModel: string;
   currentVersion: number;
+  /** See EmbeddingCoverage.error. */
+  error?: string;
 };
 
 export const getPassageCoverage = createServerFn({ method: 'GET' }).handler(
   async (): Promise<PassageCoverage> => {
-    const videos = await listAllVideosForEmbeddingService();
+    const { videos, error } = await listAllVideosForEmbeddingService();
+    if (error) {
+      return {
+        total: 0,
+        current: 0,
+        stale: 0,
+        missing: 0,
+        currentModel: CURRENT_EMBEDDING_MODEL,
+        currentVersion: CURRENT_PASSAGE_VERSION,
+        error,
+      };
+    }
     let current = 0;
     let stale = 0;
     let missing = 0;
@@ -1099,7 +1133,7 @@ export type ReindexPassagesResult = {
   totalChunks: number;
   errors: Array<{ youtubeVideoId: string; error: string }>;
   tookMs: number;
-};
+} | { status: 'error'; error: string };
 
 export const reindexAllPassages = createServerFn({ method: 'POST' })
   .inputValidator((data: z.input<typeof ReindexPassagesSchema>) =>
@@ -1107,7 +1141,8 @@ export const reindexAllPassages = createServerFn({ method: 'POST' })
   )
   .handler(async ({ data }): Promise<ReindexPassagesResult> => {
     const started = performance.now();
-    const videos = await listAllVideosForEmbeddingService();
+    const { videos, error } = await listAllVideosForEmbeddingService();
+    if (error) return { status: 'error', error };
 
     const candidates = data.force
       ? videos
@@ -1243,7 +1278,9 @@ export const searchLibraryPassages = createServerFn({ method: 'GET' })
       };
     }
 
-    const all = await listAllVideosForEmbeddingService();
+    const { videos: all, error: corpusError } =
+      await listAllVideosForEmbeddingService();
+    if (corpusError) return { status: 'error', error: corpusError };
     const limit = data.limit ?? 20;
     const minScore = data.minScore ?? 0.4;
 
@@ -1438,7 +1475,9 @@ export const suggestTagsForUrl = createServerFn({ method: 'GET' })
       return { status: 'ok', suggestions: [] };
     }
 
-    const all = await listAllVideosForEmbeddingService();
+    const { videos: all, error: corpusError } =
+      await listAllVideosForEmbeddingService();
+    if (corpusError) return { status: 'error', error: corpusError };
     const candidates = all.filter(
       (v) =>
         v.youtubeVideoId !== videoId &&
