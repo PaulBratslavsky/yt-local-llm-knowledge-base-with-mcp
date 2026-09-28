@@ -326,11 +326,28 @@ const detailQuery: StrapiQuery = {
   populate: ['tags', 'keyTakeaways', 'sections', 'actionSteps', 'transcript'],
 };
 
+/** The whole eligible library, or the reason it couldn't be read.
+ *
+ * `error` set means the list is incomplete — it may be empty, or it may
+ * hold the pages that arrived before the failure. Callers must not treat
+ * it as the library. */
+export type EmbeddingCorpus = {
+  videos: StrapiVideo[];
+  error?: string;
+};
+
 // Lightweight listing used by embedding-dependent features (backfill,
 // relatedVideos, semantic search). Pulls the fields needed to rebuild the
 // embedding text + the existing vector for comparison — nothing else.
 // Paginates internally so one call returns every eligible row.
-export async function listAllVideosForEmbeddingService(): Promise<StrapiVideo[]> {
+//
+// A failed page returns an `error` rather than the rows collected so far.
+// This is the corpus behind every cross-video surface, so swallowing the
+// failure made a dead backend indistinguishable from an empty library on
+// /search, the semantic feed and Related videos — and made the coverage
+// panels report totals over a partial library. ADR-0007: don't swallow
+// errors into empty data.
+export async function listAllVideosForEmbeddingService(): Promise<EmbeddingCorpus> {
   const pageSize = 100;
   const all: StrapiVideo[] = [];
   for (let page = 1; page <= 50; page += 1) {
@@ -342,7 +359,12 @@ export async function listAllVideosForEmbeddingService(): Promise<StrapiVideo[]>
         pagination: { page, pageSize, withCount: true },
       },
     });
-    if (!result.ok) break;
+    if (!result.ok) {
+      return {
+        videos: all,
+        error: friendlyBackendError(result.status, result.error),
+      };
+    }
     for (const v of result.data ?? []) {
       const cleaned = stripVideoForClient(v);
       if (cleaned) all.push(cleaned);
@@ -350,7 +372,7 @@ export async function listAllVideosForEmbeddingService(): Promise<StrapiVideo[]>
     const pageCount = result.meta?.pagination?.pageCount ?? 1;
     if (page >= pageCount) break;
   }
-  return all;
+  return { videos: all };
 }
 
 // NOTE: these two fetchers return the FULL video row including

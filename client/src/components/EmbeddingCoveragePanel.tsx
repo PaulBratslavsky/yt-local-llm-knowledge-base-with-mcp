@@ -22,6 +22,30 @@ export function EmbeddingCoveragePanel() {
   );
 }
 
+// Coverage counts are meaningless when the library couldn't be read —
+// "0 stale" over a library that failed to load is worse than no number at
+// all, because it reads as healthy (ADR-0007).
+function CoverageUnavailable({
+  label,
+  error,
+  onRetry,
+}: Readonly<{ label: string; error: string; onRetry: () => void }>) {
+  return (
+    <section
+      role="alert"
+      className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-5"
+    >
+      <p className="text-xs font-medium uppercase tracking-wide text-amber-700 dark:text-amber-400">
+        {label} unavailable
+      </p>
+      <p className="mt-2 text-sm text-[var(--ink-soft)]">{error}</p>
+      <Button className="mt-4" variant="outline" size="sm" onClick={onRetry}>
+        Retry
+      </Button>
+    </section>
+  );
+}
+
 function SummaryEmbeddingPanel() {
   const router = useRouter();
   const [coverage, setCoverage] = useState<EmbeddingCoverage | null>(null);
@@ -50,6 +74,8 @@ function SummaryEmbeddingPanel() {
         setMessage(
           `Embedded ${res.succeeded}/${res.targeted}${res.failed ? ` · ${res.failed} failed` : ''} · ${(res.tookMs / 1000).toFixed(1)}s`,
         );
+      } else {
+        setMessage(res.error);
       }
       await load();
       await router.invalidate();
@@ -63,6 +89,16 @@ function SummaryEmbeddingPanel() {
       <section className="rounded-2xl border border-[var(--line)] bg-[var(--card)] p-5 text-xs text-[var(--ink-muted)]">
         Loading embedding coverage…
       </section>
+    );
+  }
+
+  if (coverage.error) {
+    return (
+      <CoverageUnavailable
+        label="Summary embedding coverage"
+        error={coverage.error}
+        onRetry={() => void load()}
+      />
     );
   }
 
@@ -179,6 +215,8 @@ function PassageEmbeddingPanel() {
         setMessage(
           `Indexed ${res.succeeded}/${res.targeted} videos · ${res.totalChunks} passages${res.failed ? ` · ${res.failed} failed` : ''} · ${(res.tookMs / 1000).toFixed(1)}s`,
         );
+      } else {
+        setMessage(res.error);
       }
       await load();
       await router.invalidate();
@@ -192,6 +230,16 @@ function PassageEmbeddingPanel() {
       <section className="rounded-2xl border border-[var(--line)] bg-[var(--card)] p-5 text-xs text-[var(--ink-muted)]">
         Loading passage coverage…
       </section>
+    );
+  }
+
+  if (coverage.error) {
+    return (
+      <CoverageUnavailable
+        label="Passage coverage"
+        error={coverage.error}
+        onRetry={() => void load()}
+      />
     );
   }
 
