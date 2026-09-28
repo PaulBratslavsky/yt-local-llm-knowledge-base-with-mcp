@@ -31,7 +31,7 @@ export const libraryStatsTool: ToolDef<z.infer<typeof schema>> = {
 
     // Tag usage — count distinct videos per tag.
     const tags = (await strapi.documents('api::tag.tag').findMany({
-      pagination: { start: 0, limit: 500 },
+      limit: 500,
       populate: { videos: { fields: ['documentId'] } },
     })) as Array<{ name: string; videos?: Array<{ documentId: string }> }>;
 
@@ -44,7 +44,7 @@ export const libraryStatsTool: ToolDef<z.infer<typeof schema>> = {
     // Top authors — small library so fetch all non-null authors and
     // tally in memory rather than issuing per-author queries.
     const authored = (await strapi.documents('api::video.video').findMany({
-      pagination: { start: 0, limit: 1000 },
+      limit: 1000,
       fields: ['videoAuthor'],
       filters: { videoAuthor: { $notNull: true } },
     })) as Array<{ videoAuthor: string | null }>;
@@ -67,7 +67,7 @@ export const libraryStatsTool: ToolDef<z.infer<typeof schema>> = {
 
     const recent = (await strapi.documents('api::video.video').findMany({
       filters: { createdAt: { $gte: cutoff.toISOString() } },
-      pagination: { start: 0, limit: 1000 },
+      limit: 1000,
       fields: ['createdAt'],
     })) as Array<{ createdAt: string }>;
 

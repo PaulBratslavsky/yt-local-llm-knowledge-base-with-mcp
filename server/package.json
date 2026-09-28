@@ -5,6 +5,7 @@
   "description": "Strapi backend for the YouTube knowledge base app.",
   "scripts": {
     "build": "strapi build",
+    "verify:mcp": "node scripts/verify-mcp-tools.cjs",
     "console": "strapi console",
     "deploy": "strapi deploy",
     "dev": "strapi develop",

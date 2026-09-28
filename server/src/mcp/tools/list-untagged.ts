@@ -30,7 +30,7 @@ export const listUntaggedTool: ToolDef<z.infer<typeof schema>> = {
 
     const rows = (await strapi.documents('api::video.video').findMany({
       filters,
-      pagination: { start: 0, limit },
+      limit,
       sort: 'createdAt:desc',
       fields: [
         'youtubeVideoId',

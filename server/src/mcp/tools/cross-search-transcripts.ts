@@ -53,7 +53,7 @@ export const crossSearchTranscriptsTool: ToolDef<z.infer<typeof schema>> = {
 
     const videos = (await strapi.documents('api::video.video').findMany({
       filters,
-      pagination: { start: 0, limit: maxVideos },
+      limit: maxVideos,
       sort: 'createdAt:desc',
       fields: ['youtubeVideoId', 'videoTitle', 'summaryTitle', 'transcriptSegments'],
       populate: { tags: { fields: ['name'] } },

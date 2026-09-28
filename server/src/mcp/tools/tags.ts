@@ -16,7 +16,7 @@ export const listTagsTool: ToolDef<z.infer<typeof listSchema>> = {
   schema: listSchema,
   execute: async ({ limit }, { strapi }) => {
     const tags = (await strapi.documents('api::tag.tag').findMany({
-      pagination: { start: 0, limit },
+      limit,
       sort: 'name:asc',
       populate: { videos: { fields: ['documentId'] } },
     })) as Array<{ name: string; slug: string; videos?: Array<{ documentId: string }> }>;

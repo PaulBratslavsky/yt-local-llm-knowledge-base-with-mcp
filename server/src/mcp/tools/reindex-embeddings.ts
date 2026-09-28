@@ -40,14 +40,32 @@ export const reindexEmbeddingsTool: ToolDef<z.infer<typeof schema>> = {
     'Backfill or refresh topical embeddings on the Video collection. Use "missing" (default) to fill in videos that lack a vector, "stale" after an embedding model/version bump, or "all" for both. Serial against Ollama; safe to run anytime. Returns the counts and the first few errors if any.',
   schema,
   execute: async ({ scope }, { strapi }) => {
+    // Project to the fields buildEmbeddingText reads plus the staleness
+    // key. The unprojected version loaded transcriptSegments and
+    // readableArticle for the whole library on every run.
     const videos = (await strapi.documents('api::video.video').findMany({
       filters: { summaryStatus: { $eq: 'generated' } },
+      // Every field buildEmbeddingText reads (see VideoForEmbed) plus the
+      // staleness key. Dropping one here would silently change the text
+      // that gets embedded, and nothing downstream would notice.
+      fields: [
+        'documentId',
+        'youtubeVideoId',
+        'videoTitle',
+        'videoAuthor',
+        'summaryTitle',
+        'summaryDescription',
+        'summaryOverview',
+        'summaryEmbedding',
+        'embeddingModel',
+        'embeddingVersion',
+      ],
       populate: {
         tags: { fields: ['name'] },
         keyTakeaways: true,
         sections: { fields: ['heading'] },
       },
-      pagination: { pageSize: 1000 },
+      limit: 1000,
     } as never)) as unknown as VideoRow[];
 
     const candidates = videos.filter((v) => {
