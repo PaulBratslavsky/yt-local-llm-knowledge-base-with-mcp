@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { streamAsk } from './useLibraryChat';
+import { isAbortError, streamAsk } from './useLibraryChat';
 
 // Builds a Response whose body streams the given SSE byte chunks one at a
 // time, mirroring how chat-stream.test.ts exercises streamChatSSE — same
@@ -75,5 +75,29 @@ describe('streamAsk', () => {
 
     // One call for the streamed delta, one for the final "done" flip.
     expect(setState).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isAbortError
+// ---------------------------------------------------------------------------
+
+describe('isAbortError', () => {
+  it('recognises a DOMException abort', () => {
+    expect(isAbortError(new DOMException('Aborted', 'AbortError'))).toBe(true);
+  });
+
+  it("recognises node's abort message", () => {
+    expect(isAbortError(new Error('The operation was aborted'))).toBe(true);
+  });
+
+  it('does not swallow a real failure', () => {
+    expect(isAbortError(new Error('fetch failed'))).toBe(false);
+    expect(isAbortError(new Error('model "gemma4-kb" not found'))).toBe(false);
+  });
+
+  it('handles non-errors', () => {
+    expect(isAbortError(null)).toBe(false);
+    expect(isAbortError('aborted')).toBe(false);
   });
 });

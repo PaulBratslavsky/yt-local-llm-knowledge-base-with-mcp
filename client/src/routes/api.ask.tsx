@@ -8,6 +8,7 @@ import {
   type RetrievedPassage,
 } from '#/lib/services/ask-library';
 import { buildLibraryTools } from '#/lib/services/library-tools';
+import { withPreludeFrame } from '#/lib/services/sse-compose';
 import { OLLAMA_HOST, OLLAMA_SYNTHESIS_MODEL as CHAT_MODEL } from '#/lib/env';
 
 // Streaming library-QA endpoint. Parallels /api/chat in shape:
@@ -167,23 +168,7 @@ export const Route = createFileRoute('/api/ask')({
         })}\n\n`;
 
         const baseResponse = toServerSentEventsResponse(stream);
-        const baseReader = baseResponse.body!.getReader();
-        const encoder = new TextEncoder();
-
-        const combined = new ReadableStream<Uint8Array>({
-          async start(controller) {
-            controller.enqueue(encoder.encode(citationsFrame));
-            try {
-              while (true) {
-                const { value, done } = await baseReader.read();
-                if (done) break;
-                controller.enqueue(value);
-              }
-            } finally {
-              controller.close();
-            }
-          },
-        });
+        const combined = withPreludeFrame(baseResponse.body!, citationsFrame);
 
         return new Response(combined, {
           headers: {
