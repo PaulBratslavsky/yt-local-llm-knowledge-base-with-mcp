@@ -244,6 +244,54 @@ describe('BM25', () => {
     expect(hits[0].id).toBe(0);
   });
 
+  it('records a term frequency above 1 when a chunk repeats a term', () => {
+    const index = buildBM25Index([
+      {
+        id: 0,
+        text: 'kubernetes kubernetes kubernetes scheduling internals',
+        startWord: 0,
+        timeSec: 0,
+      },
+      ...makeBm25Filler(1),
+    ]);
+    expect(index.tf[0]['kubernetes']).toBe(3);
+  });
+
+  it('counts document length in total terms, not unique terms', () => {
+    const index = buildBM25Index([
+      { id: 0, text: 'alpha alpha alpha beta', startWord: 0, timeSec: 0 },
+      ...makeBm25Filler(1),
+    ]);
+    expect(index.lengths[0]).toBe(4);
+  });
+
+  // The doc-as-query paths (relatedVideos, semantic search) are tuned on the
+  // premise that repetition signals topical focus: a chunk *about* a term
+  // should beat a chunk that mentions it once. Both chunks below carry the
+  // *same* unique terms, so length normalization can't separate them and
+  // only term frequency can. The repeated-term chunk is placed second, so a
+  // scorer that ignores frequency ties and returns the single-mention chunk
+  // first.
+  it('ranks a chunk that repeats the query term above one that mentions it once', () => {
+    const index = buildBM25Index([
+      {
+        id: 0,
+        text: 'kubernetes scheduling internals explained networking storage',
+        startWord: 0,
+        timeSec: 0,
+      },
+      {
+        id: 1,
+        text: 'kubernetes kubernetes kubernetes kubernetes scheduling internals explained networking storage',
+        startWord: 20,
+        timeSec: 30,
+      },
+      ...makeBm25Filler(2, 20),
+    ]);
+    const hits = searchBM25(index, 'kubernetes', 2);
+    expect(hits[0].id).toBe(1);
+  });
+
   it('returns empty array for query with no valid terms', () => {
     const index = buildBM25Index(sampleChunks);
     expect(searchBM25(index, '', 5)).toEqual([]);
