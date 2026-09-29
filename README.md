@@ -63,7 +63,7 @@ yarn start
 
 Open `http://localhost:3005`, paste a YouTube URL on `/new-post`. The row is created immediately; the AI summary runs in the background and lands on `/learn/$videoId` when done.
 
-> `yarn start` is a convenience wrapper that sets Ollama env vars (`OLLAMA_KEEP_ALIVE=15m`, `OLLAMA_NUM_PARALLEL=1`) and then runs `yarn dev`. Use `yarn start:fresh` to hard-restart Ollama first (required after changing `OLLAMA_NUM_PARALLEL`).
+> `yarn start` is a convenience wrapper that sets Ollama env vars (`OLLAMA_KEEP_ALIVE=15m`, `OLLAMA_NUM_PARALLEL=1`), starts Ollama if it isn't running (the macOS menubar app, a Linux systemd unit, or plain `ollama serve`), and then runs `yarn dev`. Use `yarn start:fresh` to hard-restart Ollama first (required after changing `OLLAMA_NUM_PARALLEL`).
 
 > **Seed data.** `yarn seed` runs `strapi import` against `server/seed-data/seed.tar.gz` and **replaces** any existing content in the matching collections. To capture your own library as a seed, stop the dev server and run `yarn export` — it writes to the same path, ready to commit.
 
@@ -226,7 +226,7 @@ Full walkthrough (Cursor, MCP Inspector, permission tiers, auth rotation) in [`d
 | `MAP_CONCURRENCY` | `1` | Parallel map-step chunks on long videos. Bump to 2-4 if you have RAM headroom. Must match `OLLAMA_NUM_PARALLEL` on the server side. |
 | `TRANSCRIPT_PROXY_URL` | *(empty)* | Residential proxy for the YouTube caption fetch — only needed if your IP hits a bot wall |
 
-### Ollama environment (via `launchctl setenv` on macOS)
+### Ollama environment (set by `yarn start` — see [`start.sh`](./start.sh))
 
 | Variable | Default | Purpose |
 |---|---|---|

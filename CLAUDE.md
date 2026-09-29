@@ -22,7 +22,7 @@ All run from the **repo root** unless noted.
 |---|---|
 | `yarn setup` | Install both packages + copy `.env.example` files. Run once after cloning. |
 | `yarn start` | Full stack: tunes Ollama env (`OLLAMA_KEEP_ALIVE=15m`, `OLLAMA_NUM_PARALLEL=1`), launches Ollama if needed, kills orphans on :1340 / :3005, then `yarn dev`. |
-| `yarn start:fresh` | Same as `start` but `pkill -9 ollama` first — required after changing `OLLAMA_NUM_PARALLEL`. |
+| `yarn start:fresh` | Same as `start` but restarts Ollama first (through systemd on Linux, `pkill -9 ollama` otherwise) — required after changing `OLLAMA_NUM_PARALLEL`. |
 | `yarn dev` | Strapi + client only, no Ollama setup. Uses `concurrently` + `wait-on http://localhost:1340`. |
 | `yarn server` | Strapi only (`strapi develop`). |
 | `yarn client` | Client only (assumes Strapi is up). |
@@ -187,6 +187,6 @@ The **official Strapi MCP server** (built into Strapi 5.47+, enabled via `server
 - **Don't introduce cloud AI adapters.** Local-first is a design constraint — Ollama only for inference + embeddings. Frontier models are reachable via MCP from Claude Desktop / Code, not via in-app cloud SDKs.
 - **`yarn seed` requires Strapi stopped.** SQLite needs exclusive write access for the import; running it against a live Strapi corrupts the DB.
 - **Bump `EMBEDDING_VERSION` when changing the text-builder.** Otherwise old vectors silently survive a meaning-changing edit.
-- **Orphan node on :1340 or :3005** breaks `yarn dev` with cryptic `[strapi] fetch failed` spam from the client. `start.sh` kills these pre-flight; if you're running `yarn dev` directly, do it yourself with `lsof -ti :1340 -ti :3005 | xargs kill -9`.
+- **Orphan node on :1340 or :3005** breaks `yarn dev` with cryptic `[strapi] fetch failed` spam from the client. `start.sh` kills these pre-flight; if you're running `yarn dev` directly, do it yourself with `lsof -ti tcp:1340 -ti tcp:3005 -sTCP:LISTEN | xargs kill -9` (listeners only — a bare `:1340` also matches clients connected to the port, like a browser tab on the app).
 - **Pin pre-1.0 dependencies exactly.** On a `0.x` package a caret is a silent ceiling — `^0.10.3` means `<0.11.0`. `@tanstack/ai` sat 37 minors behind on a caret while the exact-pinned router family stayed current. The rule applies to new `0.x` deps going forward; four pre-existing carets in `client/package.json` (`class-variance-authority`, `next-themes`, `tiptap-markdown`, `@tailwindcss/typography`) are known exceptions awaiting a follow-up pass, not a rejection of the rule. See ADR 0010.
 - **`yarn test` is environment-dependent.** 230 passed with Strapi and Ollama both down. `videos.smoke.test.ts`'s tag-creation test fails when Strapi is live — a pre-existing bug (Strapi core doesn't auto-populate `uid` fields outside the admin UI), not something this repo's changes caused. If you run the suite against a live stack and see one failure there, it isn't yours.
