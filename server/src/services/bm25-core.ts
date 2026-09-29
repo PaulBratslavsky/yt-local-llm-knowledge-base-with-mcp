@@ -43,6 +43,17 @@ export type TranscriptChunk = {
 // with a small English stopword filter — good enough for transcript search
 // without bringing in a stemmer dependency.
 
+// Chunker settings. They live here, not next to the chunker, because the
+// stored index has to record what produced it — and validating a stored
+// artifact against constants defined elsewhere is how they drift.
+export const RETRIEVAL_CHUNK_WORDS = 150;
+export const RETRIEVAL_CHUNK_OVERLAP = 20;
+
+// Bump when `tokenize` changes in a way that alters scoring.
+//   1 — original; deduped tokens, so every tf was 1 (see #1)
+//   2 — frequency-preserving token stream
+export const TOKENIZER_VERSION = 2;
+
 export const BM25_K1 = 1.2;
 export const BM25_B = 0.75;
 
@@ -338,8 +349,28 @@ export function searchBM25(
 // an index can be detected + rebuilt on demand.
 // -----------------------------------------------------------------------------
 
+/** What produced a stored index. An index is only trustworthy against the
+ *  code that reads it if these still match — the same contract
+ *  (embeddingModel, embeddingVersion) gives the embedding store. */
+export type BM25IndexParams = {
+  chunkWords: number;
+  chunkOverlap: number;
+  tokenizer: number;
+};
+
+export const CURRENT_INDEX_PARAMS: BM25IndexParams = {
+  chunkWords: RETRIEVAL_CHUNK_WORDS,
+  chunkOverlap: RETRIEVAL_CHUNK_OVERLAP,
+  tokenizer: TOKENIZER_VERSION,
+};
+
+export const STORED_INDEX_VERSION = 2;
+
 export type StoredTranscriptIndex = {
-  version: 1;
+  version: typeof STORED_INDEX_VERSION;
+  /** Absent on every index written before params were recorded (v1). Those
+   *  predate the tokenizer fix, so they are treated as stale, not current. */
+  params: BM25IndexParams;
   bm25: BM25Index;
   // Raw caption segments cached from the first youtubei.js fetch.
   // Present for all newly-generated videos; absent on pre-cache rows
@@ -351,10 +382,52 @@ export type StoredTranscriptIndex = {
   durationSec?: number | null;
 };
 
-export function isStoredIndex(value: unknown): value is StoredTranscriptIndex {
+/** Shape check only — says nothing about whether the index is current. */
+function hasIndexShape(value: unknown): value is { bm25: BM25Index } & Record<string, unknown> {
   if (!value || typeof value !== 'object') return false;
+  const v = value as { bm25?: BM25Index };
+  return !!v.bm25 && Array.isArray(v.bm25.chunks);
+}
+
+function paramsMatch(params: unknown): boolean {
+  if (!params || typeof params !== 'object') return false;
+  const p = params as Partial<BM25IndexParams>;
+  return (
+    p.chunkWords === CURRENT_INDEX_PARAMS.chunkWords &&
+    p.chunkOverlap === CURRENT_INDEX_PARAMS.chunkOverlap &&
+    p.tokenizer === CURRENT_INDEX_PARAMS.tokenizer
+  );
+}
+
+export type StoredIndexStatus = 'missing' | 'stale' | 'current';
+
+/** Mirrors `embeddingStatus` for the BM25 store, so /settings can report
+ *  and backfill the same three states. */
+export function storedIndexStatus(value: unknown): StoredIndexStatus {
+  if (!hasIndexShape(value)) return 'missing';
   const v = value as Partial<StoredTranscriptIndex>;
-  return v.version === 1 && !!v.bm25 && Array.isArray(v.bm25.chunks);
+  if (v.version !== STORED_INDEX_VERSION) return 'stale';
+  return paramsMatch(v.params) ? 'current' : 'stale';
+}
+
+export function isStoredIndex(value: unknown): value is StoredTranscriptIndex {
+  return storedIndexStatus(value) === 'current';
+}
+
+/** Stamp a freshly built index with the params that produced it. Writers
+ *  should use this rather than assembling the object by hand, which is how
+ *  a writer ends up forgetting the stamp. */
+export function makeStoredIndex(
+  bm25: BM25Index,
+  extras?: { rawSegments?: TimedTextSegment[]; durationSec?: number | null },
+): StoredTranscriptIndex {
+  return {
+    version: STORED_INDEX_VERSION,
+    params: { ...CURRENT_INDEX_PARAMS },
+    bm25,
+    ...(extras?.rawSegments ? { rawSegments: extras.rawSegments } : {}),
+    ...(extras?.durationSec !== undefined ? { durationSec: extras.durationSec } : {}),
+  };
 }
 
 // Strip non-numeric tf/df/idf entries. Indexes generated before the

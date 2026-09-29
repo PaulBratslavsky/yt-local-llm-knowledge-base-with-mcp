@@ -22,12 +22,23 @@ import {
   type PaginatedVideos,
   type StrapiTag,
   type StrapiVideo,
+  forEachVideoWithIndex,
+  updateVideoIndexService,
 } from '#/lib/services/videos';
 import {
   aggregateSignalScore,
   computeSignalScores,
 } from '#/lib/services/content-signals';
-import { cleanTranscript } from '#/lib/services/transcript';
+import {
+  CURRENT_INDEX_PARAMS,
+  cleanTranscript,
+  type BM25IndexParams,
+} from '#/lib/services/transcript';
+import {
+  canRebuildIndex,
+  rebuildStoredIndex,
+  videoIndexStatus,
+} from '#/lib/services/transcript-index';
 import { strapiFetch } from '#/lib/services/strapi-client';
 import {
   aggregateTagsFromNeighbors,
@@ -593,6 +604,138 @@ export const getEmbeddingCoverage = createServerFn({ method: 'GET' }).handler(
     };
   },
 );
+
+// =============================================================================
+// Stored BM25 index coverage + backfill.
+//
+// The index is versioned by the chunker/tokenizer params that produced it
+// (CURRENT_INDEX_PARAMS). Changing either invalidates every stored index —
+// #1's tokenizer fix did exactly that — so the library needs the same
+// report-and-backfill affordance the embedding store has. A rebuild is
+// local work: the raw caption segments are cached on the index itself, so
+// no Ollama and no YouTube round-trip.
+// =============================================================================
+
+export type IndexCoverage = {
+  total: number;
+  current: number;
+  stale: number;
+  missing: number;
+  /** Stale or missing rows with no cached segments. These need a full
+   *  regenerate, not a backfill — reported so the count isn't mistaken for
+   *  something the button can fix. */
+  unrecoverable: number;
+  params: BM25IndexParams;
+  error?: string;
+};
+
+export const getIndexCoverage = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<IndexCoverage> => {
+    let current = 0;
+    let stale = 0;
+    let missing = 0;
+    let unrecoverable = 0;
+
+    const { visited, error } = await forEachVideoWithIndex((video) => {
+      const status = videoIndexStatus(video);
+      if (status === 'current') {
+        current += 1;
+        return;
+      }
+      if (status === 'stale') stale += 1;
+      else missing += 1;
+      if (!canRebuildIndex(video)) unrecoverable += 1;
+    });
+
+    if (error) {
+      return {
+        total: 0,
+        current: 0,
+        stale: 0,
+        missing: 0,
+        unrecoverable: 0,
+        params: CURRENT_INDEX_PARAMS,
+        error,
+      };
+    }
+
+    return {
+      total: visited,
+      current,
+      stale,
+      missing,
+      unrecoverable,
+      params: CURRENT_INDEX_PARAMS,
+    };
+  },
+);
+
+const ReindexIndexesSchema = z.object({
+  scope: z.enum(['stale', 'missing', 'all']).default('all'),
+});
+
+export type ReindexIndexesResult =
+  | {
+      status: 'ok';
+      scope: 'stale' | 'missing' | 'all';
+      targeted: number;
+      rebuilt: number;
+      unrecoverable: number;
+      failed: number;
+      errors: Array<{ youtubeVideoId: string; error: string }>;
+      tookMs: number;
+    }
+  | { status: 'error'; error: string };
+
+export const reindexAllTranscriptIndexes = createServerFn({ method: 'POST' })
+  .inputValidator((data: z.input<typeof ReindexIndexesSchema>) =>
+    ReindexIndexesSchema.parse(data),
+  )
+  .handler(async ({ data }): Promise<ReindexIndexesResult> => {
+    const started = performance.now();
+    let targeted = 0;
+    let rebuilt = 0;
+    let unrecoverable = 0;
+    let failed = 0;
+    const errors: Array<{ youtubeVideoId: string; error: string }> = [];
+
+    const { error } = await forEachVideoWithIndex(async (video) => {
+      const status = videoIndexStatus(video);
+      if (status === 'current') return;
+      if (data.scope === 'stale' && status !== 'stale') return;
+      if (data.scope === 'missing' && status !== 'missing') return;
+      targeted += 1;
+
+      const result = rebuildStoredIndex(video);
+      if (result.status === 'unrecoverable') {
+        unrecoverable += 1;
+        return;
+      }
+      const saved = await updateVideoIndexService(video.documentId, result.index);
+      if (saved.success) {
+        rebuilt += 1;
+      } else {
+        failed += 1;
+        if (errors.length < 5) {
+          errors.push({ youtubeVideoId: video.youtubeVideoId, error: saved.error });
+        }
+      }
+    });
+
+    // A partial walk would report a partial backfill as a finished one.
+    if (error) return { status: 'error', error };
+
+    return {
+      status: 'ok',
+      scope: data.scope,
+      targeted,
+      rebuilt,
+      unrecoverable,
+      failed,
+      errors,
+      tookMs: Math.round(performance.now() - started),
+    };
+  });
 
 // =============================================================================
 // Backfill — walk videos and compute embeddings for anything that doesn't

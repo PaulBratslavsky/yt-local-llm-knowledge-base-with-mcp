@@ -21,6 +21,7 @@ import {
   findEvidenceForQuote,
   loadStoredIndex,
   makeSectionContextualizer,
+  makeStoredIndex,
   prepareSegmentedTranscript,
   searchBM25,
   type PreparedTranscript,
@@ -988,12 +989,10 @@ export async function generateVideoSummary(
   // Cache the raw caption segments + duration alongside the BM25 index so
   // subsequent regenerations skip the youtubei.js fetch. The size bump is
   // ~10-30KB for a typical video — trivial next to the rest of the row.
-  const transcriptSegments: StoredTranscriptIndex = {
-    version: 1,
-    bm25,
+  const transcriptSegments: StoredTranscriptIndex = makeStoredIndex(bm25, {
     rawSegments: cleanedTranscript.segments ?? undefined,
     durationSec: cleanedTranscript.durationSec,
-  };
+  });
   logPhase(videoId, 'bm25 ✓ index built (contextual)', {
     chunks: retrievalChunks.length,
     terms: Object.keys(bm25.idf).length,

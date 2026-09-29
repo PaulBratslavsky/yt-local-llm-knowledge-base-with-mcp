@@ -27,7 +27,7 @@ All run from the **repo root** unless noted.
 | `yarn client` | Client only (assumes Strapi is up). |
 | `yarn seed` | Imports `server/seed-data/seed.tar.gz`. **Run before starting Strapi** — needs exclusive write to SQLite. |
 | `yarn export` | Exports current Strapi DB to `server/seed-data/seed.tar.gz`. |
-| `yarn test` | Full vitest suite via `client/`, 188 tests (Strapi + Ollama down). Also runs as the sole step of CI's `Test` job. |
+| `yarn test` | Full vitest suite via `client/`, 211 tests (Strapi + Ollama down). Also runs as the sole step of CI's `Test` job. |
 | `yarn install:all` | `yarn install --frozen-lockfile` for the root, `server/`, and `client/` package.json's. What CI runs to install everything. |
 
 Strapi's own upgrade codemod is run from `server/`, not the root:
@@ -40,7 +40,7 @@ the Strapi codemod. Do not rename it back.
 ### Tests
 
 ```bash
-yarn test                                      # from repo root — full vitest suite, 188 tests
+yarn test                                      # from repo root — full vitest suite, 211 tests
 yarn --cwd client test                         # same suite, run from client/
 yarn --cwd client test path/to/file.test.ts    # single file
 yarn --cwd client test -t "name fragment"      # filter by test name
@@ -66,7 +66,7 @@ exists as one obvious entry point and for CI symmetry with `yarn install:all`
 (also at the repo root, `yarn install --frozen-lockfile` for each of the
 three `package.json`s — root, `server/`, `client/`).
 
-**188 is measured with Strapi and Ollama both down.** `videos.smoke.test.ts`
+**211 is measured with Strapi and Ollama both down.** `videos.smoke.test.ts`
 and `embeddings.ranking.test.ts` both self-skip when their live dependency
 is unreachable rather than failing, so the count is environment-dependent —
 see the gotcha below before trusting a different number you see locally.
@@ -134,6 +134,27 @@ A digest is identified by `videoSetKey = sort(youtubeVideoIds).join(',')`, not a
 
 Stored vectors carry `embeddingModel` + `embeddingVersion`. Mismatch with current env flags the row stale; `/settings` offers backfill (missing / stale / all). Bumping the env-level `EMBEDDING_VERSION` alongside changing the text-builder in `client/src/lib/services/embeddings.ts` is the protocol — without it, old vectors silently keep being trusted.
 
+### Stored BM25 index invalidation
+
+The BM25 index cached on `Video.transcriptSegments` records the params that
+built it — `CURRENT_INDEX_PARAMS` in `client/src/lib/services/bm25-core.ts`
+(chunk words, chunk overlap, `TOKENIZER_VERSION`). A mismatch makes the row
+**stale**, and `loadStoredIndex` refuses to return it rather than scoring
+today's queries against yesterday's arithmetic. `/settings` reports
+current/stale/missing and rebuilds from the caption segments cached on the
+index itself — no Ollama, no YouTube (~6s for 171 videos).
+
+**Bump `TOKENIZER_VERSION` when changing `tokenize`, and the chunk
+constants when changing the chunker.** Same protocol as `EMBEDDING_VERSION`,
+and the same failure mode if you skip it: stale artifacts silently keep
+being trusted. Rows with no cached `rawSegments` (pre-cache era) can't be
+backfilled and are reported separately — they need a full Regenerate.
+
+The scorer itself lives in `bm25-core.ts` and is copied verbatim into
+`server/src/services/bm25-core.ts` by `yarn sync:bm25`; the two halves stay
+identical because `bm25-core.sync.test.ts` fails if they drift. Edit the
+client copy, never the server one.
+
 ### Map-reduce kicks in past ~25K tokens
 
 Single-pass for short transcripts; long ones split into 2500-word windows (50-word overlap), parallel map-step at `MAP_CONCURRENCY` (which **must match** `OLLAMA_NUM_PARALLEL`), then a final reduce. Code in `client/src/lib/services/learning.ts`.
@@ -165,4 +186,4 @@ The **official Strapi MCP server** (built into Strapi 5.47+, enabled via `server
 - **Bump `EMBEDDING_VERSION` when changing the text-builder.** Otherwise old vectors silently survive a meaning-changing edit.
 - **Orphan node on :1340 or :3005** breaks `yarn dev` with cryptic `[strapi] fetch failed` spam from the client. `start.sh` kills these pre-flight; if you're running `yarn dev` directly, do it yourself with `lsof -ti :1340 -ti :3005 | xargs kill -9`.
 - **Pin pre-1.0 dependencies exactly.** On a `0.x` package a caret is a silent ceiling — `^0.10.3` means `<0.11.0`. `@tanstack/ai` sat 37 minors behind on a caret while the exact-pinned router family stayed current. The rule applies to new `0.x` deps going forward; four pre-existing carets in `client/package.json` (`class-variance-authority`, `next-themes`, `tiptap-markdown`, `@tailwindcss/typography`) are known exceptions awaiting a follow-up pass, not a rejection of the rule. See ADR 0010.
-- **`yarn test` is environment-dependent.** 188 passed with Strapi and Ollama both down. `videos.smoke.test.ts`'s tag-creation test fails when Strapi is live — a pre-existing bug (Strapi core doesn't auto-populate `uid` fields outside the admin UI), not something this repo's changes caused. If you run the suite against a live stack and see one failure there, it isn't yours.
+- **`yarn test` is environment-dependent.** 211 passed with Strapi and Ollama both down. `videos.smoke.test.ts`'s tag-creation test fails when Strapi is live — a pre-existing bug (Strapi core doesn't auto-populate `uid` fields outside the admin UI), not something this repo's changes caused. If you run the suite against a live stack and see one failure there, it isn't yours.

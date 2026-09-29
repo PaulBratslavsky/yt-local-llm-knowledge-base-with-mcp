@@ -375,6 +375,55 @@ export async function listAllVideosForEmbeddingService(): Promise<EmbeddingCorpu
   return { videos: all };
 }
 
+/** Walks every generated video, one page at a time, with the stored BM25
+ *  index attached. Paged rather than collected because the indexes are the
+ *  heaviest field on the row — the whole library at once is tens of MB for
+ *  a count that only needs one row in memory.
+ *
+ *  Returns an `error` the same way `listAllVideosForEmbeddingService` does:
+ *  a partial walk must not read as a complete one (ADR-0007). */
+export async function forEachVideoWithIndex(
+  visit: (video: StrapiVideo) => Promise<void> | void,
+): Promise<{ visited: number; error?: string }> {
+  const pageSize = 25;
+  let visited = 0;
+  for (let page = 1; page <= 200; page += 1) {
+    const result = await strapiFetch<StrapiVideo[]>('GET', '/api/videos', {
+      query: {
+        populate: ['sections'],
+        filters: { summaryStatus: { $eq: 'generated' } },
+        sort: 'createdAt:desc',
+        pagination: { page, pageSize, withCount: true },
+      },
+    });
+    if (!result.ok) {
+      return { visited, error: friendlyBackendError(result.status, result.error) };
+    }
+    for (const v of result.data ?? []) {
+      await visit(v);
+      visited += 1;
+    }
+    const pageCount = result.meta?.pagination?.pageCount ?? 1;
+    if (page >= pageCount) break;
+  }
+  return { visited };
+}
+
+/** Writes just the stored index back. Deliberately narrow: the backfill
+ *  must not touch summary fields, scores or timestamps. */
+export async function updateVideoIndexService(
+  documentId: string,
+  transcriptSegments: StoredTranscriptIndex,
+): Promise<{ success: true } | { success: false; error: string }> {
+  const result = await strapiFetch<StrapiVideo>('PUT', `/api/videos/${documentId}`, {
+    body: { data: { transcriptSegments } },
+  });
+  if (!result.ok) {
+    return { success: false, error: friendlyBackendError(result.status, result.error) };
+  }
+  return { success: true };
+}
+
 // NOTE: these two fetchers return the FULL video row including
 // `transcriptSegments`. They're used by server-internal callers (chat
 // retrieval, evidence extraction, digest chat) that read the BM25 index.

@@ -43,24 +43,35 @@ const FILLER_PATTERNS: Array<[RegExp, string]> = [
 // Strapi server copies verbatim. Re-exported here so every existing caller
 // keeps importing from './transcript'.
 export {
+  CURRENT_INDEX_PARAMS,
   STOPWORDS,
-  tokenize,
+  STORED_INDEX_VERSION,
+  TOKENIZER_VERSION,
   buildBM25Index,
-  searchBM25,
   isStoredIndex,
   loadStoredIndex,
+  makeStoredIndex,
+  searchBM25,
+  searchBM25Ranked,
+  storedIndexStatus,
+  tokenize,
 } from './bm25-core';
 export type {
+  BM25Index,
+  BM25IndexParams,
+  Contextualizer,
+  RankedChunk,
+  StoredIndexStatus,
+  StoredTranscriptIndex,
   TimedTextSegment,
   TranscriptChunk,
-  BM25Index,
-  Contextualizer,
-  StoredTranscriptIndex,
 } from './bm25-core';
 
 import {
   BM25_B,
   BM25_K1,
+  RETRIEVAL_CHUNK_OVERLAP,
+  RETRIEVAL_CHUNK_WORDS,
   searchBM25,
   tokenize,
   type BM25Index,
@@ -196,8 +207,7 @@ const FALLBACK_WPM = 150;
 // so each partial summary has enough context to produce coherent bullets
 // without fragmenting the narrative across chunk boundaries. Industry
 // guidance: 150–300 tokens for retrieval, 1,500–3,000 tokens for summary.
-const RETRIEVAL_CHUNK_WORDS = 150;
-const RETRIEVAL_CHUNK_OVERLAP = 20;
+
 // Summary chunks tuned for throughput on local 8B. Larger windows (~3,300
 // tokens) mean fewer chunks → fewer orchestration round-trips for the same
 // total tokens processed. Overlap dropped to ~2% — industry guidance says
