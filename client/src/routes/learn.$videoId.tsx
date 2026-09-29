@@ -19,12 +19,14 @@ import { RelatedVideos } from '#/components/RelatedVideos';
 import { GenerationModeSelect } from '#/components/GenerationModeSelect';
 import {
   clearSummaryFailure,
+  getEmbeddingStatus,
   getGenerationProgress,
   getVideoByVideoId,
   regenerateSummary,
   regenerateVideoEmbedding,
   regenerateVideoVerdict,
   triggerSummaryGeneration,
+  type EmbeddingStatusResult,
   type GenerationProgress,
 } from '#/data/server-functions/videos';
 import type { VideoEmbeddingStatus } from '#/lib/services/embeddings';
@@ -828,16 +830,31 @@ function EmbeddingPanel({ video }: Readonly<{ video: StrapiVideo }>) {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const status: VideoEmbeddingStatus = (() => {
-    if (!video.summaryEmbedding || video.summaryEmbedding.length === 0) {
-      return 'missing';
-    }
-    // The env constants can't be imported client-side via a secret; trust
-    // what's stored: the server-side `getEmbeddingStatus` is authoritative
-    // when we need it. Render as 'current' unless explicitly missing.
-    // Regenerating is always safe — the server handles staleness detection.
-    return 'current';
-  })();
+  // `embeddingStatus` needs the current model/version, which live in the
+  // server-side env — so ask the server rather than guessing. The previous
+  // version of this panel hard-coded 'current' for any non-empty vector,
+  // which meant a stale embedding rendered as healthy while Related
+  // videos silently returned nothing for the same row.
+  const [remote, setRemote] = useState<EmbeddingStatusResult | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const res = await getEmbeddingStatus({
+        data: { videoId: video.youtubeVideoId },
+      });
+      if (!cancelled) setRemote(res);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [video.youtubeVideoId, video.embeddingGeneratedAt]);
+
+  const status: VideoEmbeddingStatus =
+    remote && remote.status !== 'error'
+      ? remote.status
+      : video.summaryEmbedding && video.summaryEmbedding.length > 0
+        ? 'current'
+        : 'missing';
 
   const handleRegenerate = async () => {
     if (running) return;
@@ -860,6 +877,13 @@ function EmbeddingPanel({ video }: Readonly<{ video: StrapiVideo }>) {
   const label =
     status === 'missing' ? 'Generate embedding' : 'Regenerate embedding';
 
+  const staleNote =
+    remote && remote.status === 'stale'
+      ? `Stale — built with ${remote.model ?? 'an older model'} v${
+          remote.version ?? '?'
+        }, current is ${remote.currentModel} v${remote.currentVersion}. Related videos and semantic search skip this row until it is regenerated.`
+      : null;
+
   return (
     <div className="mt-8 border-t border-[var(--line)] pt-5">
       <h3 className="mb-2 text-sm font-medium text-[var(--ink)]">
@@ -872,6 +896,8 @@ function EmbeddingPanel({ video }: Readonly<{ video: StrapiVideo }>) {
               No topical embedding yet. Generate one to enable related-video
               suggestions and library-wide semantic search for this video.
             </>
+          ) : staleNote ? (
+            <>{staleNote}</>
           ) : (
             <>
               Embedded{' '}

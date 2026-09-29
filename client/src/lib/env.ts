@@ -15,6 +15,14 @@ function readEnv(name: string): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+/** An integer invalidation key from the environment. Falls back to the
+ *  shipped default when unset or unparseable — a typo must not silently
+ *  invalidate the whole vector store. */
+function readVersion(name: string, fallback: number): number {
+  const parsed = Number.parseInt(readEnv(name) ?? '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 const STRAPI_URL = readEnv('STRAPI_URL') ?? 'http://localhost:1340';
 const STRAPI_API_TOKEN = readEnv('STRAPI_API_TOKEN');
 
@@ -46,7 +54,15 @@ const OLLAMA_EMBEDDING_MODEL =
 //      nomic-embed-text; old v1 vectors have no prefix and produce wrong
 //      similarity scores against query-side vectors (baseline ~0.5 for
 //      anything English).
-const EMBEDDING_VERSION = 2;
+// Read from the environment, not hard-coded: the Strapi server reads the
+// same variable (server/src/mcp/utils/embeddings.ts) and both halves write
+// vectors tagged with it. A literal here meant the documented "bump the
+// env-level EMBEDDING_VERSION" procedure moved the server to v3 while the
+// client still believed 2 — so every freshly written vector was filtered
+// out as stale and retrieval went quietly empty.
+//
+// The two .env files must agree. See the note in both .env.example files.
+const EMBEDDING_VERSION = readVersion('EMBEDDING_VERSION', 2);
 
 // Separate invalidation key for passage embeddings (Tier 2 moment search).
 // Bump when the passage chunker's parameters change (target/max window size,
@@ -60,7 +76,7 @@ const EMBEDDING_VERSION = 2;
 //      parent video's identity. Fixes proper-noun queries where the
 //      chunk itself uses pronouns ("the model", "this framework") and
 //      dense fails to associate the chunk with its subject.
-const PASSAGE_EMBEDDING_VERSION = 3;
+const PASSAGE_EMBEDDING_VERSION = readVersion('PASSAGE_EMBEDDING_VERSION', 3);
 
 const MAP_CONCURRENCY = (() => {
   const parsed = Number.parseInt(readEnv('MAP_CONCURRENCY') ?? '1', 10);
