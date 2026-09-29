@@ -1,0 +1,17 @@
+# gemma4-kb — the default chat/summary model (OLLAMA_MODEL in
+# client/.env.example). It isn't on the Ollama registry: build it from the
+# repo root, which also pulls the 7.6 GB base model the first time.
+#
+#   ollama create gemma4-kb -f Modelfile
+#
+# Gemma 4 12B at Q4_K_M loads at ~8.5 GB with the context below. To run a
+# different model, change FROM and re-run the create; keep num_ctx.
+
+FROM gemma4:12b
+
+# The summary pipeline budgets for a 32K window: single-pass transcripts run
+# up to 15K tokens (SINGLE_PASS_TOKEN_BUDGET in
+# client/src/lib/services/learning.ts) before the system prompt and the
+# structured output. Ollama's default window is far smaller, and it truncates
+# longer prompts without an error.
+PARAMETER num_ctx 32768

@@ -26,7 +26,7 @@ No accounts. No cloud AI. Runs entirely on your machine against a local [Ollama]
 |---|---|
 | Client | [TanStack Start](https://tanstack.com/start), React 19, [Tailwind v4](https://tailwindcss.com), [Radix UI](https://www.radix-ui.com) |
 | AI (in-app) | [TanStack AI](https://tanstack.com/ai/latest) + `@tanstack/ai-ollama` |
-| Chat/summary model | Any Ollama chat model — default `gemma4-kb:latest` (custom [Gemma 4](https://ollama.com/library/gemma4) Modelfile, Q4) |
+| Chat/summary model | Any Ollama chat model — default `gemma4-kb:latest`, built from the repo's [`Modelfile`](./Modelfile) ([Gemma 4](https://ollama.com/library/gemma4) 12B, Q4, 32K context) |
 | Embedding model | [`nomic-embed-text`](https://ollama.com/library/nomic-embed-text) via Ollama (768-dim, ~137MB). One vector per video; cosine similarity in-memory |
 | Backend | [Strapi 5](https://strapi.io) (SQLite for dev, Postgres-ready) |
 | MCP server | Official Strapi MCP server (Strapi 5.47+) — Streamable HTTP at `/mcp`, auth via Strapi **admin** API tokens |
@@ -42,13 +42,15 @@ No accounts. No cloud AI. Runs entirely on your machine against a local [Ollama]
 # 1. Install everything + copy .env files
 yarn setup
 
-# 2. Pull the models.
+# 2. Get the models.
 #    Two models by default: a chat/summary model and an embedding model.
-#    The embedding model is small (~137MB) and powers related-videos +
-#    library semantic search. Skipping it just hides those features;
-#    summaries/chat still work.
-ollama pull gemma4-kb:latest   # chat/summary (or gemma3, llama3.2, qwen2.5 — any chat-capable)
-ollama pull nomic-embed-text   # embeddings  (override with OLLAMA_EMBEDDING_MODEL)
+#    The chat model is built from ./Modelfile — Gemma 4 12B with the 32K
+#    context the summary pipeline expects; the first create pulls the
+#    7.6 GB base model. The embedding model is small (~137MB) and powers
+#    related-videos + library semantic search. Skipping it just hides those
+#    features; summaries/chat still work.
+ollama create gemma4-kb -f Modelfile   # chat/summary (change FROM in Modelfile to swap models)
+ollama pull nomic-embed-text           # embeddings  (override with OLLAMA_EMBEDDING_MODEL)
 
 # 3. (Optional) Load example videos so the feed isn't empty on first run.
 #    Reads server/seed-data/seed.tar.gz. Only run BEFORE starting Strapi —

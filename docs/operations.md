@@ -52,11 +52,13 @@ ollama list                                  # what's actually pulled
 echo $OLLAMA_MODEL $OLLAMA_CHAT_MODEL $OLLAMA_EMBEDDING_MODEL
 ```
 
-**Fix:** `ollama pull <model>` for whatever's missing. Defaults are `gemma4-kb:latest` (chat/summary) + `nomic-embed-text` (embeddings). The `gemma4-kb` is a custom Modelfile variant — if you don't have a Modelfile for it, swap to a stock model in `client/.env`:
+**Fix:** `ollama pull <model>` for whatever's missing. Defaults are `gemma4-kb:latest` (chat/summary) + `nomic-embed-text` (embeddings). `gemma4-kb` isn't on the Ollama registry — build it from the repo's [`Modelfile`](../Modelfile), from the repo root:
 
+```bash
+ollama create gemma4-kb -f Modelfile
 ```
-OLLAMA_MODEL=gemma3:4b
-```
+
+To run a different model, change `FROM` in the Modelfile and re-run the create, which keeps the 32K context the summary pipeline budgets for. Pointing `OLLAMA_MODEL` in `client/.env` straight at a stock model (say `gemma3:4b`) also works, but at Ollama's much smaller default context, which truncates long transcripts.
 
 ## Symptom: a video is stuck on "Generating…" forever
 
@@ -195,7 +197,7 @@ Per the user's machine: 24 GB RAM. Practical model size ceilings:
 - **15–18 GB** borderline — works, but other apps will swap.
 - **≥19 GB** thrashes — choose a smaller model or quantization.
 
-`gemma4-kb:latest` (Q4 4B) is ~3 GB plus KV cache — comfortable. Stepping up to `gemma3:8b` or `qwen2.5:14b` is fine; `:32b` is not.
+`gemma4-kb:latest` (Gemma 4 12B, Q4) loads at ~8.5 GB with its 32K context — comfortable. Stepping up to a 14B model is fine; `:32b` is not.
 
 ### Long video timeouts
 

@@ -9,6 +9,7 @@ Two-package monorepo with an unversioned root:
 - `client/` — TanStack Start (Vite + React 19) app on port **3005**. Server functions and Nitro API routes live alongside the React routes.
 - `server/` — Strapi 5 (SQLite for dev) on port **1340**. Hosts the data model, REST API, the official Strapi MCP server at `/mcp`, and the `seed-data/` archive.
 - `docs/` — design notes, planning docs, and architecture deep-dive (`architecture.md`).
+- `Modelfile` — builds the default chat/summary model, `gemma4-kb` (Gemma 4 12B with the 32K context the summary pipeline budgets for): `ollama create gemma4-kb -f Modelfile`. The name isn't on the Ollama registry, so `ollama pull` can't fetch it.
 - Root `package.json` is a shell that delegates to the two packages via `yarn` workspaces-style scripts. **Do not run app code from the root** — it has no `src/`.
 
 The two halves are independent: the client never imports from `server/` and vice versa. They communicate over Strapi's REST API and (for write-side internal services) authenticated REST calls in `client/src/lib/services/strapi-client.ts`.
