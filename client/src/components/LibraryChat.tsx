@@ -161,13 +161,15 @@ function LibraryChatPanel({
               autoFocus
               className="h-11 min-w-0 flex-1 rounded-full border border-[var(--line)] bg-[var(--bg-subtle)] px-4 text-sm text-[var(--ink)] placeholder:text-[var(--ink-muted)] focus:border-[var(--line-strong)] focus:outline-none disabled:opacity-50"
             />
-            <Button
-              type="submit"
-              size="pill"
-              disabled={chat.isStreaming || !input.trim()}
-            >
-              {chat.isStreaming ? 'Thinking…' : 'Ask'}
-            </Button>
+            {chat.isStreaming ? (
+              <Button type="button" size="pill" variant="outline" onClick={chat.cancel}>
+                Stop
+              </Button>
+            ) : (
+              <Button type="submit" size="pill" disabled={!input.trim()}>
+                Ask
+              </Button>
+            )}
           </div>
         </form>
       </aside>
@@ -245,12 +247,12 @@ function AssistantMessage({ message }: Readonly<{ message: ChatMessage }>) {
       </div>
     );
   }
-  if (message.status === 'error') {
-    return (
-      <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
-        Couldn&apos;t complete: {message.error}
-      </div>
-    );
+  // A failed run with nothing streamed is just an error. A failed run that
+  // had already put tokens on screen keeps them — the hook preserves
+  // `content` on error, and VideoChat/DigestChat both render it (120ea85).
+  // Returning early here was throwing away a good partial answer.
+  if (message.status === 'error' && !message.content.trim()) {
+    return <ErrorStrip error={message.error} />;
   }
   const components = {
     // Replace bare text fragments containing [N] citation markers with
@@ -270,6 +272,11 @@ function AssistantMessage({ message }: Readonly<{ message: ChatMessage }>) {
           {annotateCitations(message.content, citations)}
         </ReactMarkdown>
       </div>
+      {message.status === 'error' && (
+        <div className="mt-3">
+          <ErrorStrip error={message.error} />
+        </div>
+      )}
       {citations.length > 0 && message.status === 'done' && (
         <details className="mt-3 rounded-lg border border-[var(--line)] bg-[var(--bg-subtle)] p-3">
           <summary className="cursor-pointer text-xs font-medium text-[var(--ink-muted)]">
@@ -289,6 +296,17 @@ function AssistantMessage({ message }: Readonly<{ message: ChatMessage }>) {
 // Build the "Video N → anchor citation" lookup. Citations arrive in
 // rank order grouped by video (video 1's passages, then video 2's, …),
 // so the first citation per youtubeVideoId is that video's anchor.
+function ErrorStrip({ error }: Readonly<{ error?: string }>) {
+  return (
+    <div
+      role="alert"
+      className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive"
+    >
+      Couldn&apos;t complete: {error}
+    </div>
+  );
+}
+
 function buildVideoAnchorIndex(citations: Citation[]): Citation[] {
   const seen = new Set<string>();
   const anchors: Citation[] = [];

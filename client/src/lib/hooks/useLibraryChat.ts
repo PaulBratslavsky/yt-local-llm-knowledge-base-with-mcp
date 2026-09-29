@@ -39,6 +39,20 @@ type Persisted = {
   isOpen: boolean;
 };
 
+/** A user-initiated abort, not a failure to report.
+ *
+ * Checking `abortRef.current?.signal.aborted` in `onError` could never work:
+ * `cancel`, `clear` and the mutation's own `finally` all null the ref before
+ * the error propagates, so the guard read `null?.signal.aborted` —
+ * `undefined` — and an abort rendered as a raw DOM error string. Ask the
+ * error what it is instead of asking a ref that has moved on. */
+export function isAbortError(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  if ((err as { name?: unknown }).name === 'AbortError') return true;
+  const message = (err as { message?: unknown }).message;
+  return typeof message === 'string' && /\bthe operation was aborted\b/i.test(message);
+}
+
 const STORAGE_KEY = 'ytkb:library-chat:v1';
 
 function loadPersisted(): Persisted {
@@ -200,7 +214,7 @@ export function useLibraryChat() {
     },
     onError: (err, { assistantId }) => {
       // Aborted by user — state already cleaned up by caller.
-      if (abortRef.current?.signal.aborted) return;
+      if (isAbortError(err) || abortRef.current?.signal.aborted) return;
       const raw = err instanceof Error ? err.message : 'Ask failed';
       // Translate raw connection / model errors into a recovery hint.
       // Other failures pass through unchanged so we don't hide useful
