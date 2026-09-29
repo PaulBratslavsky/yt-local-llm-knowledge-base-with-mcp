@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
+  CURRENT_INDEX_PARAMS,
+  STORED_INDEX_VERSION,
   annotateWithTimecodes,
   buildBM25Index,
   chunkForRetrieval,
@@ -379,7 +381,8 @@ describe('loadStoredIndex (repair path for pre-fix corrupted rows)', () => {
     // transcript chunk contained the token "constructor": the value is the
     // stringified result of `Function + 1`, not a number.
     const corruptedStored = {
-      version: 1,
+      version: STORED_INDEX_VERSION,
+      params: { ...CURRENT_INDEX_PARAMS },
       bm25: {
         chunks: [{ id: 0, text: 'hello world', startWord: 0, timeSec: 0 }],
         tf: [{ hello: 1, world: 1, constructor: 'function Object() { [native code] }1' }],
@@ -399,8 +402,22 @@ describe('loadStoredIndex (repair path for pre-fix corrupted rows)', () => {
 
   it('returns null for invalid shapes', () => {
     expect(loadStoredIndex(null)).toBeNull();
-    expect(loadStoredIndex({ version: 2 })).toBeNull();
-    expect(loadStoredIndex({ version: 1, bm25: { chunks: null } })).toBeNull();
+    expect(loadStoredIndex({ version: STORED_INDEX_VERSION })).toBeNull();
+    expect(
+      loadStoredIndex({ version: STORED_INDEX_VERSION, bm25: { chunks: null } }),
+    ).toBeNull();
+  });
+
+  // Pre-params indexes were built by the deduping tokenizer, so every tf in
+  // them is 1. Loading one would score today's queries against yesterday's
+  // arithmetic — see bm25-core.invalidation.test.ts.
+  it('returns null for a legacy v1 index', () => {
+    expect(
+      loadStoredIndex({
+        version: 1,
+        bm25: { tf: [], idf: {}, lengths: [], avgLength: 0, chunks: [] },
+      }),
+    ).toBeNull();
   });
 });
 
@@ -619,7 +636,8 @@ describe('isStoredIndex', () => {
   it('accepts valid shape', () => {
     expect(
       isStoredIndex({
-        version: 1,
+        version: STORED_INDEX_VERSION,
+        params: { ...CURRENT_INDEX_PARAMS },
         bm25: { tf: [], idf: {}, lengths: [], avgLength: 0, chunks: [] },
       }),
     ).toBe(true);
@@ -629,7 +647,7 @@ describe('isStoredIndex', () => {
     expect(isStoredIndex(null)).toBe(false);
     expect(isStoredIndex(undefined)).toBe(false);
     expect(isStoredIndex({})).toBe(false);
-    expect(isStoredIndex({ version: 2, bm25: {} })).toBe(false);
+    expect(isStoredIndex({ version: 99, bm25: {} })).toBe(false);
     expect(isStoredIndex({ version: 1, bm25: null })).toBe(false);
   });
 });

@@ -15,6 +15,7 @@ vi.mock('@tanstack/ai-ollama', () => ({
 import { chat } from '@tanstack/ai';
 import {
   buildBM25Index,
+  makeStoredIndex,
   type BM25Index,
   type TranscriptChunk,
 } from './transcript';
@@ -166,7 +167,7 @@ describe('getChatEvidenceForVideo', () => {
   it('delegates to the deep primitive when index is valid', async () => {
     const index = makeIndex();
     const result = await getChatEvidenceForVideo(
-      makeVideo({ version: 1, bm25: index }),
+      makeVideo(makeStoredIndex(index)),
       'MCP',
     );
     expect(result.length).toBeGreaterThan(0);

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { serialize, deserialize } from 'seroval';
-import { buildBM25Index } from './transcript';
+import { buildBM25Index, makeStoredIndex } from './transcript';
 import { stripVideoForClient, type StrapiVideo } from './videos';
 
 // ---------------------------------------------------------------------------
@@ -100,11 +100,7 @@ function makeReservedTokenIndex() {
     { id: 1, text: 'then we call super and check hasOwnProperty on the value', startWord: 10, timeSec: 30 },
     { id: 2, text: 'finally valueOf returns the wrapped primitive', startWord: 20, timeSec: 60 },
   ];
-  return {
-    version: 1 as const,
-    bm25: buildBM25Index(chunks),
-    durationSec: 90,
-  };
+  return makeStoredIndex(buildBM25Index(chunks), { durationSec: 90 });
 }
 
 // Reserved Object.prototype own-property names that used to make seroval

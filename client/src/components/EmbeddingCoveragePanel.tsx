@@ -3,10 +3,13 @@ import { useRouter } from '@tanstack/react-router';
 import { Button } from '#/components/ui/button';
 import {
   getEmbeddingCoverage,
+  getIndexCoverage,
   getPassageCoverage,
   reindexAllEmbeddings,
   reindexAllPassages,
+  reindexAllTranscriptIndexes,
   type EmbeddingCoverage,
+  type IndexCoverage,
   type PassageCoverage,
 } from '#/data/server-functions/videos';
 
@@ -18,6 +21,7 @@ export function EmbeddingCoveragePanel() {
     <div className="grid gap-4">
       <SummaryEmbeddingPanel />
       <PassageEmbeddingPanel />
+      <TranscriptIndexPanel />
     </div>
   );
 }
@@ -347,5 +351,122 @@ function StatChip({
       <span className="tabular-nums">{value}</span>
       <span className="opacity-80">{label}</span>
     </span>
+  );
+}
+
+// Stored BM25 index health. Separate from the two embedding panels because
+// it invalidates on different inputs (chunker + tokenizer params, not the
+// embedding model) and rebuilds without touching Ollama at all.
+function TranscriptIndexPanel() {
+  const router = useRouter();
+  const [coverage, setCoverage] = useState<IndexCoverage | null>(null);
+  const [running, setRunning] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const load = async () => {
+    const res = await getIndexCoverage();
+    setCoverage(res);
+  };
+
+  useEffect(() => {
+    void load();
+  }, []);
+
+  const runBackfill = async (scope: 'stale' | 'missing' | 'all') => {
+    if (running) return;
+    setRunning(true);
+    setMessage(null);
+    try {
+      const res = await reindexAllTranscriptIndexes({ data: { scope } });
+      if (res.status === 'ok') {
+        const parts = [`Rebuilt ${res.rebuilt}/${res.targeted}`];
+        if (res.unrecoverable > 0) {
+          parts.push(`${res.unrecoverable} need a full regenerate`);
+        }
+        if (res.failed > 0) parts.push(`${res.failed} failed`);
+        parts.push(`${(res.tookMs / 1000).toFixed(1)}s`);
+        setMessage(parts.join(' · '));
+      } else {
+        setMessage(res.error);
+      }
+      await load();
+      await router.invalidate();
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  if (!coverage) {
+    return (
+      <section className="rounded-2xl border border-[var(--line)] bg-[var(--card)] p-5 text-xs text-[var(--ink-muted)]">
+        Loading transcript index coverage…
+      </section>
+    );
+  }
+
+  if (coverage.error) {
+    return (
+      <CoverageUnavailable
+        label="Transcript index coverage"
+        error={coverage.error}
+        onRetry={() => void load()}
+      />
+    );
+  }
+
+  const { total, current, stale, missing, unrecoverable, params } = coverage;
+  const allCovered = total > 0 && stale === 0 && missing === 0;
+
+  return (
+    <section className="rounded-2xl border border-[var(--line)] bg-[var(--card)] p-5">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h3 className="text-sm font-medium text-[var(--ink)]">Transcript search index</h3>
+          <p className="mt-1 text-xs text-[var(--ink-muted)]">
+            BM25 index behind per-video chat, citation grounding and MCP
+            transcript search. Rebuilt from cached captions — no Ollama, no
+            YouTube.
+          </p>
+          <p className="mt-2 text-xs text-[var(--ink-muted)]">
+            chunk {params.chunkWords}w/{params.chunkOverlap} · tokenizer v
+            {params.tokenizer}
+          </p>
+        </div>
+        <div className="text-right text-xs text-[var(--ink-muted)]">
+          <div className="text-2xl font-semibold text-[var(--ink)]">
+            {current}/{total}
+          </div>
+          current
+        </div>
+      </div>
+
+      <div className="mt-4 flex flex-wrap gap-4 text-xs text-[var(--ink-soft)]">
+        <span>{stale} stale</span>
+        <span>{missing} missing</span>
+        {unrecoverable > 0 && (
+          <span title="No cached caption segments — these need a full Regenerate.">
+            {unrecoverable} need regenerate
+          </span>
+        )}
+      </div>
+
+      {!allCovered && (
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Button size="sm" disabled={running} onClick={() => void runBackfill('all')}>
+            {running ? 'Rebuilding…' : 'Rebuild stale + missing'}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={running || stale === 0}
+            onClick={() => void runBackfill('stale')}
+          >
+            Stale only
+          </Button>
+        </div>
+      )}
+
+      {message && <p className="mt-3 text-xs text-[var(--ink-muted)]">{message}</p>}
+    </section>
   );
 }

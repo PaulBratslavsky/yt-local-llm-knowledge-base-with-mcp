@@ -39,6 +39,47 @@ const FILLER_PATTERNS: Array<[RegExp, string]> = [
   [/\s+/g, ' '],
 ];
 
+// BM25 scoring and the stored-index format live in ./bm25-core, which the
+// Strapi server copies verbatim. Re-exported here so every existing caller
+// keeps importing from './transcript'.
+export {
+  CURRENT_INDEX_PARAMS,
+  STOPWORDS,
+  STORED_INDEX_VERSION,
+  TOKENIZER_VERSION,
+  buildBM25Index,
+  isStoredIndex,
+  loadStoredIndex,
+  makeStoredIndex,
+  searchBM25,
+  searchBM25Ranked,
+  storedIndexStatus,
+  tokenize,
+} from './bm25-core';
+export type {
+  BM25Index,
+  BM25IndexParams,
+  Contextualizer,
+  RankedChunk,
+  StoredIndexStatus,
+  StoredTranscriptIndex,
+  TimedTextSegment,
+  TranscriptChunk,
+} from './bm25-core';
+
+import {
+  BM25_B,
+  BM25_K1,
+  RETRIEVAL_CHUNK_OVERLAP,
+  RETRIEVAL_CHUNK_WORDS,
+  searchBM25,
+  tokenize,
+  type BM25Index,
+  type TimedTextSegment,
+  type TranscriptChunk,
+  type Contextualizer,
+} from './bm25-core';
+
 export function cleanTranscript(raw: string): string {
   let text = raw;
   for (const [pattern, replacement] of FILLER_PATTERNS) {
@@ -59,11 +100,6 @@ export function cleanTranscript(raw: string): string {
 // parallel array of ms-start-times per surviving word. Downstream chunkers
 // use that to assign real timeSec values to chunks instead of estimates.
 
-export type TimedTextSegment = {
-  text: string;
-  startMs: number;
-  endMs?: number;
-};
 
 export type PreparedTranscript = {
   /** Cleaned transcript text — segments joined with single spaces. */
@@ -171,8 +207,7 @@ const FALLBACK_WPM = 150;
 // so each partial summary has enough context to produce coherent bullets
 // without fragmenting the narrative across chunk boundaries. Industry
 // guidance: 150–300 tokens for retrieval, 1,500–3,000 tokens for summary.
-const RETRIEVAL_CHUNK_WORDS = 150;
-const RETRIEVAL_CHUNK_OVERLAP = 20;
+
 // Summary chunks tuned for throughput on local 8B. Larger windows (~3,300
 // tokens) mean fewer chunks → fewer orchestration round-trips for the same
 // total tokens processed. Overlap dropped to ~2% — industry guidance says
@@ -181,12 +216,6 @@ const RETRIEVAL_CHUNK_OVERLAP = 20;
 const SUMMARY_CHUNK_WORDS = 2500;
 const SUMMARY_CHUNK_OVERLAP = 50;
 
-export type TranscriptChunk = {
-  id: number;
-  text: string;
-  startWord: number;
-  timeSec: number;
-};
 
 // Compute per-video words-per-minute. If we know the real video duration
 // we can map word index → real seconds with linear interpolation across
@@ -259,285 +288,6 @@ export function chunkForSummary(
   return chunkBy(input, SUMMARY_CHUNK_WORDS, SUMMARY_CHUNK_OVERLAP, durationSec);
 }
 
-// -----------------------------------------------------------------------------
-// 3. BM25 index
-// -----------------------------------------------------------------------------
-//
-// Classic Okapi BM25. Parameters k1 and b follow the common defaults that
-// lucene/elasticsearch use. Tokenization is lowercased word-boundary splits
-// with a small English stopword filter — good enough for transcript search
-// without bringing in a stemmer dependency.
-
-const BM25_K1 = 1.2;
-const BM25_B = 0.75;
-
-export const STOPWORDS = new Set([
-  'the',
-  'a',
-  'an',
-  'and',
-  'or',
-  'but',
-  'is',
-  'are',
-  'was',
-  'were',
-  'be',
-  'been',
-  'being',
-  'to',
-  'of',
-  'in',
-  'on',
-  'at',
-  'for',
-  'with',
-  'by',
-  'as',
-  'it',
-  'its',
-  'this',
-  'that',
-  'these',
-  'those',
-  'i',
-  'you',
-  'he',
-  'she',
-  'we',
-  'they',
-  'them',
-  'his',
-  'her',
-  'their',
-  'our',
-  'my',
-  'your',
-  'so',
-  'if',
-  'then',
-  'than',
-  'there',
-  'here',
-  'do',
-  'does',
-  'did',
-  'have',
-  'has',
-  'had',
-  'not',
-  'no',
-  'yes',
-  'too',
-  'very',
-  'just',
-  'about',
-  'from',
-  'up',
-  'down',
-  'out',
-  'off',
-  'over',
-  'again',
-  'further',
-  'once',
-]);
-
-export function tokenize(input: string): string[] {
-  // Strip `[mm:ss]` / `[h:mm:ss]` markers before tokenizing. These exist
-  // for the model's citation grounding (see annotateSpan) but would pollute
-  // BM25 scoring if indexed as numeric tokens.
-  const base =
-    input
-      .replace(/\[\d{1,2}:\d{2}(?::\d{2})?\]/g, ' ')
-      .toLowerCase()
-      .match(/[a-z0-9][a-z0-9'-]*/g)
-      ?.filter((t) => t.length > 1 && !STOPWORDS.has(t)) ?? [];
-
-  // Expand mixed alpha-digit tokens to also emit their alpha-only prefix.
-  // "Qwen3.6" → "qwen3" + "qwen". "Gemma2" → "gemma2" + "gemma". "GPT-4"
-  // → "gpt-4" + "gpt". Without this, a query "qwen" finds zero documents
-  // whose title says "Qwen3" (or "Qwen 3.6", etc.) — a major recall hole
-  // for model/product names that incorporate version numbers.
-  //
-  // Repeats are preserved: the output is a token *stream*, not a token set.
-  // BM25 needs real term frequencies on both sides — document TF drives k1
-  // saturation, and query TF drives the doc-as-query weighting in
-  // `searchBM25`. Deduping here silently flattened every `tf` to 1 and made
-  // `lengths` a unique-term count, which degraded the scorer to plain IDF
-  // coverage. Callers that genuinely want a set wrap this in `new Set(...)`.
-  const out: string[] = [];
-  const push = (t: string) => {
-    if (t.length > 1 && !STOPWORDS.has(t)) out.push(t);
-  };
-  for (const t of base) {
-    push(t);
-    const alphaPrefix = t.match(/^[a-z]+/)?.[0];
-    if (alphaPrefix && alphaPrefix !== t) push(alphaPrefix);
-  }
-  return out;
-}
-
-export type BM25Index = {
-  // Serialized per-document term frequencies. Parallel to `chunks`.
-  tf: Array<Record<string, number>>;
-  // Inverse document frequency per term.
-  idf: Record<string, number>;
-  // Document lengths in tokens (parallel to `chunks`), plus the average.
-  lengths: number[];
-  avgLength: number;
-  // Snapshot of the chunks at indexing time. Kept alongside the scoring
-  // tables so the serialized blob is self-contained — one JSON field in
-  // Strapi holds everything retrieval needs.
-  chunks: TranscriptChunk[];
-};
-
-// Contextual Retrieval (Anthropic, 2024): each chunk is tokenized together
-// with a short context anchor that situates it within the document. The
-// anchor only affects scoring — the original chunk text is what gets shown
-// to the model at chat time. Callers that skip the contextualizer get
-// plain BM25 over chunk.text.
-export type Contextualizer = (chunk: TranscriptChunk) => string;
-
-// Token maps are keyed by user-controlled strings from transcripts, so they
-// must be null-prototype objects. A plain `{}` inherits Object.prototype, and
-// `m['constructor']` would return the native `Object` function instead of
-// `undefined` — turning the counter into a string and corrupting the index
-// (and crashing seroval downstream). `Object.create(null)` avoids that.
-function emptyTokenMap(): Record<string, number> {
-  return Object.create(null) as Record<string, number>;
-}
-
-export function buildBM25Index(
-  chunks: TranscriptChunk[],
-  contextualize?: Contextualizer,
-): BM25Index {
-  const tf: Array<Record<string, number>> = [];
-  const df: Record<string, number> = emptyTokenMap();
-  const lengths: number[] = [];
-
-  for (const chunk of chunks) {
-    const textForIndex = contextualize ? contextualize(chunk) : chunk.text;
-    const terms = tokenize(textForIndex);
-    lengths.push(terms.length);
-    const localTf: Record<string, number> = emptyTokenMap();
-    const seen = new Set<string>();
-    for (const term of terms) {
-      localTf[term] = (localTf[term] ?? 0) + 1;
-      if (!seen.has(term)) {
-        df[term] = (df[term] ?? 0) + 1;
-        seen.add(term);
-      }
-    }
-    tf.push(localTf);
-  }
-
-  const N = chunks.length;
-  const idf: Record<string, number> = emptyTokenMap();
-  for (const [term, frequency] of Object.entries(df)) {
-    // BM25 IDF with the +1 smoothing (guaranteed non-negative for terms
-    // that appear in more than half the corpus).
-    idf[term] = Math.log(1 + (N - frequency + 0.5) / (frequency + 0.5));
-  }
-
-  const avgLength =
-    lengths.length > 0 ? lengths.reduce((a, b) => a + b, 0) / lengths.length : 0;
-
-  return { tf, idf, lengths, avgLength, chunks };
-}
-
-// IDF threshold below which a query term is considered "too common to be
-// informative" and dropped from the BM25 query. Rationale: terms like
-// "what", "how", "this", "that" pass the stopword filter but appear in
-// a meaningful fraction of documents, so their IDF is small-to-moderate.
-//
-// 1.5 is the sweet spot empirically:
-//   - "what" in 15/45 docs ≈ IDF 1.09 → filtered ✓
-//   - "how" in similar ≈ filtered ✓
-//   - "strapi" in 7/45 ≈ IDF 1.81 → kept ✓ (was wrongly filtered at 2.0)
-//   - "agents" in 8/45 ≈ IDF 1.69 → kept ✓
-//   - Proper nouns in 2-3 docs easily clear it
-//
-// The threshold scales with corpus size — a term appearing in "~N/3 docs"
-// sits near IDF 1.0, so 1.5 roughly means "<20% of the corpus" at small
-// scale, moving toward "<10%" at large scale. Acceptable for our library.
-const BM25_MIN_QUERY_IDF = 1.5;
-
-export function searchBM25(
-  index: BM25Index,
-  query: string,
-  topK: number,
-  opts?: { maxQueryTerms?: number },
-): TranscriptChunk[] {
-  // Count query-side term frequencies before dedup so we can weight by
-  // TF × IDF when capping. Essential for doc-as-query paths where a
-  // term like "strapi" appears 29 times in the target — that repetition
-  // is the signal of topical focus, and should dominate over one-off
-  // rare tokens that don't recur.
-  const rawTokens = tokenize(query);
-  const queryTf = new Map<string, number>();
-  for (const t of rawTokens) {
-    queryTf.set(t, (queryTf.get(t) ?? 0) + 1);
-  }
-
-  let queryTerms = Array.from(queryTf.keys()).filter((term) => {
-    const idf = index.idf[term];
-    return idf !== undefined && idf >= BM25_MIN_QUERY_IDF;
-  });
-
-  // Cap to the N most topically-important terms. Weight is TF(query) ×
-  // IDF(corpus) — rewards both rarity and repetition in the target.
-  // Critical for doc-as-query paths like `relatedVideos`: without this,
-  // a 6KB target video's text expands to hundreds of query terms, each
-  // matching *some* video in the corpus, turning BM25 into noise. Short
-  // user queries (1-3 tokens) naturally don't need capping — default
-  // is unlimited.
-  const maxTerms = opts?.maxQueryTerms;
-  if (maxTerms && queryTerms.length > maxTerms) {
-    queryTerms = queryTerms
-      .map((term) => ({
-        term,
-        weight: (queryTf.get(term) ?? 1) * (index.idf[term] ?? 0),
-      }))
-      .sort((a, b) => b.weight - a.weight)
-      .slice(0, maxTerms)
-      .map((x) => x.term);
-  }
-
-  if (queryTerms.length === 0) return [];
-
-  // Weight each term's contribution by its query-side TF (dampened with
-  // log saturation so a term mentioned 29 times doesn't outright 29x its
-  // effect — that'd crush everything else). For short user queries
-  // (qtf=1), log(1+1) = log(2) ≈ 0.69 is a uniform damping that
-  // preserves standard BM25 behavior. For doc-as-query (qtf up to 30+),
-  // a term mentioned many times in the target gets a proportional boost
-  // that reflects its topical dominance, matching how a human would
-  // interpret "this video is ABOUT strapi" vs "this video mentions
-  // strapi once". Standard trick — see Robertson & Zaragoza (2009).
-  const scores: number[] = new Array(index.chunks.length).fill(0);
-  for (const term of queryTerms) {
-    const idf = index.idf[term];
-    if (!idf) continue;
-    const qtf = queryTf.get(term) ?? 1;
-    const qtfWeight = Math.log(1 + qtf);
-    for (let i = 0; i < index.chunks.length; i++) {
-      const f = index.tf[i][term];
-      if (!f) continue;
-      const dl = index.lengths[i];
-      const norm = 1 - BM25_B + (BM25_B * dl) / (index.avgLength || 1);
-      scores[i] += qtfWeight * idf * ((f * (BM25_K1 + 1)) / (f + BM25_K1 * norm));
-    }
-  }
-
-  return scores
-    .map((score, i) => ({ score, chunk: index.chunks[i] }))
-    .filter((r) => r.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, topK)
-    .map((r) => r.chunk);
-}
-
 // Reciprocal Rank Fusion constant. 60 is the canonical value from Cormack
 // et al. (2009) — dampens the contribution of very-top ranks so no single
 // query can dominate the fused list, while still keeping near-top hits
@@ -576,64 +326,6 @@ export function searchBM25MultiQuery(
     .sort((a, b) => b.score - a.score)
     .slice(0, topK)
     .map((e) => e.chunk);
-}
-
-// -----------------------------------------------------------------------------
-// Serialization — `transcriptSegments` JSON field on the Video row holds
-// everything retrieval needs. Keep the shape explicit so older rows without
-// an index can be detected + rebuilt on demand.
-// -----------------------------------------------------------------------------
-
-export type StoredTranscriptIndex = {
-  version: 1;
-  bm25: BM25Index;
-  // Raw caption segments cached from the first youtubei.js fetch.
-  // Present for all newly-generated videos; absent on pre-cache rows
-  // (in which case the regen flow falls back to re-fetching).
-  rawSegments?: TimedTextSegment[];
-  // Video duration in seconds as reported by youtubei.js at cache time.
-  // Derivable from rawSegments as a fallback, but keeping it explicit
-  // avoids one edge case: very short trailing segments.
-  durationSec?: number | null;
-};
-
-export function isStoredIndex(value: unknown): value is StoredTranscriptIndex {
-  if (!value || typeof value !== 'object') return false;
-  const v = value as Partial<StoredTranscriptIndex>;
-  return v.version === 1 && !!v.bm25 && Array.isArray(v.bm25.chunks);
-}
-
-// Strip non-numeric tf/df/idf entries. Indexes generated before the
-// null-prototype fix could have a `constructor` (or other reserved-name)
-// entry whose value was corrupted to a string like
-// "function Object() { [native code] }1". Seroval refuses to serialize
-// those, so unsanitized rows crash the loader stream. Numeric values pass
-// through unchanged; anything else (function, string, undefined) is dropped.
-function sanitizeNumberMap(input: unknown): Record<string, number> {
-  const out: Record<string, number> = emptyTokenMap();
-  if (!input || typeof input !== 'object') return out;
-  for (const key of Object.keys(input)) {
-    const value = (input as Record<string, unknown>)[key];
-    if (typeof value === 'number' && Number.isFinite(value)) {
-      out[key] = value;
-    }
-  }
-  return out;
-}
-
-function sanitizeBM25Index(idx: BM25Index): BM25Index {
-  return {
-    ...idx,
-    tf: idx.tf.map(sanitizeNumberMap),
-    idf: sanitizeNumberMap(idx.idf),
-  };
-}
-
-// One-step "is this a usable stored index, and if so give it to me cleaned"
-// — replaces the `isStoredIndex(x) ? x.bm25 : null` pattern at call sites.
-export function loadStoredIndex(value: unknown): StoredTranscriptIndex | null {
-  if (!isStoredIndex(value)) return null;
-  return { ...value, bm25: sanitizeBM25Index(value.bm25) };
 }
 
 // Rough token count — 1 token ≈ 4 chars for English. Good enough for the
