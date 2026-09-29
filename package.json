@@ -17,6 +17,7 @@
     "export": "yarn --cwd ./server export",
     "seed": "yarn --cwd ./server seed",
     "test": "yarn --cwd ./client test",
+    "sync:bm25": "node scripts/sync-bm25-core.mjs",
     "install:all": "yarn install --frozen-lockfile && yarn --cwd server install --frozen-lockfile && yarn --cwd client install --frozen-lockfile"
   },
   "dependencies": {
