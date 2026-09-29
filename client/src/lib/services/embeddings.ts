@@ -148,15 +148,6 @@ export function buildEmbeddingText(video: StrapiVideo): string {
 // model + version, or does it need regeneration?
 // =============================================================================
 
-export function isEmbeddingCurrent(video: StrapiVideo): boolean {
-  if (!video.summaryEmbedding || video.summaryEmbedding.length === 0) {
-    return false;
-  }
-  if (video.embeddingModel !== CURRENT_EMBEDDING_MODEL) return false;
-  if (video.embeddingVersion !== CURRENT_EMBEDDING_VERSION) return false;
-  return true;
-}
-
 export type VideoEmbeddingStatus =
   | 'missing'      // no vector stored
   | 'stale'        // stored but model/version mismatch
