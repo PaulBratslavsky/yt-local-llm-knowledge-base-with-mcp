@@ -38,7 +38,8 @@ export const listVideosTool: ToolDef<z.infer<typeof schema>> = {
     const rows = (await strapi.documents('api::video.video').findMany({
       filters,
       sort: 'createdAt:desc',
-      pagination: { start, limit: pageSize },
+      start,
+      limit: pageSize,
       fields: [
         'youtubeVideoId',
         'url',

@@ -40,7 +40,8 @@ export const listTranscriptsTool: ToolDef<z.infer<typeof schema>> = {
     const start = (page - 1) * pageSize;
     const rows = (await strapi.documents('api::transcript.transcript').findMany({
       sort: SORT_MAP[sort] as never,
-      pagination: { start, limit: pageSize },
+      start,
+      limit: pageSize,
       fields: [
         'youtubeVideoId',
         'title',

@@ -63,7 +63,7 @@ export const aggregateByTagTool: ToolDef<z.infer<typeof schema>> = {
 
     const rows = (await strapi.documents('api::video.video').findMany({
       filters: tagFilter,
-      pagination: { start: 0, limit },
+      limit,
       sort: 'createdAt:desc',
       fields: selectFields as never,
       populate,

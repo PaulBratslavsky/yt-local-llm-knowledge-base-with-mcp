@@ -70,9 +70,22 @@ export const relatedVideosTool: ToolDef<z.infer<typeof schema>> = {
     }
     const targetVec = target.summaryEmbedding as number[];
 
+    // Project to what the scorer reads. Without this the query pulls every
+    // generated row whole — transcriptSegments, readableArticle and
+    // passageEmbeddings included — to produce a handful of neighbours.
     const all = (await strapi.documents('api::video.video').findMany({
       filters: { summaryStatus: { $eq: 'generated' } },
-      pagination: { pageSize: 1000 },
+      fields: [
+        'documentId',
+        'youtubeVideoId',
+        'videoTitle',
+        'videoAuthor',
+        'summaryStatus',
+        'summaryEmbedding',
+        'embeddingModel',
+        'embeddingVersion',
+      ],
+      limit: 1000,
     } as never)) as unknown as VideoRow[];
 
     const scored = all

@@ -47,7 +47,7 @@ type TranscriptRow = {
 async function runQuery(strapi: any, filters: Record<string, unknown>, limit: number) {
   return (await strapi.documents('api::transcript.transcript').findMany({
     filters,
-    pagination: { start: 0, limit },
+    limit,
     sort: 'createdAt:desc',
   })) as TranscriptRow[];
 }

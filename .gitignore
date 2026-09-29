@@ -41,6 +41,9 @@ client/public/uploads/*
 server/.tmp/
 server/.strapi/
 server/.strapi-updater.json
+# strapi build writes this next to the cwd it was invoked from, so the
+# root copy appears whenever the build is run from the repo root.
+.strapi-updater.json
 server/.strapi-cloud.json
 server/exports/
 server/dist/

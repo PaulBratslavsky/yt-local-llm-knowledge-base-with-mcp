@@ -33,7 +33,7 @@ const schema = z.object({
 async function runQuery(strapi: any, filters: Record<string, unknown>, limit: number) {
   const rows = (await strapi.documents('api::video.video').findMany({
     filters,
-    pagination: { start: 0, limit },
+    limit,
     sort: 'createdAt:desc',
     fields: [
       'youtubeVideoId',
