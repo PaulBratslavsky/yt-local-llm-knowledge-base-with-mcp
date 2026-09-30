@@ -26,7 +26,7 @@ No accounts. No cloud AI. Runs entirely on your machine against a local [Ollama]
 |---|---|
 | Client | [TanStack Start](https://tanstack.com/start), React 19, [Tailwind v4](https://tailwindcss.com), [Radix UI](https://www.radix-ui.com) |
 | AI (in-app) | [TanStack AI](https://tanstack.com/ai/latest) + `@tanstack/ai-ollama` |
-| Chat/summary model | Any Ollama chat model — default `gemma4-kb:latest` (custom [Gemma 4](https://ollama.com/library/gemma4) Modelfile, Q4) |
+| Chat/summary model | Any Ollama chat model — default `gemma4-kb:latest`, built from the repo's [`Modelfile`](./Modelfile) ([Gemma 4](https://ollama.com/library/gemma4) 12B, Q4, 32K context) |
 | Embedding model | [`nomic-embed-text`](https://ollama.com/library/nomic-embed-text) via Ollama (768-dim, ~137MB). One vector per video; cosine similarity in-memory |
 | Backend | [Strapi 5](https://strapi.io) (SQLite for dev, Postgres-ready) |
 | MCP server | Official Strapi MCP server (Strapi 5.47+) — Streamable HTTP at `/mcp`, auth via Strapi **admin** API tokens |
@@ -42,13 +42,15 @@ No accounts. No cloud AI. Runs entirely on your machine against a local [Ollama]
 # 1. Install everything + copy .env files
 yarn setup
 
-# 2. Pull the models.
+# 2. Get the models.
 #    Two models by default: a chat/summary model and an embedding model.
-#    The embedding model is small (~137MB) and powers related-videos +
-#    library semantic search. Skipping it just hides those features;
-#    summaries/chat still work.
-ollama pull gemma4-kb:latest   # chat/summary (or gemma3, llama3.2, qwen2.5 — any chat-capable)
-ollama pull nomic-embed-text   # embeddings  (override with OLLAMA_EMBEDDING_MODEL)
+#    The chat model is built from ./Modelfile — Gemma 4 12B with the 32K
+#    context the summary pipeline expects; the first create pulls the
+#    7.6 GB base model. The embedding model is small (~137MB) and powers
+#    related-videos + library semantic search. Skipping it just hides those
+#    features; summaries/chat still work.
+ollama create gemma4-kb -f Modelfile   # chat/summary (change FROM in Modelfile to swap models)
+ollama pull nomic-embed-text           # embeddings  (override with OLLAMA_EMBEDDING_MODEL)
 
 # 3. (Optional) Load example videos so the feed isn't empty on first run.
 #    Reads server/seed-data/seed.tar.gz. Only run BEFORE starting Strapi —
@@ -61,7 +63,7 @@ yarn start
 
 Open `http://localhost:3005`, paste a YouTube URL on `/new-post`. The row is created immediately; the AI summary runs in the background and lands on `/learn/$videoId` when done.
 
-> `yarn start` is a convenience wrapper that sets Ollama env vars (`OLLAMA_KEEP_ALIVE=15m`, `OLLAMA_NUM_PARALLEL=1`) and then runs `yarn dev`. Use `yarn start:fresh` to hard-restart Ollama first (required after changing `OLLAMA_NUM_PARALLEL`).
+> `yarn start` is a convenience wrapper that sets Ollama env vars (`OLLAMA_KEEP_ALIVE=15m`, `OLLAMA_NUM_PARALLEL=1`), starts Ollama if it isn't running (the macOS menubar app, a Linux systemd unit, or plain `ollama serve`), and then runs `yarn dev`. Use `yarn start:fresh` to hard-restart Ollama first (required after changing `OLLAMA_NUM_PARALLEL`).
 
 > **Seed data.** `yarn seed` runs `strapi import` against `server/seed-data/seed.tar.gz` and **replaces** any existing content in the matching collections. To capture your own library as a seed, stop the dev server and run `yarn export` — it writes to the same path, ready to commit.
 
@@ -224,7 +226,7 @@ Full walkthrough (Cursor, MCP Inspector, permission tiers, auth rotation) in [`d
 | `MAP_CONCURRENCY` | `1` | Parallel map-step chunks on long videos. Bump to 2-4 if you have RAM headroom. Must match `OLLAMA_NUM_PARALLEL` on the server side. |
 | `TRANSCRIPT_PROXY_URL` | *(empty)* | Residential proxy for the YouTube caption fetch — only needed if your IP hits a bot wall |
 
-### Ollama environment (via `launchctl setenv` on macOS)
+### Ollama environment (set by `yarn start` — see [`start.sh`](./start.sh))
 
 | Variable | Default | Purpose |
 |---|---|---|

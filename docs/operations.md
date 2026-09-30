@@ -20,7 +20,7 @@ lsof -ti :1340                                # is something holding the port?
 - **Strapi just hasn't started.** `yarn dev` starts it asynchronously; the client may have loaded before the wait-on completed. Wait 10–20s, hit Retry.
 - **Orphan node process holding :1340.** A previous run didn't clean up. `start.sh` kills these pre-flight; if you're running `yarn dev` directly, do it yourself:
   ```bash
-  lsof -ti :1340 | xargs kill -9
+  lsof -ti tcp:1340 -sTCP:LISTEN | xargs kill -9
   ```
 - **SQLite file locked.** `yarn seed` was run while Strapi was up (it shouldn't be — see "Seed corrupted DB" below).
 - **Strapi crashed during boot.** Check the terminal for stack traces. Usually a schema validation error after editing a `schema.json` or component without restarting.
@@ -35,12 +35,14 @@ This is the friendly-translated message from `friendlyOllamaError` (ADR 0007). I
 curl -sf http://localhost:11434/api/version || echo "Ollama down"
 launchctl getenv OLLAMA_KEEP_ALIVE          # macOS env check
 launchctl getenv OLLAMA_NUM_PARALLEL
+systemctl --user show-environment | grep OLLAMA_   # Linux, user unit
+systemctl show ollama -p Environment               # Linux, system unit
 ```
 
 **Fixes:**
 
-- **Ollama not running.** macOS: `open -a Ollama` (menubar app) or `nohup ollama serve > /tmp/ollama.log 2>&1 &`. `start.sh` handles this — use `yarn start` instead of `yarn dev` if you want it auto-launched.
-- **Just changed `OLLAMA_NUM_PARALLEL`.** The running Ollama process won't pick up a new value — restart with `yarn start:fresh` (which `pkill -9 ollama` first).
+- **Ollama not running.** macOS: `open -a Ollama` (menubar app) or `nohup ollama serve > /tmp/ollama.log 2>&1 &`. Linux: `systemctl --user start ollama` for a user unit, `sudo systemctl start ollama` for the system unit the official installer creates. `start.sh` handles all of these — use `yarn start` instead of `yarn dev` if you want it auto-launched.
+- **Just changed `OLLAMA_NUM_PARALLEL`.** The running Ollama process won't pick up a new value — restart with `yarn start:fresh` (which restarts Ollama first: through systemd on Linux, `pkill -9 ollama` otherwise).
 - **Wrong host.** Check `client/.env` `OLLAMA_BASE_URL` — default is `http://localhost:11434/v1` (note the `/v1`, stripped internally for the TanStack adapter).
 
 ## Symptom: chat shows "Ollama can't find the configured model"
@@ -52,11 +54,13 @@ ollama list                                  # what's actually pulled
 echo $OLLAMA_MODEL $OLLAMA_CHAT_MODEL $OLLAMA_EMBEDDING_MODEL
 ```
 
-**Fix:** `ollama pull <model>` for whatever's missing. Defaults are `gemma4-kb:latest` (chat/summary) + `nomic-embed-text` (embeddings). The `gemma4-kb` is a custom Modelfile variant — if you don't have a Modelfile for it, swap to a stock model in `client/.env`:
+**Fix:** `ollama pull <model>` for whatever's missing. Defaults are `gemma4-kb:latest` (chat/summary) + `nomic-embed-text` (embeddings). `gemma4-kb` isn't on the Ollama registry — build it from the repo's [`Modelfile`](../Modelfile), from the repo root:
 
+```bash
+ollama create gemma4-kb -f Modelfile
 ```
-OLLAMA_MODEL=gemma3:4b
-```
+
+To run a different model, change `FROM` in the Modelfile and re-run the create, which keeps the 32K context the summary pipeline budgets for. Pointing `OLLAMA_MODEL` in `client/.env` straight at a stock model (say `gemma3:4b`) also works, but at Ollama's much smaller default context, which truncates long transcripts.
 
 ## Symptom: a video is stuck on "Generating…" forever
 
@@ -130,7 +134,7 @@ The Refresh-scores backfill is fast (~50ms per video, no AI). The AI re-rate is 
 Orphan processes from a previous run. `start.sh` already handles this; if you're running `yarn dev` directly:
 
 ```bash
-lsof -ti :1340 -ti :3005 | xargs kill -9
+lsof -ti tcp:1340 -ti tcp:3005 -sTCP:LISTEN | xargs kill -9
 ```
 
 Then re-run.
@@ -195,7 +199,7 @@ Per the user's machine: 24 GB RAM. Practical model size ceilings:
 - **15–18 GB** borderline — works, but other apps will swap.
 - **≥19 GB** thrashes — choose a smaller model or quantization.
 
-`gemma4-kb:latest` (Q4 4B) is ~3 GB plus KV cache — comfortable. Stepping up to `gemma3:8b` or `qwen2.5:14b` is fine; `:32b` is not.
+`gemma4-kb:latest` (Gemma 4 12B, Q4) loads at ~8.5 GB with its 32K context — comfortable. Stepping up to a 14B model is fine; `:32b` is not.
 
 ### Long video timeouts
 
@@ -209,7 +213,7 @@ The pending screen polls for 10 minutes (200 × 3s). Beyond that, polling stops 
 
 | What | Where |
 |---|---|
-| Ollama server log | `/tmp/ollama.log` (when started via `nohup ollama serve`). Menubar app: Console.app → search "Ollama". |
+| Ollama server log | `/tmp/ollama.log` (when started via `nohup ollama serve`). Menubar app: Console.app → search "Ollama". Linux systemd unit: `journalctl --user -u ollama` (user unit) or `journalctl -u ollama` (system unit). |
 | Strapi log | Terminal running `yarn server`. No file logging configured. |
 | Client server-fn logs | Terminal running `yarn client`. `learning.ts` is verbose with timing per step. |
 | Browser console | Standard. The strapi-client's `logFailure` puts every non-OK Strapi response here. |
@@ -219,7 +223,7 @@ The pending screen polls for 10 minutes (200 × 3s). Beyond that, polling stops 
 ```bash
 # Full restart, kills orphans, restarts Ollama, fresh start
 pkill -9 ollama
-lsof -ti :1340 -ti :3005 | xargs kill -9
+lsof -ti tcp:1340 -ti tcp:3005 -sTCP:LISTEN | xargs kill -9
 yarn start:fresh
 ```
 

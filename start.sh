@@ -9,8 +9,8 @@
 #   OLLAMA_KEEP_ALIVE   — how long models stay warm (default: 15m)
 #   OLLAMA_NUM_PARALLEL — concurrent Ollama slots (default: 1; bump if RAM allows)
 #
-# Tested on macOS with the Ollama menubar app. Other platforms need to
-# swap the `open -a Ollama` path.
+# Works with the Ollama menubar app on macOS, an `ollama.service` systemd
+# unit on Linux (user or system), or a plain `ollama serve` anywhere else.
 
 set -e
 
@@ -40,32 +40,94 @@ if ! command -v yarn >/dev/null 2>&1; then
   exit 1
 fi
 
-# --- set launchctl env so future Ollama launches inherit them ---------------
+# --- work out what manages Ollama here --------------------------------------
+#   macos          menubar app (or a plain `ollama serve`); env via launchctl
+#   systemd-user   Linux user unit, e.g. ~/.config/systemd/user/ollama.service
+#   systemd-system Linux system unit, which the official install script sets up
+#   cli            nothing does; this script runs `ollama serve` itself
+if [ "$(uname -s)" = "Darwin" ]; then
+  OLLAMA_MANAGER=macos
+  OLLAMA_LOG_HINT="/tmp/ollama.log or the menubar app"
+elif systemctl --user cat ollama.service >/dev/null 2>&1; then
+  OLLAMA_MANAGER=systemd-user
+  OLLAMA_LOG_HINT="journalctl --user -u ollama"
+elif systemctl cat ollama.service >/dev/null 2>&1; then
+  OLLAMA_MANAGER=systemd-system
+  OLLAMA_LOG_HINT="journalctl -u ollama"
+else
+  OLLAMA_MANAGER=cli
+  OLLAMA_LOG_HINT="/tmp/ollama.log"
+fi
+
+# --- set env so future Ollama launches inherit them -------------------------
 # (Existing running Ollama won't pick these up — use --restart-ollama for that)
-echo "→ launchctl setenv OLLAMA_KEEP_ALIVE=$OLLAMA_KEEP_ALIVE OLLAMA_NUM_PARALLEL=$OLLAMA_NUM_PARALLEL"
-launchctl setenv OLLAMA_KEEP_ALIVE "$OLLAMA_KEEP_ALIVE"
-launchctl setenv OLLAMA_NUM_PARALLEL "$OLLAMA_NUM_PARALLEL"
+case $OLLAMA_MANAGER in
+  macos)
+    echo "→ launchctl setenv OLLAMA_KEEP_ALIVE=$OLLAMA_KEEP_ALIVE OLLAMA_NUM_PARALLEL=$OLLAMA_NUM_PARALLEL"
+    launchctl setenv OLLAMA_KEEP_ALIVE "$OLLAMA_KEEP_ALIVE"
+    launchctl setenv OLLAMA_NUM_PARALLEL "$OLLAMA_NUM_PARALLEL"
+    ;;
+  systemd-user)
+    echo "→ systemctl --user set-environment OLLAMA_KEEP_ALIVE=$OLLAMA_KEEP_ALIVE OLLAMA_NUM_PARALLEL=$OLLAMA_NUM_PARALLEL"
+    systemctl --user set-environment "OLLAMA_KEEP_ALIVE=$OLLAMA_KEEP_ALIVE" "OLLAMA_NUM_PARALLEL=$OLLAMA_NUM_PARALLEL"
+    ;;
+  systemd-system)
+    # A system unit's env can only change as root, so say how instead.
+    unit_env=" $(systemctl show ollama.service -p Environment --value 2>/dev/null) "
+    for kv in "OLLAMA_KEEP_ALIVE=$OLLAMA_KEEP_ALIVE" "OLLAMA_NUM_PARALLEL=$OLLAMA_NUM_PARALLEL"; do
+      case $unit_env in
+        *" $kv "*) ;;
+        *) echo "→ ollama.service lacks $kv — add Environment=\"$kv\" under [Service] via: sudo systemctl edit ollama" ;;
+      esac
+    done
+    ;;
+  # cli: the values go straight onto `ollama serve` below
+esac
 
 # --- optionally restart Ollama so the new env applies ----------------------
 if [ $FORCE_RESTART_OLLAMA -eq 1 ]; then
-  echo "→ Restarting Ollama (pkill -9)..."
-  pkill -9 ollama 2>/dev/null || true
-  sleep 1
+  case $OLLAMA_MANAGER in
+    systemd-user)
+      echo "→ Restarting Ollama (systemctl --user restart ollama)..."
+      systemctl --user restart ollama.service
+      ;;
+    systemd-system)
+      echo "→ Restarting Ollama (sudo systemctl restart ollama)..."
+      sudo systemctl restart ollama.service
+      ;;
+    *)
+      echo "→ Restarting Ollama (pkill -9)..."
+      pkill -9 ollama 2>/dev/null || true
+      sleep 1
+      ;;
+  esac
 fi
 
 # --- ensure Ollama server is up --------------------------------------------
 if curl -sf -o /dev/null http://localhost:11434/api/version; then
-  CURRENT_KEEP_ALIVE=$(launchctl getenv OLLAMA_KEEP_ALIVE)
-  CURRENT_PARALLEL=$(launchctl getenv OLLAMA_NUM_PARALLEL)
-  echo "✓ Ollama already running (new env takes effect on next restart;"
-  echo "   current session has KEEP_ALIVE=$CURRENT_KEEP_ALIVE, NUM_PARALLEL=$CURRENT_PARALLEL)"
+  if [ "$OLLAMA_MANAGER" = macos ]; then
+    CURRENT_KEEP_ALIVE=$(launchctl getenv OLLAMA_KEEP_ALIVE)
+    CURRENT_PARALLEL=$(launchctl getenv OLLAMA_NUM_PARALLEL)
+    echo "✓ Ollama already running (new env takes effect on next restart;"
+    echo "   current session has KEEP_ALIVE=$CURRENT_KEEP_ALIVE, NUM_PARALLEL=$CURRENT_PARALLEL)"
+  else
+    echo "✓ Ollama already running (new env takes effect on next restart — use --restart-ollama)"
+  fi
 else
   echo "→ Starting Ollama..."
-  if [ -d "/Applications/Ollama.app" ]; then
-    open -a Ollama
-  else
-    nohup ollama serve > /tmp/ollama.log 2>&1 &
-  fi
+  case $OLLAMA_MANAGER in
+    systemd-user)   systemctl --user start ollama.service ;;
+    systemd-system) sudo systemctl start ollama.service ;;
+    *)
+      if [ -d "/Applications/Ollama.app" ]; then
+        open -a Ollama
+      else
+        # Pass the env explicitly: the defaults above aren't exported.
+        OLLAMA_KEEP_ALIVE="$OLLAMA_KEEP_ALIVE" OLLAMA_NUM_PARALLEL="$OLLAMA_NUM_PARALLEL" \
+          nohup ollama serve > /tmp/ollama.log 2>&1 &
+      fi
+      ;;
+  esac
   # Wait up to 15s for the server to come up
   for i in {1..15}; do
     if curl -sf -o /dev/null http://localhost:11434/api/version; then
@@ -73,7 +135,7 @@ else
       break
     fi
     if [ "$i" -eq 15 ]; then
-      echo "✗ Ollama didn't start within 15s — check /tmp/ollama.log or the menubar app"
+      echo "✗ Ollama didn't start within 15s — check $OLLAMA_LOG_HINT"
       exit 1
     fi
     sleep 1
@@ -85,9 +147,10 @@ fi
 # 1340 (Strapi) or 3005 (client). When the new run tries to bind, it fails
 # with code 1 and `concurrently` SIGTERMs the whole stack — surfacing as
 # `[strapi] fetch failed` spam from the client. Killing orphans first
-# makes start.sh idempotent.
+# makes start.sh idempotent. Listeners only: a bare `lsof -i :3005` also
+# matches whatever is connected to the port, like a browser tab on the app.
 for port in 1340 3005; do
-  pids=$(lsof -ti :$port 2>/dev/null || true)
+  pids=$(lsof -ti tcp:$port -sTCP:LISTEN 2>/dev/null || true)
   if [ -n "$pids" ]; then
     echo "→ Killing orphan process(es) on :$port — $pids"
     echo "$pids" | xargs kill -9 2>/dev/null || true
