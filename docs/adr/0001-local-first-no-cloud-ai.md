@@ -18,7 +18,7 @@ A separate concern is that frontier models (Claude, GPT-4) are genuinely useful 
 
 **Ollama only for in-app inference and embeddings.** No cloud SDK adapters in the client. The default chat/summary model is a custom 4B Gemma variant (`gemma4-kb:latest`); embeddings use `nomic-embed-text`. Both are configurable via env.
 
-**Frontier models are reachable via [MCP](https://modelcontextprotocol.io)**, not via in-app cloud calls. Strapi exposes an MCP server at `/api/mcp`; users connect Claude Desktop / Code / Cursor and drive the knowledge base from there when they want a bigger model. The two paths meet at the same Strapi data layer.
+**Frontier models are reachable via [MCP](https://modelcontextprotocol.io)**, not via in-app cloud calls. Strapi exposes an MCP server at `/mcp`; users connect Claude Desktop / Code / Cursor and drive the knowledge base from there when they want a bigger model. (Originally `/api/mcp` on a hand-rolled transport; that endpoint was retired in [ADR 0008](./0008-official-strapi-mcp-over-hand-rolled.md), which also moved auth to **admin** API tokens.) The two paths meet at the same Strapi data layer.
 
 ## Consequences
 
