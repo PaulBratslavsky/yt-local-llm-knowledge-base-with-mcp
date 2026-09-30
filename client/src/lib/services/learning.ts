@@ -789,24 +789,48 @@ async function generateSummaryWithAI(
 // detached background task in the share handler.
 // -----------------------------------------------------------------------------
 
-export async function generateVideoSummary(
-  videoId: string,
-  options: { forceRefetch?: boolean; mode?: GenerationMode } = {},
-): Promise<ServiceResult<StrapiVideo>> {
-  const runStart = performance.now();
-  logPhase(videoId, '▶ generation started', {
-    forceRefetch: !!options.forceRefetch,
-    mode: options.mode ?? 'auto',
-  });
+/** What generation needs before the model is involved: the row, the
+ *  transcript (raw and cleaned) and the YouTube metadata.
+ *
+ *  `raw` is kept alongside `cleaned` because the content signals score the
+ *  uncleaned text — filler density is the point, so cleaning first would
+ *  measure the cleaner. */
+export type GenerationInputs = {
+  video: StrapiVideo;
+  raw: TranscriptData;
+  cleaned: TranscriptData;
+  prepared: PreparedTranscript | null;
+  meta: VideoMeta;
+};
 
+/** The three ways the first phase can end.
+ *
+ *  Spelled out as a union because they used to be implicit: a caller of
+ *  generateVideoSummary could not tell "did nothing, already generated"
+ *  from "generated successfully" — both returned { success: true } with a
+ *  video. */
+export type ResolveOutcome =
+  | { kind: 'ready'; inputs: GenerationInputs }
+  | { kind: 'already-generated'; video: StrapiVideo }
+  | { kind: 'error'; error: string; video: StrapiVideo | null };
+
+/** Phase 1 — find the row, resolve or fetch its transcript, clean it.
+ *
+ *  Does not mark the row failed; the orchestrator owns that, so this can be
+ *  called on its own (and tested) without side effects on status. */
+export async function resolveGenerationInputs(
+  videoId: string,
+  options: { forceRefetch?: boolean } = {},
+): Promise<ResolveOutcome> {
+  const runStart = performance.now();
   const video = await fetchVideoByVideoIdService(videoId);
   if (!video) {
     logPhase(videoId, '✗ aborted — video row not found');
-    return { success: false, error: 'Video row not found' };
+    return { kind: 'error', error: 'Video row not found', video: null };
   }
   if (video.summaryStatus === 'generated') {
     logPhase(videoId, '↳ already generated, skipping');
-    return { success: true, data: video };
+    return { kind: 'already-generated', video };
   }
 
   // Transcript source-of-truth lookup. Three cases:
@@ -870,12 +894,11 @@ export async function generateVideoSummary(
     author: meta.author ?? null,
   });
   if (!transcriptResult.success) {
-    await markSummaryFailedService(video.documentId);
-    logPhase(videoId, '✗ generation failed at transcript', {
+    logPhase(videoId, '✗ transcript unavailable', {
       took: ms(runStart),
       error: transcriptResult.error,
     });
-    return transcriptResult;
+    return { kind: 'error', error: transcriptResult.error, video };
   }
 
   // Case 3 resolution: we just fetched from YouTube. Persist the Transcript
@@ -939,17 +962,52 @@ export async function generateVideoSummary(
     transcript: cleaned,
     prepared,
   };
+  return {
+    kind: 'ready',
+    inputs: {
+      video,
+      raw: transcriptResult.data,
+      cleaned: cleanedTranscript,
+      prepared,
+      meta,
+    },
+  };
+}
 
-  setGenerationStep(videoId, 'ai');
-  const summary = await generateSummaryWithAI(cleanedTranscript, meta, options.mode ?? 'auto');
-  if (!summary.success) {
-    await markSummaryFailedService(video.documentId);
-    logPhase(videoId, '✗ generation failed at AI step', {
-      took: ms(runStart),
-      error: summary.error,
-    });
-    return summary;
-  }
+/** Everything the save needs, computed but not yet written. */
+export type SummaryDraft = {
+  safe: ReturnType<typeof sanitizeSummary>;
+  transcriptSegments: StoredTranscriptIndex;
+  finalSections: Array<{ heading: string; body: string; timeSec?: number }>;
+  signalScores: ReturnType<typeof computeSignalScores>;
+  signalScore: number;
+  finalScore: number;
+};
+
+/** Phase 2 — the model call, then everything derived from its output:
+ *  clamping, the contextual BM25 index, deterministic section timecodes and
+ *  the programmatic content signals.
+ *
+ *  `deps.summarize` exists so the AI step can be replaced in a test without
+ *  mocking the whole @tanstack/ai module. */
+export async function buildSummaryDraft(
+  inputs: GenerationInputs,
+  mode: GenerationMode = 'auto',
+  deps: {
+    summarize?: (
+      transcript: TranscriptData,
+      meta: VideoMeta,
+      mode: GenerationMode,
+    ) => Promise<ServiceResult<GeneratedSummary>>;
+  } = {},
+): Promise<ServiceResult<SummaryDraft>> {
+  const summarize = deps.summarize ?? generateSummaryWithAI;
+  const { video, raw: rawTranscript, cleaned: cleanedTranscript, prepared } = inputs;
+  const videoId = video.youtubeVideoId;
+  const cleaned = cleanedTranscript.transcript;
+
+  const summary = await summarize(cleanedTranscript, inputs.meta, mode);
+  if (!summary.success) return summary;
 
   // Clamp any fields the model overshot against Strapi's per-field limits.
   // A single over-length takeaway would otherwise fail the whole save.
@@ -1058,10 +1116,10 @@ export async function generateVideoSummary(
     ? prepared.wordStartMs.length
     : (cleaned.match(/\b[\w'-]+\b/g) ?? []).length;
   const signalScores = computeSignalScores({
-    rawText: transcriptResult.data.transcript,
+    rawText: rawTranscript.transcript,
     cleanedText: cleaned,
     wordCount,
-    durationSec: transcriptResult.data.durationSec,
+    durationSec: rawTranscript.durationSec,
   });
   const signalScore = aggregateSignalScore(signalScores);
   // Hybrid score — both component scores are present in this code path
@@ -1071,8 +1129,25 @@ export async function generateVideoSummary(
   const finalScore =
     computeFinalScore(safe.valueScore, signalScore) ?? signalScore;
   logPhase(videoId, 'signals ✓ computed', { signalScore, finalScore, signalScores });
+  return {
+    success: true,
+    data: { safe, transcriptSegments, finalSections, signalScores, signalScore, finalScore },
+  };
+}
 
-  setGenerationStep(videoId, 'saving');
+/** Phase 3 — write the summary, then the two best-effort embedding passes.
+ *
+ *  The embedding and passage writes deliberately do not fail the summary:
+ *  Ollama being down shouldn't discard a good summary the user waited for.
+ *  They log instead, and /settings can backfill them. */
+export async function persistSummaryDraft(
+  video: StrapiVideo,
+  draft: SummaryDraft,
+): Promise<ServiceResult<StrapiVideo>> {
+  const videoId = video.youtubeVideoId;
+  const { safe, transcriptSegments, finalSections, signalScores, signalScore, finalScore } =
+    draft;
+
   const saveStart = performance.now();
   logPhase(videoId, 'db → saving summary');
   const updated = await updateVideoSummaryService({
@@ -1177,9 +1252,60 @@ export async function generateVideoSummary(
       error: err instanceof Error ? err.message : 'unknown',
     });
   }
+  return { success: true, data: updated.video };
+}
+
+/** Orchestrates the three phases.
+ *
+ *  Preconditions this used to hide, now either enforced or documented:
+ *   - the row must exist (resolve reports it)
+ *   - an already-generated row is a no-op (its own outcome kind)
+ *   - must run inside `ensureGenerationRunning`, or setGenerationStep
+ *     silently drops every progress write
+ *   - the caller passes `onTerminalThrow` so a crash marks the row failed
+ */
+export async function generateVideoSummary(
+  videoId: string,
+  options: { forceRefetch?: boolean; mode?: GenerationMode } = {},
+): Promise<ServiceResult<StrapiVideo>> {
+  const runStart = performance.now();
+  logPhase(videoId, '▶ generation started', {
+    forceRefetch: !!options.forceRefetch,
+    mode: options.mode ?? 'auto',
+  });
+
+  const resolved = await resolveGenerationInputs(videoId, options);
+  if (resolved.kind === 'error') {
+    if (resolved.video) await markSummaryFailedService(resolved.video.documentId);
+    logPhase(videoId, '✗ generation failed at transcript', {
+      took: ms(runStart),
+      error: resolved.error,
+    });
+    return { success: false, error: resolved.error };
+  }
+  if (resolved.kind === 'already-generated') {
+    return { success: true, data: resolved.video };
+  }
+
+  const { video } = resolved.inputs;
+
+  setGenerationStep(videoId, 'ai');
+  const draft = await buildSummaryDraft(resolved.inputs, options.mode ?? 'auto');
+  if (!draft.success) {
+    await markSummaryFailedService(video.documentId);
+    logPhase(videoId, '✗ generation failed at AI step', {
+      took: ms(runStart),
+      error: draft.error,
+    });
+    return draft;
+  }
+
+  setGenerationStep(videoId, 'saving');
+  const saved = await persistSummaryDraft(video, draft.data);
+  if (!saved.success) return saved;
 
   logPhase(videoId, '✓ generation complete', { took: ms(runStart) });
-  return { success: true, data: updated.video };
+  return saved;
 }
 
 // -----------------------------------------------------------------------------
