@@ -9,6 +9,7 @@
 
 import { strapiFetch, type StrapiQuery } from './strapi-client';
 import type { Digest } from './digest';
+import { friendlyBackendError } from './backend-errors';
 
 type ServiceResult<T> = { success: true; data: T } | { success: false; error: string };
 
@@ -230,7 +231,10 @@ export async function listDigestsService(input?: {
         : {}),
     },
   });
-  if (!result.ok) return { success: false, error: result.error };
+  if (!result.ok) return {
+      success: false,
+      error: friendlyBackendError(result.status, result.error),
+    };
   const digests = result.data ?? [];
   const total = result.meta?.pagination?.total ?? digests.length;
   const pageCount = result.meta?.pagination?.pageCount ?? 1;
@@ -300,7 +304,10 @@ export async function deleteDigestService(
 ): Promise<ServiceResult<void>> {
   const result = await strapiFetch<unknown>('DELETE', `/api/digests/${documentId}`);
   if (!result.ok && result.status !== 404) {
-    return { success: false, error: result.error };
+    return {
+      success: false,
+      error: friendlyBackendError(result.status, result.error),
+    };
   }
   return { success: true, data: undefined };
 }

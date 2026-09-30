@@ -3,6 +3,7 @@ import { createFileRoute, Link, useNavigate, useRouter } from '@tanstack/react-r
 import { z } from 'zod';
 import { VideoCard } from '#/components/VideoCard';
 import { BackendErrorPanel } from '#/components/BackendErrorPanel';
+import { friendlyOllamaError } from '#/lib/services/ollama-errors';
 import { Button } from '#/components/ui/button';
 import {
   getFeed,
@@ -44,6 +45,10 @@ type KeywordResultShape = {
     page: number;
     pageCount: number;
   };
+  /** Set when the user asked for semantic mode and it failed, so these are
+   *  keyword results standing in for it. Without this the toggle still read
+   *  "semantic" while the rows underneath came from a different engine. */
+  degradedFrom?: string;
 };
 
 // Backend (Strapi) unreachable or errored. The previous behavior was
@@ -71,6 +76,7 @@ export const Route = createFileRoute('/feed')({
     minScore: search.minScore,
   }),
   loader: async ({ deps }): Promise<FeedLoaderData> => {
+    let degradedFrom: string | undefined;
     // Semantic mode requires a query. With no query the mode toggle is
     // irrelevant — fall back to the normal feed listing.
     if (deps.mode === 'semantic' && deps.q) {
@@ -96,7 +102,10 @@ export const Route = createFileRoute('/feed')({
             : res.hits;
         return { kind: 'semantic', hits, query: deps.q };
       }
-      // On semantic failure (Ollama down, model missing), degrade to keyword.
+      // On semantic failure (Ollama down, model missing), degrade to
+      // keyword — but say so. Silently swapping engines left the user
+      // reading keyword rows under a toggle that claimed semantic.
+      degradedFrom = friendlyOllamaError(res.error);
     }
     const result = await getFeed({
       // 9 per page = clean 3×3 grid on desktop, 9-row stack on mobile.
@@ -112,7 +121,7 @@ export const Route = createFileRoute('/feed')({
     if (result.error) {
       return { kind: 'backend-error', error: result.error };
     }
-    return { kind: 'keyword', result };
+    return { kind: 'keyword', result, ...(degradedFrom ? { degradedFrom } : {}) };
   },
   component: FeedPage,
   head: () => ({ meta: [{ title: 'Feed · YT Knowledge Base' }] }),
@@ -278,6 +287,13 @@ function FeedPage() {
           Pick 2–{DIGEST_MAX_VIDEOS} videos to digest. Videos without
           summaries can&apos;t be picked.
         </div>
+      )}
+
+      {loaderData.kind === 'keyword' && loaderData.degradedFrom && (
+        <BackendErrorPanel
+          message={`Semantic search is unavailable, so these are keyword results. ${loaderData.degradedFrom}`}
+          variant="banner"
+        />
       )}
 
       {videos.length === 0 ? (

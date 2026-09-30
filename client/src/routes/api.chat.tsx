@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { chat, toServerSentEventsResponse } from '@tanstack/ai';
 import { createOllamaChat } from '@tanstack/ai-ollama';
-import { fetchVideoByVideoIdService } from '#/lib/services/videos';
+import { fetchVideoByVideoIdWithStatusService } from '#/lib/services/videos';
 import { getSkill } from '#/lib/skills';
 import { prepareChatPrompt } from '#/lib/services/learning';
 import { webSearchTool } from '#/lib/services/chat-tools';
@@ -117,7 +117,15 @@ export const Route = createFileRoute('/api/chat')({
           return new Response('videoId and messages required', { status: 400 });
         }
 
-        const video = await fetchVideoByVideoIdService(body.videoId);
+        // `fetchVideoByVideoIdService` returns null for both "no such row"
+        // and "Strapi unreachable", which surfaced a dead backend to the
+        // chat UI as `chat (404): Video not found` — for a video the user
+        // is looking at. The WithStatus sibling separates them (ADR-0007).
+        const lookup = await fetchVideoByVideoIdWithStatusService(body.videoId);
+        if (lookup.error) {
+          return new Response(lookup.error, { status: 503 });
+        }
+        const video = lookup.video;
         if (!video) {
           return new Response('Video not found', { status: 404 });
         }

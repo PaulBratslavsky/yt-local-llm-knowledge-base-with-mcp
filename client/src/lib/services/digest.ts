@@ -8,12 +8,11 @@ import { chat } from '@tanstack/ai';
 import { createOllamaChat } from '@tanstack/ai-ollama';
 import { z } from 'zod';
 import {
-  fetchVideoByDocumentIdService,
-  fetchVideoByVideoIdService,
   type StrapiVideo,
 } from '#/lib/services/videos';
 import { withRetry } from '#/lib/retry';
 import { OLLAMA_HOST, OLLAMA_MODEL as SUMMARY_MODEL } from '#/lib/env';
+import { resolveDigestVideos } from './digest-videos';
 
 const digestAdapter = createOllamaChat(SUMMARY_MODEL, OLLAMA_HOST);
 
@@ -530,26 +529,17 @@ export async function generateDigestArticleByIds(
     return { success: false, error: `Pick at most ${DIGEST_MAX_VIDEOS} videos.` };
   }
 
-  const videos: StrapiVideo[] = [];
-  const missing: string[] = [];
-  await Promise.all(
-    unique.map(async (id) => {
-      const byVid = await fetchVideoByVideoIdService(id).catch(() => null);
-      if (byVid) {
-        videos.push(byVid);
-        return;
-      }
-      const byDoc = await fetchVideoByDocumentIdService(id).catch(() => null);
-      if (byDoc) {
-        videos.push(byDoc);
-        return;
-      }
-      missing.push(id);
-    }),
-  );
-  if (missing.length > 0) {
-    return { success: false, error: `Could not find: ${missing.join(', ')}` };
+  const resolution = await resolveDigestVideos(unique);
+  if (resolution.status === 'backend-error') {
+    return { success: false, error: resolution.error };
   }
+  if (resolution.status === 'missing') {
+    return {
+      success: false,
+      error: `Could not find: ${resolution.missing.join(', ')}`,
+    };
+  }
+  const videos = resolution.videos;
 
   const result = await synthesizeDigestArticle(videos);
   if (!result.success) return result;
@@ -577,31 +567,19 @@ export async function generateDigestByIds(
   }
 
   // Lookup: try youtubeVideoId first (the feed selection path), fall back
-  // to documentId (flexibility for callers like MCP).
-  const videos: StrapiVideo[] = [];
-  const missing: string[] = [];
-  await Promise.all(
-    unique.map(async (id) => {
-      const byVid = await fetchVideoByVideoIdService(id).catch(() => null);
-      if (byVid) {
-        videos.push(byVid);
-        return;
-      }
-      const byDoc = await fetchVideoByDocumentIdService(id).catch(() => null);
-      if (byDoc) {
-        videos.push(byDoc);
-        return;
-      }
-      missing.push(id);
-    }),
-  );
-
-  if (missing.length > 0) {
+  // to documentId (flexibility for callers like MCP). Shared with the
+  // article orchestrator above — see digest-videos.ts for why.
+  const resolution = await resolveDigestVideos(unique);
+  if (resolution.status === 'backend-error') {
+    return { success: false, error: resolution.error };
+  }
+  if (resolution.status === 'missing') {
     return {
       success: false,
-      error: `Could not find: ${missing.join(', ')}`,
+      error: `Could not find: ${resolution.missing.join(', ')}`,
     };
   }
+  const videos = resolution.videos;
 
   const result = await synthesizeDigest(videos);
   if (!result.success) return result;
