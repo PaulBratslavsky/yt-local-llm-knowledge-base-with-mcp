@@ -1,6 +1,16 @@
 import { z } from 'zod';
 import type { Core } from '@strapi/strapi';
 
+// The shape every MCP tool body in ./tools implements. Registration itself
+// belongs to Strapi's official MCP server — see ../mcp-official/adapter.ts,
+// which reads these defs and calls `strapi.ai.mcp.registerTool`.
+//
+// This file used to also hold a `Map` with registerTool/getTools/getTool:
+// the lookup table the retired hand-rolled `/api/mcp` dispatch used to find
+// a tool by name (ADR 0008). Nothing called them after that transport was
+// deleted — every import here is `import type { ToolDef }` — so they went
+// too. Only the types remain.
+
 export type ToolContext = {
   strapi: Core.Strapi;
 };
@@ -15,20 +25,3 @@ export type ToolDef<Input = unknown, Output = unknown> = {
   /** The handler. Return a string or JSON-serializable object. */
   execute: (args: Input, ctx: ToolContext) => Promise<Output>;
 };
-
-const registry = new Map<string, ToolDef<any, any>>();
-
-export function registerTool<I, O>(tool: ToolDef<I, O>): void {
-  if (registry.has(tool.name)) {
-    throw new Error(`MCP tool "${tool.name}" already registered`);
-  }
-  registry.set(tool.name, tool);
-}
-
-export function getTools(): ToolDef<any, any>[] {
-  return Array.from(registry.values());
-}
-
-export function getTool(name: string): ToolDef<any, any> | undefined {
-  return registry.get(name);
-}
