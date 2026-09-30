@@ -8,28 +8,13 @@
 // The synthesis prompt lives here too so the API route and any future
 // MCP tool share the same grounding rules.
 
-import {
-  buildBM25Index,
-  searchBM25,
-  tokenize,
-  type TranscriptChunk,
-} from './transcript';
-import {
-  cosineSimilarity,
-  embedText,
-  passageStatus,
-} from './embeddings';
+import { tokenize } from './transcript';
+import { embedText } from './embeddings';
 import {
   listAllVideosForEmbeddingService,
   type StrapiVideo,
 } from './videos';
-
-// Keep in sync with the constants used in server-functions/videos.ts —
-// these control the hybrid retrieval behavior. Duplicated here because
-// the server function module has other server-only imports we don't
-// want to pull into code paths that might run in different contexts.
-const RRF_K = 60;
-const BM25_WEIGHT = 2.5;
+import { flattenPassages, rankPassages } from './retrieval';
 
 // Parent-document retrieval config. Instead of letting 15 scattered
 // passages across 8+ videos compete for Gemma's attention, we pick the
@@ -80,71 +65,21 @@ export async function retrievePassagesForQuery(
   // model confidently answer "nothing in your library covers that".
   if (corpusError) throw new Error(corpusError);
 
-  // Flatten every current passage into one corpus.
-  type Flat = {
-    video: StrapiVideo;
-    text: string;
-    startSec: number;
-    endSec: number;
-    embedding: number[];
-  };
-  const flat: Flat[] = [];
-  for (const v of all) {
-    const index = v.passageEmbeddings;
-    if (passageStatus(index) !== 'current' || !index) continue;
-    for (const p of index.chunks) {
-      flat.push({
-        video: v,
-        text: p.text,
-        startSec: p.startSec,
-        endSec: p.endSec,
-        embedding: p.embedding,
-      });
-    }
-  }
+  const flat = flattenPassages(all);
   if (flat.length === 0) return [];
 
-  // Dense cosine.
-  const cosineScores = flat.map((p) => cosineSimilarity(qVec, p.embedding));
-  const denseOrder = cosineScores
-    .map((score, i) => ({ i, score }))
-    .sort((a, b) => b.score - a.score)
-    .map((x) => x.i);
-
-  // BM25 over passage text with parent-video metadata prepended.
-  const bm25Chunks: TranscriptChunk[] = flat.map((p, i) => {
-    const titleLine = [p.video.videoTitle, p.video.videoAuthor]
-      .filter(Boolean)
-      .join(' ');
-    return {
-      id: i,
-      text: titleLine ? `${titleLine}\n${p.text}` : p.text,
-      startWord: 0,
-      timeSec: p.startSec,
-    };
-  });
-  const bm25Index = buildBM25Index(bm25Chunks);
-  const bm25Hits = searchBM25(bm25Index, query, flat.length);
-  const bm25Order = bm25Hits.map((c) => c.id);
-
-  // RRF merge with BM25 weight.
-  const rrf = new Map<number, number>();
-  denseOrder.forEach((id, rank) => {
-    rrf.set(id, (rrf.get(id) ?? 0) + 1 / (rank + 1 + RRF_K));
-  });
-  bm25Order.forEach((id, rank) => {
-    rrf.set(id, (rrf.get(id) ?? 0) + BM25_WEIGHT / (rank + 1 + RRF_K));
-  });
+  // Identical ranking to /search's moment search — same flatten, same
+  // dense+BM25 fusion, same constants. This file used to carry its own
+  // copy with a comment asking the next reader to keep two sets of
+  // constants in sync by hand. Only the grouping below differs: /search
+  // caps passages per video, /api/ask picks top-N videos then their top-M
+  // passages.
+  const { ranked } = rankPassages(flat, qVec, query);
 
   // Step 1: rank passages by RRF (descending) and filter by cosine floor.
-  const rankedPassages = Array.from(rrf.entries())
-    .map(([i, rrfScore]) => ({
-      i,
-      rrfScore,
-      cosineScore: cosineScores[i],
-    }))
+  const rankedPassages = ranked
     .filter((x) => x.cosineScore >= minScore)
-    .sort((a, b) => b.rrfScore - a.rrfScore);
+    .map((x) => ({ i: x.index, rrfScore: x.rrfScore, cosineScore: x.cosineScore }));
 
   // Step 2: group by video. Each video's score = its BEST passage's RRF
   // score. This correctly identifies the most topically-relevant videos —

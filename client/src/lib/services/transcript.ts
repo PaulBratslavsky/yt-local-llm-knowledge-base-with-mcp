@@ -58,6 +58,7 @@ export {
 } from './bm25-core';
 export type {
   BM25Index,
+  ScorableDoc,
   BM25IndexParams,
   Contextualizer,
   RankedChunk,

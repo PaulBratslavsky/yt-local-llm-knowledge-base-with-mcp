@@ -21,9 +21,16 @@ export type TimedTextSegment = {
   endMs?: number;
 };
 
-export type TranscriptChunk = {
+/** The minimum a document needs to be scored: an id to join on and text to
+ *  index. Callers that score things which are not transcript chunks —
+ *  videos, passages — use this directly rather than faking `startWord: 0,
+ *  timeSec: 0`, which is what four call sites used to do. */
+export type ScorableDoc = {
   id: number;
   text: string;
+};
+
+export type TranscriptChunk = ScorableDoc & {
   startWord: number;
   timeSec: number;
 };
@@ -158,7 +165,7 @@ export function tokenize(input: string): string[] {
   return out;
 }
 
-export type BM25Index = {
+export type BM25Index<T extends ScorableDoc = TranscriptChunk> = {
   // Serialized per-document term frequencies. Parallel to `chunks`.
   tf: Array<Record<string, number>>;
   // Inverse document frequency per term.
@@ -169,7 +176,7 @@ export type BM25Index = {
   // Snapshot of the chunks at indexing time. Kept alongside the scoring
   // tables so the serialized blob is self-contained — one JSON field in
   // Strapi holds everything retrieval needs.
-  chunks: TranscriptChunk[];
+  chunks: T[];
 };
 
 // Contextual Retrieval (Anthropic, 2024): each chunk is tokenized together
@@ -177,7 +184,9 @@ export type BM25Index = {
 // anchor only affects scoring — the original chunk text is what gets shown
 // to the model at chat time. Callers that skip the contextualizer get
 // plain BM25 over chunk.text.
-export type Contextualizer = (chunk: TranscriptChunk) => string;
+export type Contextualizer<T extends ScorableDoc = TranscriptChunk> = (
+  chunk: T,
+) => string;
 
 // Token maps are keyed by user-controlled strings from transcripts, so they
 // must be null-prototype objects. A plain `{}` inherits Object.prototype, and
@@ -188,10 +197,10 @@ function emptyTokenMap(): Record<string, number> {
   return Object.create(null) as Record<string, number>;
 }
 
-export function buildBM25Index(
-  chunks: TranscriptChunk[],
-  contextualize?: Contextualizer,
-): BM25Index {
+export function buildBM25Index<T extends ScorableDoc = TranscriptChunk>(
+  chunks: T[],
+  contextualize?: Contextualizer<T>,
+): BM25Index<T> {
   const tf: Array<Record<string, number>> = [];
   const df: Record<string, number> = emptyTokenMap();
   const lengths: number[] = [];
@@ -246,18 +255,18 @@ const BM25_MIN_QUERY_IDF = 1.5;
 /** A scored hit. `rank` is the 0-based position in this result list —
  *  RRF callers need it, and deriving it from array position silently
  *  treats "scored zero" and "not returned" as the same thing. */
-export type RankedChunk = {
-  chunk: TranscriptChunk;
+export type RankedChunk<T extends ScorableDoc = TranscriptChunk> = {
+  chunk: T;
   score: number;
   rank: number;
 };
 
-export function searchBM25Ranked(
-  index: BM25Index,
+export function searchBM25Ranked<T extends ScorableDoc = TranscriptChunk>(
+  index: BM25Index<T>,
   query: string,
   topK: number,
   opts?: { maxQueryTerms?: number },
-): RankedChunk[] {
+): RankedChunk<T>[] {
   // Count query-side term frequencies before dedup so we can weight by
   // TF × IDF when capping. Essential for doc-as-query paths where a
   // term like "strapi" appears 29 times in the target — that repetition
@@ -328,12 +337,12 @@ export function searchBM25Ranked(
 }
 
 /** Chunks only, in rank order. The shape most client callers want. */
-export function searchBM25(
-  index: BM25Index,
+export function searchBM25<T extends ScorableDoc = TranscriptChunk>(
+  index: BM25Index<T>,
   query: string,
   topK: number,
   opts?: { maxQueryTerms?: number },
-): TranscriptChunk[] {
+): T[] {
   return searchBM25Ranked(index, query, topK, opts).map((r) => r.chunk);
 }
 
