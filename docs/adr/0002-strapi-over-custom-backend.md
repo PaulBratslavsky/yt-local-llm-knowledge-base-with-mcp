@@ -17,7 +17,7 @@ A late-arriving constraint: we wanted to expose the knowledge base as an MCP ser
 
 **Strapi 5** with content types defined as JSON schema files in `server/src/api/<entity>/content-types/<entity>/schema.json`. SQLite for dev (`DATABASE_CLIENT=sqlite`, file at `.tmp/data.db`); switchable to Postgres via env without code changes.
 
-**The MCP server lives inside Strapi**, at `/api/mcp` (Streamable HTTP transport, bearer-token auth via Strapi API tokens). Tools are defined once in `server/src/mcp/tools/` and consumed by external clients only — the in-app Ollama chat does not go through MCP.
+**The MCP server lives inside Strapi**, at `/mcp` (Streamable HTTP transport, bearer-token auth via **admin** API tokens). (This entry originally described `/api/mcp` with content API tokens; both changed in [ADR 0008](./0008-official-strapi-mcp-over-hand-rolled.md).) Tools are defined once in `server/src/mcp/tools/` and consumed by external clients only — the in-app Ollama chat does not go through MCP.
 
 ## Consequences
 
@@ -25,7 +25,7 @@ A late-arriving constraint: we wanted to expose the knowledge base as an MCP ser
 
 - Admin UI for inspecting / editing data — saved enormous time during development.
 - Schema migrations, lifecycles, components, relations, populate semantics — all free.
-- API tokens free (with per-route scopes), used for both REST and the MCP `/api/mcp` route.
+- API tokens free (with per-route scopes), used for REST. MCP moved to admin tokens with custom permission tiers — see ADR 0008.
 - The MCP server runs in the same process as the data layer, so tool implementations call internal services directly. No round-trip overhead, no duplicate auth.
 
 **What we accept.**

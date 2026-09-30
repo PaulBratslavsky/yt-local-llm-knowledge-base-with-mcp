@@ -27,7 +27,7 @@ Tag         (user taxonomy, lowercase-normalized)
 
 Plus:
 
-- MCP server at `/api/mcp` with 14 tools (`searchVideos`, `searchTranscript`, `getVideo`, `listTags`, `tagVideo`, `saveNote`, …)
+- MCP server at `/mcp` with 22 tools (`searchVideos`, `searchTranscript`, `getVideo`, `listTags`, `tagVideo`, `saveNote`, …)
 - BM25 retrieval per transcript for in-video chat
 - Deterministic timecode grounding
 - A `web_search` tool for external context during chat

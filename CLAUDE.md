@@ -157,7 +157,9 @@ client copy, never the server one.
 
 ### Map-reduce kicks in past ~25K tokens
 
-Single-pass for short transcripts; long ones split into 2500-word windows (50-word overlap), parallel map-step at `MAP_CONCURRENCY` (which **must match** `OLLAMA_NUM_PARALLEL`), then a final reduce. Code in `client/src/lib/services/learning.ts`.
+Single-pass for short transcripts; long ones split into 2500-word windows (50-word overlap), parallel map-step at `MAP_CONCURRENCY` (which should match `OLLAMA_NUM_PARALLEL`), then a final reduce. Code in `client/src/lib/services/learning.ts`.
+
+**Nothing enforces that pairing.** The app never reads `OLLAMA_NUM_PARALLEL` — it appears only in `start.sh`, the README and comments — so a mismatch is undetectable. The cap is also per generation job: `ensureGenerationRunning` dedupes by `videoId`, so sharing N videos at once spawns N jobs each running `MAP_CONCURRENCY` calls, and `embedBatch` hardcodes its own concurrency of 2 besides. Issue #20 proposes one process-wide Ollama budget read from a single value.
 
 ### MCP server lives in Strapi
 

@@ -40,14 +40,16 @@ Industry pattern (Reddit content quality, news-item ranking, Stack Overflow): co
 
 **What we accept.**
 
-- Three score fields = three writers (summary save in `learning.ts`, verdict-only re-rate in `regenerateVideoVerdict`, signal-only recompute in `regenerateVideoSignals`). All three must write `finalScore` consistently — guarded by tests in `content-signals.test.ts`.
+- Three score fields = three writers (summary save in `learning.ts`, verdict-only re-rate in `regenerateVideoVerdict`, signal-only recompute in `regenerateVideoSignals`). All three must write `finalScore` consistently.
+
+  **Not true as written (2026-09-30).** There are five writers — `backfillValueScores` and `backfillFinalScores` also write score fields, with raw `strapiFetch` PUTs — and they do not agree: the summary-save path cleans the transcript per caption segment while the signal-only recompute cleans the whole joined string, so the same video gets different `signalScore` from each. `content-signals.test.ts` covers only the five pure sub-signal functions; `computeFinalScore` and `FINAL_SCORE_WEIGHTS` have no test at all. Tracked in issue #5.
 - Backfill is a real operational concern. The Settings panel's "Refresh content scores" button covers it; the per-card "Score —" chip covers individual rows.
 - Weight tuning is a single-line change (`FINAL_SCORE_WEIGHTS`) but means re-running the backfill to recompute every row's `finalScore` against the new weights.
 
 **What's enforced in code.**
 
 - `valueScoreSource` distinguishes `'model'` (real LLM rating) from `'derived'` (placeholder backfilled from `watchVerdict` thresholds). UI never displays derived values as if they were real ratings.
-- All three writers go through the score services in `videos.ts`; don't bypass them.
+- All writers should go through the score services in `videos.ts`; don't bypass them. (Two backfills currently do — see the note above and issue #5.)
 
 **Deferred.**
 

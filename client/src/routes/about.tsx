@@ -39,7 +39,7 @@ function About() {
           <Feature
             kicker="MCP bridge"
             title="Claude Desktop-ready"
-            body="Strapi exposes a Model Context Protocol server at /api/mcp with 14 tools for transcripts, videos, tags, and notes. Connect Claude Desktop or Claude Code with a scoped Strapi API token and chat across your whole library with a frontier model."
+            body="Strapi exposes a Model Context Protocol server at /mcp with 22 tools for transcripts, videos, tags, and notes. Connect Claude Desktop or Claude Code with an admin API token — a content API token gets a 401 — and chat across your whole library with a frontier model. See docs/mcp.md for minting one."
           />
           <Feature
             kicker="Grounded citations"

@@ -40,7 +40,9 @@ Sort-before-join means input order doesn't matter — `?videos=A,B,C` and `?vide
 
 **What's enforced in code.**
 
-- All save paths go through the upsert helper in `client/src/lib/services/digests.ts`. Don't construct `Digest` rows directly via `strapiFetch` POST.
+- All save paths should go through an upsert helper in `client/src/lib/services/digests.ts`. Don't construct `Digest` rows directly via `strapiFetch` POST.
+
+  **Not true as written (2026-09-30).** There is no upsert helper. `digests.ts` exports `makeVideoSetKey`, `findDigestByVideoSetKeyService`, `createDigestService` and `updateDigestService` as four independent pieces, and the upsert is assembled by the caller in `data/server-functions/digests.ts` — a find-then-write TOCTOU against the `unique` constraint on `videoSetKey`, with the article-preservation rule living outside the service that owns the row. Tracked in issue #19.
 - `videoSetKey` is normalized (sort + join with comma, no spaces). Don't change the format without a migration — existing keys would no longer match.
 
 **Deferred.**
