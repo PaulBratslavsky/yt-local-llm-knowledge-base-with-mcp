@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
+import { BackendErrorPanel } from '#/components/BackendErrorPanel';
 import { z } from 'zod';
 import { Button } from '#/components/ui/button';
 import { DigestCard } from '#/components/DigestCard';
@@ -33,12 +34,7 @@ function DigestsPage() {
   if (result.status === 'error') {
     return (
       <main className="mx-auto max-w-3xl px-6 py-20">
-        <h1 className="display-title text-3xl text-[var(--ink)] sm:text-4xl">
-          Couldn&apos;t load digests
-        </h1>
-        <p className="mt-4 text-sm leading-relaxed text-destructive">
-          {result.error}
-        </p>
+        <BackendErrorPanel message={result.error} />
       </main>
     );
   }

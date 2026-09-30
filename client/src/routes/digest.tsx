@@ -4,6 +4,7 @@ import { z } from 'zod';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Button } from '#/components/ui/button';
+import { BackendErrorPanel } from '#/components/BackendErrorPanel';
 import { DigestChat } from '#/components/DigestChat';
 import { generateDigestArticle } from '#/data/server-functions/digest';
 import {
@@ -68,15 +69,13 @@ function DigestPage() {
   const result = Route.useLoaderData();
 
   if (result.status === 'error') {
+    // One dialect for backend failures, with the Retry that re-runs the
+    // loader — this used to be a bespoke card whose only way out was
+    // "Back to feed" (ADR-0007).
     return (
       <main className="mx-auto max-w-3xl px-6 py-20">
-        <h1 className="display-title text-3xl text-[var(--ink)] sm:text-4xl">
-          Couldn&apos;t build the digest
-        </h1>
-        <p className="mt-4 text-sm leading-relaxed text-destructive">
-          {result.error}
-        </p>
-        <div className="mt-8">
+        <BackendErrorPanel message={result.error} />
+        <div className="mt-8 flex justify-center">
           <Link to="/feed">
             <Button variant="outline">Back to feed</Button>
           </Link>

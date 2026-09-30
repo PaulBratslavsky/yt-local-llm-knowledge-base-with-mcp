@@ -1,6 +1,7 @@
 import { STRAPI_URL } from '#/lib/env';
 import { strapiFetch, type StrapiQuery } from './strapi-client';
 import type { StoredTranscriptIndex } from './transcript';
+import { friendlyBackendError } from './backend-errors';
 
 // `STRAPI_URL` is kept here only for `strapiAssetUrl` (asset URL composition
 // for uploaded media). Every REST call goes through `strapi-client` instead.
@@ -211,18 +212,6 @@ export type PaginatedVideos = {
   error?: string;
 };
 
-// Translates a strapi-client failure into a UX-friendly message.
-// Status `0` = network error (DNS, connection refused, fetch threw).
-// 5xx = backend up but broken. 4xx = caller error (bad query/auth).
-function friendlyBackendError(status: number, raw: string): string {
-  if (status === 0) {
-    return 'Backend unreachable. Check that Strapi is running on port 1340.';
-  }
-  if (status >= 500) {
-    return 'Backend error. Strapi is up but rejected the request — check its console for details.';
-  }
-  return raw || `Backend error ${status}`;
-}
 
 // =============================================================================
 // Feed / search

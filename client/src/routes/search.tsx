@@ -24,6 +24,9 @@ type LoaderData =
   | { status: 'ok'; query: string; hits: LibraryPassageHit[] }
   | { status: 'error'; query: string; error: string };
 
+import { BackendErrorPanel } from '#/components/BackendErrorPanel';
+import { friendlyOllamaError } from '#/lib/services/ollama-errors';
+
 export const Route = createFileRoute('/search')({
   validateSearch: SearchSchema,
   loaderDeps: ({ search }) => ({ q: search.q }),
@@ -34,7 +37,10 @@ export const Route = createFileRoute('/search')({
       data: { query: q, limit: 30 },
     });
     if (res.status !== 'ok') {
-      return { status: 'error', query: q, error: res.error };
+      // The failures this path reports are the query embedding (Ollama) and
+      // the library read (Strapi). Both used to reach the user raw — "fetch
+      // failed" — which is the exact symptom ADR-0007 was written to kill.
+      return { status: 'error', query: q, error: friendlyOllamaError(res.error) };
     }
     return { status: 'ok', query: q, hits: res.hits };
   },
@@ -77,8 +83,8 @@ function SearchPage() {
       )}
 
       {data.status === 'error' && (
-        <div className="mt-8 rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
-          Couldn&apos;t run the search: {data.error}
+        <div className="mt-8">
+          <BackendErrorPanel message={data.error} variant="banner" />
         </div>
       )}
 

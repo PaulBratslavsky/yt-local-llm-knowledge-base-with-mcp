@@ -19,8 +19,8 @@ import {
 } from '#/lib/services/digest';
 import { OLLAMA_MODEL } from '#/lib/env';
 import {
-  fetchVideoByVideoIdService,
-  fetchVideoByDocumentIdService,
+  fetchVideoByVideoIdWithStatusService,
+  fetchVideoByDocumentIdWithStatusService,
   stripVideoForClient,
   type StrapiVideo,
 } from '#/lib/services/videos';
@@ -57,18 +57,18 @@ export const saveDigest = createServerFn({ method: 'POST' })
     const videoSetKey = makeVideoSetKey(data.youtubeVideoIds);
 
     // Resolve youtubeVideoIds → documentIds for the m2m relation.
-    const resolved: string[] = [];
-    const missing: string[] = [];
-    await Promise.all(
-      data.youtubeVideoIds.map(async (id) => {
-        const v = await fetchVideoByVideoIdService(id).catch(() => null);
-        if (v) resolved.push(v.documentId);
-        else missing.push(id);
-      }),
+    // Same ADR-0007 trap as loadDigest: a dead backend must not be reported
+    // as a deleted video. Order preserved so the error names the right ids.
+    const lookups = await Promise.all(
+      data.youtubeVideoIds.map(fetchVideoByVideoIdWithStatusService),
     );
+    const failed = lookups.find((l) => l.error);
+    if (failed?.error) return { status: 'error', error: failed.error };
+    const missing = data.youtubeVideoIds.filter((_, i) => !lookups[i].video);
     if (missing.length > 0) {
       return { status: 'error', error: `Could not find: ${missing.join(', ')}` };
     }
+    const resolved = lookups.flatMap((l) => (l.video ? [l.video.documentId] : []));
 
     const existing = await findDigestByVideoSetKeyService(videoSetKey);
     if (!existing.success) return { status: 'error', error: existing.error };
@@ -133,10 +133,25 @@ export type LoadDigestResult =
     }
   | { status: 'error'; error: string };
 
-async function resolveVideo(id: string): Promise<StrapiVideo | null> {
-  const byVid = await fetchVideoByVideoIdService(id).catch(() => null);
-  if (byVid) return byVid;
-  return await fetchVideoByDocumentIdService(id).catch(() => null);
+type VideoResolution =
+  | { kind: 'found'; video: StrapiVideo }
+  | { kind: 'missing' }
+  | { kind: 'backend-error'; error: string };
+
+/** Resolve by youtubeVideoId, else documentId.
+ *
+ *  This used to `.catch(() => null)` around two fetchers that already
+ *  return null for a dead backend, so "Strapi is down" reached the user as
+ *  `Could not find: abc123` — the row looked deleted (ADR-0007). */
+async function resolveVideo(id: string): Promise<VideoResolution> {
+  const byVid = await fetchVideoByVideoIdWithStatusService(id);
+  if (byVid.error) return { kind: 'backend-error', error: byVid.error };
+  if (byVid.video) return { kind: 'found', video: byVid.video };
+
+  const byDoc = await fetchVideoByDocumentIdWithStatusService(id);
+  if (byDoc.error) return { kind: 'backend-error', error: byDoc.error };
+  if (byDoc.video) return { kind: 'found', video: byDoc.video };
+  return { kind: 'missing' };
 }
 
 export const loadDigest = createServerFn({ method: 'GET' })
@@ -152,18 +167,20 @@ export const loadDigest = createServerFn({ method: 'GET' })
     if (lookup.success && lookup.data) {
       // Cache hit: resolve the source videos for rendering (chips,
       // thumbnails, etc.) and return the persisted structured digest.
-      const videos: StrapiVideo[] = [];
-      const missing: string[] = [];
-      await Promise.all(
-        data.videoIds.map(async (id) => {
-          const v = await resolveVideo(id);
-          if (v) videos.push(v);
-          else missing.push(id);
-        }),
+      const resolved = await Promise.all(data.videoIds.map(resolveVideo));
+      const backendError = resolved.find((r) => r.kind === 'backend-error');
+      if (backendError && backendError.kind === 'backend-error') {
+        return { status: 'error', error: backendError.error };
+      }
+      const missing = data.videoIds.filter(
+        (_, i) => resolved[i].kind === 'missing',
       );
       if (missing.length > 0) {
         return { status: 'error', error: `Could not find: ${missing.join(', ')}` };
       }
+      const videos = resolved.flatMap((r) =>
+        r.kind === 'found' ? [r.video] : [],
+      );
       return {
         status: 'ok',
         digest: strapiRowToDigest(lookup.data),

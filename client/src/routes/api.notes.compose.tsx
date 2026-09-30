@@ -2,7 +2,7 @@ import { createFileRoute } from '@tanstack/react-router';
 import { chat, toServerSentEventsResponse } from '@tanstack/ai';
 import { createOllamaChat } from '@tanstack/ai-ollama';
 import {
-  fetchVideoByVideoIdService,
+  fetchVideoByVideoIdWithStatusService,
   fetchTranscriptByVideoIdService,
 } from '#/lib/services/videos';
 import { cleanTranscript } from '#/lib/services/transcript';
@@ -90,7 +90,11 @@ export const Route = createFileRoute('/api/notes/compose')({
           return new Response('prompt too long (max 4000 chars)', { status: 400 });
         }
 
-        const video = await fetchVideoByVideoIdService(body.videoId);
+        // See ADR-0007: the non-status fetcher collapses "no such row" and
+        // "Strapi unreachable" into null, so a dead backend reported 404.
+        const lookup = await fetchVideoByVideoIdWithStatusService(body.videoId);
+        if (lookup.error) return new Response(lookup.error, { status: 503 });
+        const video = lookup.video;
         if (!video) return new Response('Video not found', { status: 404 });
         if (video.summaryStatus !== 'generated') {
           return new Response('Summary not ready', { status: 409 });

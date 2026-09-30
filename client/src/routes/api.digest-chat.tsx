@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { chat, toServerSentEventsResponse } from '@tanstack/ai';
 import { createOllamaChat } from '@tanstack/ai-ollama';
-import { fetchVideoByVideoIdService } from '#/lib/services/videos';
+import { fetchVideoByVideoIdWithStatusService } from '#/lib/services/videos';
 import { prepareDigestChatPrompt } from '#/lib/services/learning';
 import { webSearchTool } from '#/lib/services/chat-tools';
 import { OLLAMA_HOST, OLLAMA_CHAT_MODEL as CHAT_MODEL } from '#/lib/env';
@@ -102,7 +102,13 @@ export const Route = createFileRoute('/api/digest-chat')({
 
         const videos = [];
         for (const id of videoIds) {
-          const v = await fetchVideoByVideoIdService(id);
+          // A dead Strapi used to read as "Video not found" here — the
+          // non-status fetcher returns null for both (ADR-0007).
+          const lookup = await fetchVideoByVideoIdWithStatusService(id);
+          if (lookup.error) {
+            return new Response(lookup.error, { status: 503 });
+          }
+          const v = lookup.video;
           if (!v) {
             return new Response(`Video not found: ${id}`, { status: 404 });
           }
