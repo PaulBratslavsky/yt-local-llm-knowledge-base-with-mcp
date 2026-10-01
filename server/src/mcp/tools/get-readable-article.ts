@@ -10,8 +10,9 @@
 //   at the in-app UI for generation. Matches the "MCP reads, in-app
 //   writes" split we use for digests too.
 
-import { z } from 'zod';
+import { z } from '@strapi/utils';
 import type { ToolDef } from '../registry';
+import { resolveByEitherId } from './video-access';
 
 const schema = z.object({
   videoId: z
@@ -37,15 +38,7 @@ export const getReadableArticleTool: ToolDef<z.infer<typeof schema>> = {
     'Fetch the cached long-form readable article for a video (a cleaned-up markdown article version of the transcript, with filler/sponsor reads/tangents stripped). Returns null if the article has not been generated yet — the user must click "Read" in the in-app UI to generate it. Ideal when you want to reason over the full content of a video beyond the bullet-point summary.',
   schema,
   execute: async ({ videoId }, { strapi }) => {
-    let video = (await strapi.documents('api::video.video').findFirst({
-      filters: { youtubeVideoId: { $eq: videoId } },
-    })) as VideoRecord | null;
-
-    if (!video) {
-      video = (await strapi.documents('api::video.video').findOne({
-        documentId: videoId,
-      })) as VideoRecord | null;
-    }
+    const video = await resolveByEitherId<VideoRecord>(strapi, videoId);
 
     if (!video) {
       return { error: `No video found for "${videoId}".` };

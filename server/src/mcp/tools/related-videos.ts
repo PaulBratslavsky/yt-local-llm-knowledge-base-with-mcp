@@ -3,8 +3,9 @@
 // callable from an MCP client so a frontier model can pull topical
 // context when reasoning about a single video.
 
-import { z } from 'zod';
+import { z } from '@strapi/utils';
 import type { ToolDef } from '../registry';
+import { resolveByEitherId } from './video-access';
 import {
   cosineSimilarity,
   embeddingStatus,
@@ -52,14 +53,7 @@ export const relatedVideosTool: ToolDef<z.infer<typeof schema>> = {
   ) => {
     // Resolve the target by either id form — matches the pattern used in
     // other tools (getVideo, saveNote).
-    let target = (await strapi.documents('api::video.video').findFirst({
-      filters: { youtubeVideoId: { $eq: videoId } },
-    } as never)) as unknown as VideoRow | null;
-    if (!target) {
-      target = (await strapi.documents('api::video.video').findOne({
-        documentId: videoId,
-      } as never)) as unknown as VideoRow | null;
-    }
+    const target = await resolveByEitherId<VideoRow>(strapi, videoId);
     if (!target) return { error: `No video found for "${videoId}".` };
 
     if (embeddingStatus(target) !== 'current') {

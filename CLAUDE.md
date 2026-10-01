@@ -165,7 +165,7 @@ Single-pass for short transcripts; long ones split into 2500-word windows (50-wo
 
 The **official Strapi MCP server** (built into Strapi 5.47+, enabled via `server.mcp.enabled` in `config/server.ts`) serves Streamable HTTP at `/mcp`, gated by **admin** API tokens. yt-kb's 22 domain tools (videos, transcripts, tags, notes) register onto it from `src/index.ts` `register()` via the adapter in `server/src/mcp-official/` (permissions, adapter, tools list) — which **reuses the tool bodies** in `server/src/mcp/tools/`. Three custom admin permissions tier the tools: `api::yt-kb-mcp.read` (14 read), `.write` (4 mutations), `.maintenance` (4 expensive/external-side-effect). A token sees only the tools its permissions allow. **Tool bodies are defined once** in `src/mcp/tools/` — the in-app Ollama chat does not use MCP, keeping local inference protocol-free. The previous hand-rolled `/api/mcp` server was retired. See `docs/mcp.md`.
 
-**Adding a tool:** author a `ToolDef` in `src/mcp/tools/`, then add a zod-3 entry (`@strapi/utils`) with a read/write/maintenance tier to `src/mcp-official/tools.ts`. Schemas are zod-3 there (not the app's zod-4) because the MCP SDK's schema conversion needs zod 3 — see `docs/mcp.md`.
+**Adding a tool:** author a `ToolDef` in `src/mcp/tools/` — schema included, in zod 3 (`@strapi/utils`, the zod the MCP SDK's schema conversion needs) — then add a one-line entry to `src/mcp-official/tools.ts` giving the tool, a title and its `sideEffects` (`none` | `write` | `external`). The adapter registers `tool.schema` and derives the admin permission tier from `sideEffects`, so there is one schema per tool and the tier follows from what the body does. See `docs/mcp.md`.
 
 ## Routing and aliases
 

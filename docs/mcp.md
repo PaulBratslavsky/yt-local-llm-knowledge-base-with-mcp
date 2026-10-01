@@ -222,14 +222,26 @@ Claude reasons across it and writes a summary
   host-agnostic; the adapter (`mcp-official/adapter.ts`) wraps it for the
   official API and adds a ~900 KB result-size guard (MCP clients reject
   results over ~1 MB).
-- **Schemas are declared in zod 3** (`@strapi/utils`) in
-  `mcp-official/tools.ts`, because the app uses zod 4 and the two aren't
-  interchangeable across the MCP SDK's schema conversion. Output schemas
-  must be a top-level `ZodObject`; the adapter normalizes array/scalar
-  results into an object.
+- **Each tool declares its input schema once**, on the body, in zod 3
+  (`@strapi/utils` — the zod the MCP SDK's schema conversion needs). The
+  adapter registers `tool.schema` directly. Until 2026-09, bodies used
+  zod 4 and `mcp-official/tools.ts` carried a hand-written zod-3 restatement
+  of every schema; only the restatement was enforced, so adding a field to a
+  body and forgetting the copy left the body destructuring `undefined` with
+  nothing to catch it. Output schemas must be a top-level `ZodObject`; the
+  adapter normalizes array/scalar results into an object.
+- **The permission tier is derived, not typed.** A tool declares
+  `sideEffects: 'none' | 'write' | 'external'` and the adapter maps that to
+  the admin action (`read` / `write` / `maintenance`), so a mutating tool
+  can't be labelled read-only by a typo.
 - **Adding a tool:** author a `ToolDef` in `server/src/mcp/tools/`, then add
-  a zod-3 entry (read/write/maintenance tier) to
+  a one-line entry (tool, title, sideEffects) to
   `server/src/mcp-official/tools.ts`. Registration is automatic.
-- `saveSummary` does not build the in-app BM25 retrieval index (that's an
-  Ollama-bound pipeline). For full in-app chat grounding of a
-  Claude-generated summary, regenerate from the app UI afterwards.
+- `saveSummary` writes the summary fields only. It does **not** set
+  `valueScore` / `signalScore` / `finalScore`, and does not embed the video
+  or build the BM25 retrieval index — those are Ollama-bound pipelines in
+  the app. A Claude-authored summary is therefore invisible to score-filtered
+  views (the feed filters `finalScore >= minScore`, and `$gte` excludes
+  nulls) and to related-videos/semantic search until something indexes it.
+  Run `reindexEmbeddings` after, or regenerate from the app UI for full
+  in-app chat grounding.
