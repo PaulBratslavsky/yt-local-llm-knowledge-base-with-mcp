@@ -18,18 +18,29 @@ import { MCP_ACTIONS } from './permissions';
 
 type RegisterTool = Core.Strapi['ai']['mcp']['registerTool'];
 
+/** What a tool does to the world. The permission tier is derived from this
+ *  rather than typed out per entry, so a tool can't be labelled `read` while
+ *  its body writes.
+ *
+ *  none     — queries only
+ *  write    — mutates yt-kb data
+ *  external — leaves the box (YouTube, Ollama) or is expensive enough that a
+ *             browsing token shouldn't be able to trigger it */
+export type SideEffects = 'none' | 'write' | 'external';
+
+const ACCESS_BY_SIDE_EFFECTS = {
+  none: MCP_ACTIONS.READ,
+  write: MCP_ACTIONS.WRITE,
+  external: MCP_ACTIONS.MAINTENANCE,
+} as const;
+
 export type DomainTool = {
-  /** The domain tool — supplies name, description, and the execute body. */
+  /** The domain tool — supplies name, description, schema and execute body. */
   tool: ToolDef<any, any>;
   /** Short human title (the official API requires it; ToolDef has only name). */
   title: string;
-  /** Permission tier → which custom admin action gates the tool.
-   * read = no mutation; write = ordinary data mutation; maintenance =
-   * expensive / external-side-effect / hard-to-undo (reindex, YouTube
-   * fetch, digest). */
-  access: 'read' | 'write' | 'maintenance';
-  /** Input schema re-declared in zod 3 (@strapi/utils). Omit for no input. */
-  input?: z.ZodObject<z.ZodRawShape>;
+  /** What the body does; the admin action that gates the tool follows from it. */
+  sideEffects: SideEffects;
   /**
    * Output schema in zod 3. Defaults to a permissive object (any shape) —
    * the migration starts loose and tightens per tool later. structuredContent
@@ -75,14 +86,14 @@ export function registerDomainTool(
   strapi: Core.Strapi,
   def: DomainTool,
 ): void {
-  const { tool, title, access, input } = def;
+  const { tool, title, sideEffects } = def;
   const output = def.output ?? LOOSE_OUTPUT;
-  const action =
-    access === 'maintenance'
-      ? MCP_ACTIONS.MAINTENANCE
-      : access === 'write'
-        ? MCP_ACTIONS.WRITE
-        : MCP_ACTIONS.READ;
+  const action = ACCESS_BY_SIDE_EFFECTS[sideEffects];
+  // The tool's own schema, not a restatement of it. These used to be
+  // declared twice — zod 4 on the body, zod 3 here — and only this one was
+  // enforced, so adding a field to a body and forgetting the copy left the
+  // body destructuring undefined with nothing to catch it.
+  const input = tool.schema as z.ZodObject<z.ZodRawShape> | undefined;
 
   registerTool({
     name: tool.name,

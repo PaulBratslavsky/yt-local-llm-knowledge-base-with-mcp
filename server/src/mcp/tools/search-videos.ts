@@ -2,7 +2,7 @@
 // findTranscripts (which searches the transcript body). Use this when the
 // question is about AI-generated summary content rather than raw captions.
 
-import { z } from 'zod';
+import { z } from '@strapi/utils';
 import type { ToolDef } from '../registry';
 import { buildTokenAndFilter, tokenizeQuery } from './query-helpers';
 
@@ -54,7 +54,7 @@ async function runQuery(strapi: any, filters: Record<string, unknown>, limit: nu
 export const searchVideosTool: ToolDef<z.infer<typeof schema>> = {
   name: 'searchVideos',
   description:
-    'Tokenized search across video titles, URL, youtubeVideoId, and AI-generated summary fields (title/description/overview). Every non-stopword token in the query must appear in at least one field (case-insensitive substring per token). Works with natural-language queries, full YouTube URLs, or bare 11-char video ids. Falls back to any-token-matches if the strict search returns nothing. Use findTranscripts to search inside raw captions instead.',
+    'Tokenized search across video titles, URL, youtubeVideoId, and AI-generated summary fields (title/description/overview). Every non-stopword token in the query must appear in at least one field (case-insensitive substring per token). Works with natural-language queries, full YouTube URLs, or bare 11-char video ids. There is NO any-token fallback: if the strict search finds nothing you get an empty result and a hint, because OR-matching generic tokens returns a pile of false positives. Retry with fewer or more distinctive terms. Use findTranscripts to search inside raw captions instead.',
   schema,
   execute: async ({ query, limit, tag }, { strapi }) => {
     const tokens = tokenizeQuery(query);

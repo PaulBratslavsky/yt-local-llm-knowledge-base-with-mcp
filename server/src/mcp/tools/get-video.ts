@@ -2,8 +2,9 @@
 // steps, and tags. Use searchTranscript or getTranscript for the transcript
 // body itself — this tool stays focused on the AI-generated view.
 
-import { z } from 'zod';
+import { z } from '@strapi/utils';
 import type { ToolDef } from '../registry';
+import { POPULATE, resolveByEitherId, videoNotFound } from './video-access';
 
 const schema = z.object({
   videoId: z
@@ -18,32 +19,10 @@ export const getVideoTool: ToolDef<z.infer<typeof schema>> = {
     'Fetch a full Video record by youtubeVideoId or documentId, including summary title/description/overview, sections (with timecodes), key takeaways, action steps, and tags. Does NOT include the transcript — call getTranscript or searchTranscript for that.',
   schema,
   execute: async ({ videoId }, { strapi }) => {
-    // Try youtubeVideoId first, then fall back to documentId.
-    let video = (await strapi.documents('api::video.video').findFirst({
-      filters: { youtubeVideoId: { $eq: videoId } },
-      populate: {
-        tags: { fields: ['name'] },
-        keyTakeaways: true,
-        sections: true,
-        actionSteps: true,
-      },
-    })) as (Record<string, unknown> & { tags?: Array<{ name: string }> }) | null;
-
-    if (!video) {
-      video = (await strapi.documents('api::video.video').findOne({
-        documentId: videoId,
-        populate: {
-          tags: { fields: ['name'] },
-          keyTakeaways: true,
-          sections: true,
-          actionSteps: true,
-        },
-      })) as (Record<string, unknown> & { tags?: Array<{ name: string }> }) | null;
-    }
-
-    if (!video) {
-      return { error: `No video found for "${videoId}".` };
-    }
+    const video = await resolveByEitherId(strapi, videoId, {
+      populate: POPULATE.full,
+    });
+    if (!video) return videoNotFound(videoId);
 
     // Strip the internal retrieval blobs from the response — they're huge
     // (passageEmbeddings alone can be ~800 KB, which doubles past the 1 MB

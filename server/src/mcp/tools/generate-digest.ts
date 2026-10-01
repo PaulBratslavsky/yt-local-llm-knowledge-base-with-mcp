@@ -10,8 +10,9 @@
 // server off the inference path (the whole point of MCP) and avoids
 // burning local Ollama cycles from a Claude Desktop session.
 
-import { z } from 'zod';
+import { z } from '@strapi/utils';
 import type { ToolDef } from '../registry';
+import { resolveByEitherId } from './video-access';
 
 const schema = z.object({
   videoIds: z
@@ -55,25 +56,13 @@ export const generateDigestTool: ToolDef<z.infer<typeof schema>> = {
     const missing: string[] = [];
 
     for (const id of unique) {
-      let row = (await strapi.documents('api::video.video').findFirst({
-        filters: { youtubeVideoId: { $eq: id } },
+      const row = await resolveByEitherId<VideoRecord>(strapi, id, {
         populate: {
           keyTakeaways: true,
           sections: true,
           actionSteps: true,
         },
-      })) as VideoRecord | null;
-
-      if (!row) {
-        row = (await strapi.documents('api::video.video').findOne({
-          documentId: id,
-          populate: {
-            keyTakeaways: true,
-            sections: true,
-            actionSteps: true,
-          },
-        })) as VideoRecord | null;
-      }
+      });
 
       if (!row) {
         missing.push(id);

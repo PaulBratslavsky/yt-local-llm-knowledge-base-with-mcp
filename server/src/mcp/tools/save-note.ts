@@ -3,8 +3,9 @@
 // with a many-to-many relation to Video (so a note can span multiple
 // videos if written against a cross-video conversation).
 
-import { z } from 'zod';
+import { z } from '@strapi/utils';
 import type { ToolDef } from '../registry';
+import { resolveByEitherId } from './video-access';
 
 const schema = z.object({
   videoId: z
@@ -33,14 +34,7 @@ export const saveNoteTool: ToolDef<z.infer<typeof schema>> = {
     "Attach a markdown note to a video. Use this to capture frontier-model observations so they're visible later from the app. Append-only — one tool call = one new note.",
   schema,
   execute: async ({ videoId, body, title, author }, { strapi }) => {
-    let video = (await strapi.documents('api::video.video').findFirst({
-      filters: { youtubeVideoId: { $eq: videoId } },
-    })) as { documentId: string } | null;
-    if (!video) {
-      video = (await strapi.documents('api::video.video').findOne({
-        documentId: videoId,
-      })) as { documentId: string } | null;
-    }
+    const video = await resolveByEitherId(strapi, videoId);
     if (!video) return { error: `No video found for "${videoId}".` };
 
     // `api::note.note` isn't in the generated ContentType union until the

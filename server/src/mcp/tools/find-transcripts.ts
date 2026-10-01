@@ -8,7 +8,7 @@
 // (including the 244-char preview hint) so prompts from that plugin work
 // here verbatim.
 
-import { z } from 'zod';
+import { z } from '@strapi/utils';
 import type { ToolDef } from '../registry';
 import { buildTokenAndFilter, tokenizeQuery } from './query-helpers';
 
@@ -55,7 +55,7 @@ async function runQuery(strapi: any, filters: Record<string, unknown>, limit: nu
 export const findTranscriptsTool: ToolDef<z.infer<typeof schema>> = {
   name: 'findTranscripts',
   description:
-    'Tokenized search across all saved transcripts — title, youtubeVideoId, and transcript content. Every non-stopword token in the query must appear in at least one of those fields. Falls back to any-token-matches when the strict search is empty. Returns truncated previews (244 chars) — use getTranscript for full content. Ideal for "what have we got about X?" discovery.',
+    'Tokenized search across all saved transcripts — title, youtubeVideoId, and transcript content. Every non-stopword token in the query must appear in at least one of those fields. There is NO any-token fallback — an empty result means retry with fewer or more distinctive terms. Returns truncated previews (244 chars) — use getTranscript for full content. Ideal for "what have we got about X?" discovery.',
   schema,
   execute: async ({ query, limit, includeFullContent }, { strapi }) => {
     const tokens = tokenizeQuery(query);

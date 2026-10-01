@@ -9,8 +9,9 @@
 // are for the frontier-path UX (Claude Desktop), and if the user later
 // wants in-app BM25 they can regenerate from the UI.
 
-import { z } from 'zod';
+import { z } from '@strapi/utils';
 import type { ToolDef } from '../registry';
+import { resolveByEitherId, videoNotFound } from './video-access';
 
 const SectionSchema = z.object({
   heading: z.string().min(1).max(200),
@@ -70,15 +71,7 @@ export const saveSummaryTool: ToolDef<z.infer<typeof schema>> = {
     'Persist an AI-generated summary (title, description, overview, sections with optional timecodes, key takeaways, action steps) to an existing Video. Use this after generating a summary with a frontier model so it shows up in the app UI alongside locally-generated ones.',
   schema,
   execute: async (args, { strapi }) => {
-    let video = (await strapi.documents('api::video.video').findFirst({
-      filters: { youtubeVideoId: { $eq: args.videoId } },
-    })) as { documentId: string } | null;
-
-    if (!video) {
-      video = (await strapi.documents('api::video.video').findOne({
-        documentId: args.videoId,
-      })) as { documentId: string } | null;
-    }
+    const video = await resolveByEitherId(strapi, args.videoId);
 
     if (!video) {
       return { error: `No video found for "${args.videoId}". Call addVideo first.` };

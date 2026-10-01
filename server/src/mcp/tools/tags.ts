@@ -2,8 +2,10 @@
 // middleware in server/src/index.ts (lowercase + trimmed) so we don't
 // repeat that here — pass whatever and it'll dedupe cleanly.
 
-import { z } from 'zod';
+import { z } from '@strapi/utils';
+import type { Core } from '@strapi/strapi';
 import type { ToolDef } from '../registry';
+import { resolveByEitherId } from './video-access';
 import { slugifyTagName } from './tag-utils';
 
 const listSchema = z.object({
@@ -40,17 +42,15 @@ const tagVideoSchema = z.object({
     .describe('Tag names to apply. Created on-the-fly if they don\'t exist.'),
 });
 
-async function resolveVideo(strapi: any, id: string) {
-  let video = (await strapi.documents('api::video.video').findFirst({
-    filters: { youtubeVideoId: { $eq: id } },
+type TaggedVideo = {
+  documentId: string;
+  tags?: Array<{ documentId: string; name: string }>;
+};
+
+async function resolveVideo(strapi: Core.Strapi, id: string) {
+  return resolveByEitherId<TaggedVideo>(strapi, id, {
     populate: { tags: { fields: ['documentId', 'name'] } },
-  })) as { documentId: string; tags?: Array<{ documentId: string; name: string }> } | null;
-  if (video) return video;
-  video = (await strapi.documents('api::video.video').findOne({
-    documentId: id,
-    populate: { tags: { fields: ['documentId', 'name'] } },
-  })) as { documentId: string; tags?: Array<{ documentId: string; name: string }> } | null;
-  return video;
+  });
 }
 
 export const tagVideoTool: ToolDef<z.infer<typeof tagVideoSchema>> = {

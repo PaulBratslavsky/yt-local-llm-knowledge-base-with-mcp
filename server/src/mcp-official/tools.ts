@@ -1,10 +1,20 @@
 // The yt-knowledge-base domain tools registered on the official MCP server.
 //
-// Each entry pairs a tool's execute body (from ../mcp/tools/) with a zod-3
-// input schema + an access tier (read | write | maintenance). Input schemas
-// are re-declared here (zod 3, @strapi/utils) because the tools' own schemas
-// are zod 4 and the two aren't interchangeable across the SDK — see adapter.ts.
-import { z } from '@strapi/utils';
+// Each entry is metadata only: which body, a human title, and what that body
+// does to the world. The input schema comes from the tool itself.
+//
+// It used to carry a second, hand-written copy of every tool's input schema
+// (zod 3 here, zod 4 on the body) because the two zods weren't
+// interchangeable. Only this copy was enforced at runtime, `ToolDef<any,
+// any>` erased the body's type, and `strict: false` meant tsc couldn't see
+// the difference — so adding a field to a body and forgetting the copy left
+// the body destructuring `undefined`, silently. The bodies now declare their
+// schemas in the same zod 3 the SDK needs, and the adapter passes
+// `tool.schema` straight through. One declaration, no drift possible.
+//
+// `sideEffects` replaces the old hand-typed `access` tier: the admin action
+// that gates a tool is derived from what its body does (see adapter.ts), so
+// a mutating tool can't be labelled read-only by a typo.
 import type { DomainTool } from './adapter';
 
 import { libraryStatsTool } from '../mcp/tools/library-stats';
@@ -28,276 +38,36 @@ import { fetchTranscriptTool } from '../mcp/tools/fetch-transcript';
 import { reindexEmbeddingsTool } from '../mcp/tools/reindex-embeddings';
 import { generateDigestTool } from '../mcp/tools/generate-digest';
 
-const tagNames = z.array(z.string().min(1).max(40));
-
-const videoIdInput = z.object({
-  videoId: z
-    .string()
-    .min(1)
-    .describe('Either the youtubeVideoId or the Strapi documentId.'),
-});
-
 export const domainTools: DomainTool[] = [
-  // ---- Read tools (gated by the yt-kb-mcp.read admin action) ----
-  {
-    tool: libraryStatsTool,
-    title: 'Library stats overview',
-    access: 'read',
-    input: z.object({
-      topTags: z.number().int().min(1).max(50).default(15),
-      topAuthors: z.number().int().min(1).max(50).default(10),
-      recentMonths: z.number().int().min(1).max(24).default(12),
-    }),
-  },
-  {
-    tool: listVideosTool,
-    title: 'List videos',
-    access: 'read',
-    input: z.object({
-      page: z.number().int().min(1).default(1),
-      pageSize: z.number().int().min(1).max(100).default(25),
-      status: z
-        .enum(['any', 'pending', 'generated', 'failed'])
-        .default('any')
-        .describe('Filter by summaryStatus.'),
-      verdict: z
-        .enum(['any', 'worth_it', 'skim', 'skip'])
-        .default('any')
-        .describe('Filter by the AI watch verdict.'),
-      tag: z
-        .string()
-        .optional()
-        .describe('Filter by tag name (lowercase, exact).'),
-    }),
-  },
-  {
-    tool: searchVideosTool,
-    title: 'Search videos',
-    access: 'read',
-    input: z.object({
-      query: z
-        .string()
-        .min(1)
-        .max(200)
-        .describe(
-          'Tokenized match against title/url/id/summary fields; a full YouTube URL or 11-char id also works.',
-        ),
-      limit: z.number().int().min(1).max(50).default(10),
-      tag: z.string().optional().describe('Optional tag filter (lowercase).'),
-    }),
-  },
-  {
-    tool: getVideoTool,
-    title: 'Get a video',
-    access: 'read',
-    input: videoIdInput,
-  },
-  {
-    tool: getTranscriptTool,
-    title: 'Get a transcript',
-    access: 'read',
-    input: z.object({
-      videoId: z.string().min(1).describe('YouTube video id.'),
-      mode: z
-        .enum(['full', 'chunked', 'timeRange'])
-        .default('full')
-        .describe('full: rawText slice (offset/maxChars). chunked: segment page (page/pageSize). timeRange: segments in [startSec,endSec].'),
-      startSec: z.number().int().min(0).optional(),
-      endSec: z.number().int().min(0).optional(),
-      offset: z.number().int().min(0).default(0).describe('full mode: char offset; follow nextOffset to continue.'),
-      maxChars: z.number().int().min(500).max(400_000).default(120_000).describe('full mode: max chars (default 120000).'),
-      page: z.number().int().min(1).default(1).describe('chunked mode: 1-based page.'),
-      pageSize: z.number().int().min(1).max(500).default(200).describe('chunked mode: segments per page (default 200).'),
-    }),
-  },
-  {
-    tool: searchTranscriptTool,
-    title: 'Search within a transcript',
-    access: 'read',
-    input: z.object({
-      videoId: z.string().min(1).describe('YouTube video id to search within.'),
-      query: z.string().min(2).max(300).describe('Natural-language query; stopwords ignored.'),
-      k: z.number().int().min(1).max(25).default(8).describe('Top-k chunks. Default 8.'),
-    }),
-  },
-  {
-    tool: findTranscriptsTool,
-    title: 'Find transcripts',
-    access: 'read',
-    input: z.object({
-      query: z.string().min(1).max(200).describe('Free-text query over title/id/rawText (all tokens must appear).'),
-      limit: z.number().int().min(1).max(50).default(10),
-      includeFullContent: z.boolean().default(false).describe('Include full transcript text per match.'),
-    }),
-  },
-  {
-    tool: crossSearchTranscriptsTool,
-    title: 'Search across transcripts',
-    access: 'read',
-    input: z.object({
-      query: z.string().min(2).max(300),
-      tags: z.array(z.string().min(1).max(40)).max(10).optional().describe('Optional tag filter (any-of).'),
-      perVideo: z.number().int().min(1).max(10).default(3).describe('Max chunks per video.'),
-      maxVideos: z.number().int().min(1).max(100).default(25).describe('Max videos to scan.'),
-    }),
-  },
-  {
-    tool: listTranscriptsTool,
-    title: 'List transcripts',
-    access: 'read',
-    input: z.object({
-      page: z.number().int().min(1).default(1),
-      pageSize: z.number().int().min(1).max(100).default(25),
-      sort: z.enum(['newest', 'oldest', 'title']).default('newest'),
-    }),
-  },
-  {
-    tool: aggregateByTagTool,
-    title: 'Aggregate videos by tag',
-    access: 'read',
-    input: z.object({
-      tags: z.array(z.string().min(1).max(40)).min(1).max(10).describe('One or more tag names (lowercased).'),
-      match: z.enum(['any', 'all']).default('any'),
-      limit: z.number().int().min(1).max(200).default(50),
-      fields: z.enum(['header', 'summary', 'full']).default('summary'),
-    }),
-  },
-  {
-    tool: listUntaggedTool,
-    title: 'List untagged videos',
-    access: 'read',
-    input: z.object({
-      limit: z.number().int().min(1).max(200).default(25),
-      onlyGenerated: z.boolean().default(true).describe('Only videos whose summary finished generating.'),
-    }),
-  },
-  {
-    tool: listTagsTool,
-    title: 'List tags',
-    access: 'read',
-    input: z.object({
-      limit: z.number().int().min(1).max(500).default(100),
-    }),
-  },
-  {
-    tool: relatedVideosTool,
-    title: 'Related videos',
-    access: 'read',
-    input: z.object({
-      videoId: z.string().min(1).describe('youtubeVideoId or documentId.'),
-      limit: z.number().int().min(1).max(20).optional().describe('Max neighbors. Default 6.'),
-      minScore: z.number().min(-1).max(1).optional().describe('Cosine floor. Default 0.5.'),
-    }),
-  },
-  {
-    tool: getReadableArticleTool,
-    title: 'Get the readable article',
-    access: 'read',
-    input: z.object({
-      videoId: z.string().min(1).max(64).describe('youtubeVideoId or documentId.'),
-    }),
-  },
+  // ---- Queries (gated by api::yt-kb-mcp.read) ----
+  { tool: libraryStatsTool, title: 'Library stats overview', sideEffects: 'none' },
+  { tool: listVideosTool, title: 'List videos', sideEffects: 'none' },
+  { tool: searchVideosTool, title: 'Search videos', sideEffects: 'none' },
+  { tool: getVideoTool, title: 'Get a video', sideEffects: 'none' },
+  { tool: getTranscriptTool, title: 'Get a transcript', sideEffects: 'none' },
+  { tool: searchTranscriptTool, title: 'Search within a transcript', sideEffects: 'none' },
+  { tool: findTranscriptsTool, title: 'Find transcripts', sideEffects: 'none' },
+  { tool: crossSearchTranscriptsTool, title: 'Search across transcripts', sideEffects: 'none' },
+  { tool: listTranscriptsTool, title: 'List transcripts', sideEffects: 'none' },
+  { tool: aggregateByTagTool, title: 'Aggregate videos by tag', sideEffects: 'none' },
+  { tool: listUntaggedTool, title: 'List untagged videos', sideEffects: 'none' },
+  { tool: listTagsTool, title: 'List tags', sideEffects: 'none' },
+  { tool: relatedVideosTool, title: 'Related videos', sideEffects: 'none' },
+  { tool: getReadableArticleTool, title: 'Get the readable article', sideEffects: 'none' },
+  // Reads the compiled summaries and hands them back for the CALLER to
+  // synthesize — no LLM, no network, no writes. It was tiered `maintenance`
+  // on an "LLM cost" premise its own header disclaims, which kept the
+  // documented browse-and-annotate token from calling a read-only tool.
+  { tool: generateDigestTool, title: 'Generate a digest', sideEffects: 'none' },
 
-  // ---- Write tools (gated by the yt-kb-mcp.write admin action) ----
-  {
-    tool: saveSummaryTool,
-    title: 'Save a video summary',
-    access: 'write',
-    input: z.object({
-      videoId: z.string().min(1).describe('youtubeVideoId or documentId of an existing Video.'),
-      summaryTitle: z.string().min(1).max(200),
-      summaryDescription: z.string().min(1).max(500),
-      summaryOverview: z.string().min(1).describe('Markdown TL;DR — 1–2 paragraphs.'),
-      watchVerdict: z.enum(['skip', 'skim', 'worth_it']),
-      verdictSummary: z.string().min(1).max(280),
-      verdictReason: z.string().min(1).max(1000),
-      keyTakeaways: z.array(z.object({ text: z.string().min(1).max(280) })).min(1).max(10),
-      sections: z
-        .array(
-          z.object({
-            heading: z.string().min(1).max(200),
-            body: z.string().min(1).max(2000),
-            timeSec: z.number().int().min(0).optional(),
-          }),
-        )
-        .min(1)
-        .max(20),
-      actionSteps: z
-        .array(z.object({ title: z.string().min(1).max(120), body: z.string().min(1).max(600) }))
-        .min(1)
-        .max(10),
-      aiModel: z.string().max(100).optional(),
-    }),
-  },
-  {
-    tool: tagVideoTool,
-    title: 'Tag a video',
-    access: 'write',
-    input: z.object({
-      videoId: z.string().min(1).describe('youtubeVideoId or documentId.'),
-      tags: tagNames.min(1).max(20).describe('Tag names to apply (created on the fly).'),
-    }),
-  },
-  {
-    tool: untagVideoTool,
-    title: 'Untag a video',
-    access: 'write',
-    input: z.object({
-      videoId: z.string().min(1),
-      tags: tagNames.min(1).max(20),
-    }),
-  },
-  {
-    tool: saveNoteTool,
-    title: 'Save a note',
-    access: 'write',
-    input: z.object({
-      videoId: z.string().min(1).describe('youtubeVideoId or documentId.'),
-      body: z.string().min(1).describe('Note body (markdown).'),
-      title: z.string().max(200).optional(),
-      author: z.string().max(120).optional().describe('Defaults to "mcp".'),
-    }),
-  },
+  // ---- Mutations (gated by api::yt-kb-mcp.write) ----
+  { tool: saveSummaryTool, title: 'Save a video summary', sideEffects: 'write' },
+  { tool: tagVideoTool, title: 'Tag a video', sideEffects: 'write' },
+  { tool: untagVideoTool, title: 'Untag a video', sideEffects: 'write' },
+  { tool: saveNoteTool, title: 'Save a note', sideEffects: 'write' },
 
-  // ---- Maintenance tools (gated by the yt-kb-mcp.maintenance admin action) ----
-  {
-    tool: addVideoTool,
-    title: 'Add a video',
-    access: 'maintenance',
-    input: z.object({
-      url: z.string().url().describe('Full YouTube URL (watch, youtu.be, or shorts).'),
-      caption: z.string().max(500).optional(),
-      tags: tagNames.max(20).optional().describe('Optional tags (lowercased on save).'),
-    }),
-  },
-  {
-    tool: fetchTranscriptTool,
-    title: 'Fetch a transcript from YouTube',
-    access: 'maintenance',
-    input: z.object({
-      videoId: z.string().min(1).describe('11-char YouTube video id.'),
-      force: z.boolean().default(false).describe('Re-fetch and overwrite if one exists.'),
-      proxyUrl: z.string().url().optional().describe('Optional residential proxy; falls back to TRANSCRIPT_PROXY_URL.'),
-    }),
-  },
-  {
-    tool: reindexEmbeddingsTool,
-    title: 'Reindex topical embeddings',
-    access: 'maintenance',
-    input: z.object({
-      scope: z.enum(['missing', 'stale', 'all']).default('missing').describe('Which videos to (re)embed.'),
-    }),
-  },
-  {
-    tool: generateDigestTool,
-    title: 'Generate a digest',
-    access: 'maintenance',
-    input: z.object({
-      videoIds: z
-        .array(z.string().min(1).max(64))
-        .min(2)
-        .max(5)
-        .describe('2–5 generated videos (youtubeVideoId or documentId).'),
-    }),
-  },
+  // ---- Leaves the box (gated by api::yt-kb-mcp.maintenance) ----
+  { tool: addVideoTool, title: 'Add a video', sideEffects: 'external' },
+  { tool: fetchTranscriptTool, title: 'Fetch a transcript from YouTube', sideEffects: 'external' },
+  { tool: reindexEmbeddingsTool, title: 'Reindex topical embeddings', sideEffects: 'external' },
 ];
