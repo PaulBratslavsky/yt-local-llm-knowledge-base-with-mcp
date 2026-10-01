@@ -665,11 +665,21 @@ export async function updateVideoPassagesService(input: {
   return result.ok ? { success: true } : { success: false, error: result.error };
 }
 
-export async function markSummaryFailedService(documentId: string): Promise<void> {
-  // Best-effort — the chat UI will show the error via its own retry path.
-  await strapiFetch('PUT', `/api/videos/${documentId}`, {
+/** Flip a row to `failed`.
+ *
+ *  Returns the result rather than swallowing it: when Strapi is the thing
+ *  that's down, this write fails too and the row is genuinely stuck in
+ *  `pending`. The caller needs to be able to say so. */
+export async function markSummaryFailedService(
+  documentId: string,
+): Promise<{ success: true } | { success: false; error: string }> {
+  const result = await strapiFetch('PUT', `/api/videos/${documentId}`, {
     body: { data: { summaryStatus: 'failed' } },
   });
+  if (!result.ok) {
+    return { success: false, error: friendlyBackendError(result.status, result.error) };
+  }
+  return { success: true };
 }
 
 // Partial-update path for the verdict-only fields (regenerate-verdict
@@ -825,6 +835,31 @@ export async function createTranscriptService(
   return result.ok
     ? { success: true, transcript: result.data }
     : { success: false, error: result.error };
+}
+
+/** Replace the stored captions on an existing Transcript row.
+ *
+ *  `Transcript.youtubeVideoId` is unique, so a refetch could never be saved
+ *  with `createTranscriptService` — the POST 400s every time for a video
+ *  that already has a row. Without this, `forceRefetch` fetched fresh
+ *  captions, failed to store them, and silently continued on the old ones. */
+export async function updateTranscriptService(
+  input: Omit<CreateTranscriptServiceInput, 'youtubeVideoId'> & { documentId: string },
+): Promise<{ success: true; transcript: StrapiTranscript } | { success: false; error: string }> {
+  const { documentId, ...fields } = input;
+  const result = await strapiFetch<StrapiTranscript>(
+    'PUT',
+    `/api/transcripts/${documentId}`,
+    { body: { data: { ...fields, fetchedAt: new Date().toISOString() } } },
+  );
+  return result.ok && result.data
+    ? { success: true, transcript: result.data }
+    : {
+        success: false,
+        error: result.ok
+          ? 'Transcript update returned no row'
+          : friendlyBackendError(result.status, result.error),
+      };
 }
 
 // Attach a Transcript to a Video via the 1:1 relation. Used after the

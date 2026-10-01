@@ -4,6 +4,7 @@ import { z } from 'zod';
 import {
   computeFinalScore,
   createTranscriptService,
+  updateTranscriptService,
   fetchTranscriptByVideoIdService,
   fetchVideoByVideoIdService,
   linkVideoToTranscriptService,
@@ -901,12 +902,17 @@ export async function resolveGenerationInputs(
     return { kind: 'error', error: transcriptResult.error, video };
   }
 
-  // Case 3 resolution: we just fetched from YouTube. Persist the Transcript
-  // row NOW — before AI generation — so a crash mid-summary leaves the
-  // transcript safely cached for next retry.
+  // We just fetched from YouTube. Persist NOW — before AI generation — so a
+  // crash mid-summary leaves the captions safely cached for the next retry.
+  //
+  // Upsert, not insert: `Transcript.youtubeVideoId` is unique, so a
+  // forceRefetch run (which deliberately ignores the existing row) could
+  // only ever 400 on POST. The failure was swallowed as non-fatal, the run
+  // continued on in-memory captions, and the stored row kept the bad ones —
+  // so the next ordinary regeneration silently reverted. That made
+  // forceRefetch, the documented escape hatch for bad captions, a no-op.
   if (!transcriptRow) {
-    const created = await createTranscriptService({
-      youtubeVideoId: videoId,
+    const fields = {
       title: transcriptResult.data.upstreamTitle ?? meta.title,
       author: meta.author,
       thumbnailUrl: meta.thumbnailUrl,
@@ -918,18 +924,36 @@ export async function resolveGenerationInputs(
         endMs: s.endMs,
       })),
       rawText: transcriptResult.data.transcript,
-    });
-    if (created.success) {
-      transcriptRow = created.transcript;
-      await linkVideoToTranscriptService(video.documentId, created.transcript.documentId);
-      logPhase(videoId, 'transcript ✓ created + linked', {
-        documentId: created.transcript.documentId,
+    };
+
+    const existing = options.forceRefetch
+      ? await fetchTranscriptByVideoIdService(videoId)
+      : null;
+
+    const saved = existing
+      ? await updateTranscriptService({ documentId: existing.documentId, ...fields })
+      : await createTranscriptService({ youtubeVideoId: videoId, ...fields });
+
+    if (saved.success) {
+      transcriptRow = saved.transcript;
+      await linkVideoToTranscriptService(video.documentId, saved.transcript.documentId);
+      logPhase(videoId, existing ? 'transcript ✓ replaced' : 'transcript ✓ created + linked', {
+        documentId: saved.transcript.documentId,
       });
+    } else if (options.forceRefetch) {
+      // Fatal here, and only here. The whole point of the run was to replace
+      // the stored captions; finishing on in-memory ones would report
+      // success while leaving the bad transcript in place.
+      logPhase(videoId, '✗ refreshed transcript could not be saved', {
+        error: saved.error,
+      });
+      return { kind: 'error', error: saved.error, video };
     } else {
-      // Non-fatal: we still have the transcript in memory for this run.
-      // Next retry will re-fetch (or the Strapi race settled already).
+      // Non-fatal on an ordinary run: the in-memory transcript is as good as
+      // the stored one for this pass, and a summary is worth more than the
+      // cache write.
       logPhase(videoId, 'transcript ✗ save failed (continuing with in-memory)', {
-        error: created.error,
+        error: saved.error,
       });
     }
   }
@@ -1174,6 +1198,18 @@ export async function persistSummaryDraft(
       error: updated.error,
       took: ms(saveStart),
     });
+    // The transcript and AI failure paths both do this; the save path did
+    // not, so a failed save left the row `pending` forever. runInBackground
+    // treats { success: false } as "the run handled its own persistence",
+    // so onTerminalThrow never fires here either.
+    const marked = await markSummaryFailedService(video.documentId);
+    if (!marked.success) {
+      // Both writes failed, which usually means Strapi is down. The row is
+      // still claiming to be working, and nothing else will correct it.
+      logPhase(videoId, '✗ row may be stuck pending — mark-failed also failed', {
+        error: marked.error,
+      });
+    }
     return updated;
   }
   logPhase(videoId, 'db ✓ saved');
@@ -1276,7 +1312,14 @@ export async function generateVideoSummary(
 
   const resolved = await resolveGenerationInputs(videoId, options);
   if (resolved.kind === 'error') {
-    if (resolved.video) await markSummaryFailedService(resolved.video.documentId);
+    if (resolved.video) {
+      const marked = await markSummaryFailedService(resolved.video.documentId);
+      if (!marked.success) {
+        logPhase(videoId, '✗ row may be stuck pending — mark-failed also failed', {
+          error: marked.error,
+        });
+      }
+    }
     logPhase(videoId, '✗ generation failed at transcript', {
       took: ms(runStart),
       error: resolved.error,
@@ -1292,7 +1335,12 @@ export async function generateVideoSummary(
   setGenerationStep(videoId, 'ai');
   const draft = await buildSummaryDraft(resolved.inputs, options.mode ?? 'auto');
   if (!draft.success) {
-    await markSummaryFailedService(video.documentId);
+    const marked = await markSummaryFailedService(video.documentId);
+    if (!marked.success) {
+      logPhase(videoId, '✗ row may be stuck pending — mark-failed also failed', {
+        error: marked.error,
+      });
+    }
     logPhase(videoId, '✗ generation failed at AI step', {
       took: ms(runStart),
       error: draft.error,
