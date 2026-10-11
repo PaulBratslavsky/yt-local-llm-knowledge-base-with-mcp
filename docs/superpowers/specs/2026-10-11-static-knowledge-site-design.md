@@ -75,8 +75,7 @@ pattern stays one pattern:
 | Package | Version | Why |
 |---|---|---|
 | `astro` | 6.x | Zero-JS by default, which suits 172 near-static pages. |
-| `strapi-community-astro-loader` | 4.x | Build-time Strapi to content collections, as in the reference. |
-| `@strapi/client` | 1.x | Loader dependency. |
+| *(inline content-layer loader)* | — | Build-time Strapi to content collections. The reference project uses `strapi-community-astro-loader`, whose latest release (4.0.0) pins `engines.node` to `~22.14.0` — one Node minor, and this repo runs 24. ~40 lines of `fetch` in `site/src/lib/strapi.ts` replace it, which also puts the field allowlist under test rather than inside a dependency. |
 | `tailwindcss` + `@tailwindcss/vite` | 4.x | As in the reference. |
 | `minisearch` | latest | In-memory index. |
 | `marked` | 15.x | Renders `readableArticle` and `summaryOverview` markdown. |
@@ -91,7 +90,7 @@ output.
 
 ```
 Strapi (localhost:1340)
-  → strapi-community-astro-loader  (fields allowlist)
+  → site/src/lib/strapi.ts         (fields allowlist)
   → Astro content collections      (zod schema mirrors the content type)
   → static pages + search-index.json
   → netlify deploy
@@ -99,7 +98,8 @@ Strapi (localhost:1340)
 
 ### The field allowlist is the privacy mechanism
 
-The loader requests an explicit `fields[]` list. `transcriptSegments`,
+The loader requests an explicit `fields[]` list, and `buildVideoQuery`'s
+tests assert that no forbidden name appears anywhere in the query it builds. `transcriptSegments`,
 `summaryEmbedding` and `passageEmbeddings` are never named, so they cannot
 appear in the output even by accident. This matters: those three fields
 are server-side retrieval state, they are the bulk of a Video row, and

@@ -1,7 +1,13 @@
 ---
+import { getCollection } from 'astro:content';
 import BaseLayout from '../layouts/BaseLayout.astro';
+
+const videos = await getCollection('videos');
 ---
 
-<BaseLayout title="YT knowledge base">
-  <h1 class="text-2xl font-medium">Scaffold works.</h1>
+<BaseLayout title="Collection check">
+  <p>{videos.length} videos loaded.</p>
+  <ul>
+    {videos.slice(0, 5).map((v) => <li>{v.data.summaryTitle ?? v.data.videoTitle}</li>)}
+  </ul>
 </BaseLayout>
