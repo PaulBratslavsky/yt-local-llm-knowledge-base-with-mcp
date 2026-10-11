@@ -1,0 +1,30 @@
+---
+interface Props {
+  autofocus?: boolean;
+}
+
+const { autofocus = false } = Astro.props;
+---
+
+<div>
+  <label class="sr-only" for="site-search">Search the library</label>
+  <input
+    autofocus={autofocus}
+    class="w-full rounded-lg border border-slate-300 px-4 py-3 text-base outline-none focus:border-slate-500"
+    data-search-input
+    id="site-search"
+    placeholder="Search summaries, takeaways and sections…  (Cmd-K)"
+    type="search"
+  />
+  <select
+    class="mt-2 rounded-lg border border-slate-300 px-2 py-1 text-sm"
+    data-search-tag
+  >
+    <option value="">All tags</option>
+  </select>
+  <ul class="mt-2" data-search-results></ul>
+</div>
+
+<script>
+  import './search-client.ts';
+</script>

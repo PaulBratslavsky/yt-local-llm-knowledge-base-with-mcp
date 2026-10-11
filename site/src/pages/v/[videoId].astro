@@ -7,6 +7,7 @@ import SectionList from '../../components/SectionList.astro';
 import ActionStepList from '../../components/ActionStepList.astro';
 import TagPills from '../../components/TagPills.astro';
 import { displayTitle, youtubeUrlAt } from '../../lib/video';
+import { renderMarkdown } from '../../lib/markdown';
 
 export async function getStaticPaths() {
   const videos = await getCollection('videos');
@@ -57,5 +58,17 @@ const title = displayTitle(video);
     <SectionList videoId={video.youtubeVideoId} sections={video.sections} />
     <ActionStepList steps={video.actionSteps} />
     <TagPills tags={video.tags} />
+
+    {video.readableArticle && (
+      <section class="mt-12 border-t border-slate-200 pt-8">
+        <h2 class="text-sm font-medium uppercase tracking-wide text-slate-500">
+          Readable article
+        </h2>
+        <div
+          class="prose prose-slate mt-4 max-w-none text-sm leading-relaxed"
+          set:html={renderMarkdown(video.readableArticle)}
+        />
+      </section>
+    )}
   </article>
 </BaseLayout>
