@@ -1,0 +1,21 @@
+---
+import { getCollection } from 'astro:content';
+import BaseLayout from '../layouts/BaseLayout.astro';
+import VideoCard from '../components/VideoCard.astro';
+
+const entries = await getCollection('videos');
+const withArticles = entries
+  .map((e) => e.data)
+  .filter((v) => Boolean(v.readableArticle))
+  .sort((a, b) => (b.summaryGeneratedAt ?? '').localeCompare(a.summaryGeneratedAt ?? ''));
+---
+
+<BaseLayout title="Articles · YT knowledge base">
+  <h1 class="text-2xl font-medium">Articles</h1>
+  <p class="mt-1 text-sm text-slate-500">
+    {withArticles.length} videos with a full written version.
+  </p>
+  <ul class="mt-6 space-y-5">
+    {withArticles.map((video) => <li><VideoCard video={video} /></li>)}
+  </ul>
+</BaseLayout>
