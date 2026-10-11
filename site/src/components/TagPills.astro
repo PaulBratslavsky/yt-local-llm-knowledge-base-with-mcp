@@ -1,0 +1,25 @@
+---
+import type { Video } from '../lib/video';
+import { tagSlug } from '../lib/tags';
+
+interface Props {
+  tags: Video['tags'];
+}
+
+const { tags } = Astro.props;
+---
+
+{tags.length > 0 && (
+  <ul class="mt-8 flex flex-wrap gap-2">
+    {tags.map((t) => (
+      <li>
+        <a
+          class="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-700 hover:bg-slate-200"
+          href={`/t/${tagSlug(t.name)}`}
+        >
+          {t.name}
+        </a>
+      </li>
+    ))}
+  </ul>
+)}

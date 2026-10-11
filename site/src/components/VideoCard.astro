@@ -1,0 +1,21 @@
+---
+import type { Video } from '../lib/video';
+import { displayTitle } from '../lib/video';
+
+interface Props {
+  video: Video;
+}
+
+const { video } = Astro.props;
+---
+
+<a class="block hover:bg-slate-50" href={`/v/${video.youtubeVideoId}`}>
+  <h2 class="font-medium leading-snug">{displayTitle(video)}</h2>
+  <p class="mt-1 text-xs text-slate-500">
+    {video.videoAuthor}
+    {typeof video.finalScore === 'number' && <span> · score {video.finalScore}</span>}
+  </p>
+  {video.summaryDescription && (
+    <p class="mt-1 text-sm leading-relaxed text-slate-700">{video.summaryDescription}</p>
+  )}
+</a>

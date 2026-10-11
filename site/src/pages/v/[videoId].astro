@@ -5,6 +5,7 @@ import VerdictBadge from '../../components/VerdictBadge.astro';
 import TakeawayList from '../../components/TakeawayList.astro';
 import SectionList from '../../components/SectionList.astro';
 import ActionStepList from '../../components/ActionStepList.astro';
+import TagPills from '../../components/TagPills.astro';
 import { displayTitle, youtubeUrlAt } from '../../lib/video';
 
 export async function getStaticPaths() {
@@ -55,5 +56,6 @@ const title = displayTitle(video);
     <TakeawayList takeaways={video.keyTakeaways} />
     <SectionList videoId={video.youtubeVideoId} sections={video.sections} />
     <ActionStepList steps={video.actionSteps} />
+    <TagPills tags={video.tags} />
   </article>
 </BaseLayout>
