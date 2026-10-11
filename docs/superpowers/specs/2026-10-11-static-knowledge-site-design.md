@@ -165,7 +165,10 @@ timecode, and the site must not invent one either.
 
 A build step emits `search-index.json` covering: summary title, video
 title, author, description, overview, key takeaway text, section headings
-and tag names. Expected size 150–250 KB.
+and tag names. **Measured at 380 KB raw, 133 KB gzipped** for 172 videos —
+above the 150–250 KB this document first estimated, because key
+takeaways alone are 189 KB of it. Still one cold fetch of ~133 KB over
+the wire, so the in-memory design holds.
 
 One Astro island loads the index and runs MiniSearch in memory. Every
 other page ships zero JavaScript. Facets: tag, verdict, score range.
