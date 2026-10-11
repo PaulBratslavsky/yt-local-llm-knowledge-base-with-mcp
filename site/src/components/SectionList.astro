@@ -1,0 +1,46 @@
+---
+import type { Video } from '../lib/video';
+import { formatTimecode, youtubeUrlAt } from '../lib/video';
+
+interface Props {
+  videoId: string;
+  sections: Video['sections'];
+}
+
+const { videoId, sections } = Astro.props;
+---
+
+{sections.length > 0 && (
+  <section class="mt-8">
+    <h2 class="text-sm font-medium uppercase tracking-wide text-slate-500">Sections</h2>
+    <ol class="mt-3 space-y-4">
+      {sections.map((s) => (
+        <li>
+          <div class="flex items-baseline gap-3">
+            {typeof s.timeSec === 'number' ? (
+              <a
+                class="font-mono text-xs text-blue-700 hover:underline"
+                href={youtubeUrlAt(videoId, s.timeSec)}
+                rel="noopener"
+                target="_blank"
+              >
+                {formatTimecode(s.timeSec)}
+              </a>
+            ) : (
+              <span
+                class="font-mono text-xs text-slate-400"
+                title="No confident transcript match"
+              >
+                --:--
+              </span>
+            )}
+            <h3 class="font-medium">{s.heading}</h3>
+          </div>
+          {s.body && (
+            <p class="mt-1 pl-14 text-sm leading-relaxed text-slate-700">{s.body}</p>
+          )}
+        </li>
+      ))}
+    </ol>
+  </section>
+)}

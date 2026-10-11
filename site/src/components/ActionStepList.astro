@@ -1,0 +1,25 @@
+---
+import type { Video } from '../lib/video';
+
+interface Props {
+  steps: Video['actionSteps'];
+}
+
+const { steps } = Astro.props;
+---
+
+{steps.length > 0 && (
+  <section class="mt-8">
+    <h2 class="text-sm font-medium uppercase tracking-wide text-slate-500">
+      Action steps
+    </h2>
+    <ul class="mt-3 space-y-3 text-sm leading-relaxed">
+      {steps.map((s) => (
+        <li>
+          <span class="font-medium">{s.title}</span>
+          {s.body && <span class="text-slate-700"> — {s.body}</span>}
+        </li>
+      ))}
+    </ul>
+  </section>
+)}

@@ -1,0 +1,59 @@
+---
+import { getCollection } from 'astro:content';
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import VerdictBadge from '../../components/VerdictBadge.astro';
+import TakeawayList from '../../components/TakeawayList.astro';
+import SectionList from '../../components/SectionList.astro';
+import ActionStepList from '../../components/ActionStepList.astro';
+import { displayTitle, youtubeUrlAt } from '../../lib/video';
+
+export async function getStaticPaths() {
+  const videos = await getCollection('videos');
+  return videos.map((entry) => ({
+    params: { videoId: entry.data.youtubeVideoId },
+    props: { video: entry.data },
+  }));
+}
+
+const { video } = Astro.props;
+const title = displayTitle(video);
+---
+
+<BaseLayout title={title} description={video.summaryDescription ?? undefined}>
+  <article>
+    <p class="text-sm text-slate-500">{video.videoAuthor}</p>
+    <h1 class="mt-1 text-3xl font-medium leading-tight">{title}</h1>
+
+    <div class="mt-4">
+      <VerdictBadge verdict={video.watchVerdict} score={video.finalScore} />
+    </div>
+
+    {video.verdictSummary && (
+      <p class="mt-4 text-base leading-relaxed text-slate-800">{video.verdictSummary}</p>
+    )}
+
+    <p class="mt-4">
+      <a
+        class="text-sm text-blue-700 hover:underline"
+        href={youtubeUrlAt(video.youtubeVideoId)}
+        rel="noopener"
+        target="_blank"
+      >
+        Watch on YouTube
+      </a>
+    </p>
+
+    {video.summaryOverview && (
+      <section class="mt-8">
+        <h2 class="text-sm font-medium uppercase tracking-wide text-slate-500">
+          Overview
+        </h2>
+        <p class="mt-3 text-sm leading-relaxed text-slate-800">{video.summaryOverview}</p>
+      </section>
+    )}
+
+    <TakeawayList takeaways={video.keyTakeaways} />
+    <SectionList videoId={video.youtubeVideoId} sections={video.sections} />
+    <ActionStepList steps={video.actionSteps} />
+  </article>
+</BaseLayout>

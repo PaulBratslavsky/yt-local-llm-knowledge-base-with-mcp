@@ -67,3 +67,32 @@ export const videoSchema = z.object({
 });
 
 export type Video = z.infer<typeof videoSchema>;
+
+/** The title to show: the model's summary title when it wrote one, else
+ *  YouTube's. */
+export function displayTitle(video: Video): string {
+  return video.summaryTitle?.trim() || video.videoTitle?.trim() || video.youtubeVideoId;
+}
+
+/** A YouTube link, optionally seeking to a section's start.
+ *
+ *  Returns the plain watch URL when `timeSec` is absent — a section the
+ *  pipeline could not ground gets no timecode rather than `t=0s`, which
+ *  would be a fabricated claim about where the content is (ADR-0004). */
+export function youtubeUrlAt(youtubeVideoId: string, timeSec?: number | null): string {
+  const base = `https://www.youtube.com/watch?v=${youtubeVideoId}`;
+  if (typeof timeSec !== 'number' || !Number.isFinite(timeSec) || timeSec < 0) {
+    return base;
+  }
+  return `${base}&t=${Math.floor(timeSec)}s`;
+}
+
+/** `mm:ss`, or `h:mm:ss` past an hour. */
+export function formatTimecode(sec: number): string {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = Math.floor(sec % 60);
+  const mm = String(m).padStart(2, '0');
+  const ss = String(s).padStart(2, '0');
+  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}

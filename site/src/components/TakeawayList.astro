@@ -1,0 +1,20 @@
+---
+import type { Video } from '../lib/video';
+
+interface Props {
+  takeaways: Video['keyTakeaways'];
+}
+
+const { takeaways } = Astro.props;
+---
+
+{takeaways.length > 0 && (
+  <section class="mt-8">
+    <h2 class="text-sm font-medium uppercase tracking-wide text-slate-500">
+      Key takeaways
+    </h2>
+    <ul class="mt-3 list-disc space-y-2 pl-5 text-sm leading-relaxed">
+      {takeaways.map((t) => <li>{t.text}</li>)}
+    </ul>
+  </section>
+)}

@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { FORBIDDEN_FIELDS, VIDEO_FIELDS, videoSchema } from './video';
+import {
+  displayTitle,
+  formatTimecode,
+  FORBIDDEN_FIELDS,
+  VIDEO_FIELDS,
+  videoSchema,
+  youtubeUrlAt,
+} from './video';
 
 describe('the published field allowlist', () => {
   // The allowlist is the privacy mechanism. Retrieval state is the bulk of
@@ -90,5 +97,57 @@ describe('videoSchema', () => {
     const broken = { ...row };
     delete (broken as Record<string, unknown>).youtubeVideoId;
     expect(() => videoSchema.parse(broken)).toThrow();
+  });
+});
+
+describe('youtubeUrlAt', () => {
+  it('seeks to the section start when there is one', () => {
+    expect(youtubeUrlAt('abc123', 95)).toBe(
+      'https://www.youtube.com/watch?v=abc123&t=95s',
+    );
+  });
+
+  it('floors fractional seconds', () => {
+    expect(youtubeUrlAt('abc123', 95.7)).toBe(
+      'https://www.youtube.com/watch?v=abc123&t=95s',
+    );
+  });
+
+  // ADR-0004: a section the pipeline could not ground gets no timecode.
+  // Linking to t=0s would assert a location the data does not support.
+  it('returns a plain watch URL when the section is ungrounded', () => {
+    expect(youtubeUrlAt('abc123')).toBe('https://www.youtube.com/watch?v=abc123');
+    expect(youtubeUrlAt('abc123', null)).toBe('https://www.youtube.com/watch?v=abc123');
+    expect(youtubeUrlAt('abc123', Number.NaN)).toBe(
+      'https://www.youtube.com/watch?v=abc123',
+    );
+  });
+});
+
+describe('formatTimecode', () => {
+  it('formats under an hour as mm:ss', () => {
+    expect(formatTimecode(95)).toBe('01:35');
+  });
+
+  it('formats past an hour as h:mm:ss', () => {
+    expect(formatTimecode(3725)).toBe('1:02:05');
+  });
+});
+
+describe('displayTitle', () => {
+  it('prefers the summary title', () => {
+    expect(
+      displayTitle({ youtubeVideoId: 'x', summaryTitle: 'A', videoTitle: 'B' } as never),
+    ).toBe('A');
+  });
+
+  it('falls back to the video title when the summary has none', () => {
+    expect(
+      displayTitle({ youtubeVideoId: 'x', summaryTitle: null, videoTitle: 'B' } as never),
+    ).toBe('B');
+  });
+
+  it('falls back to the id when neither exists', () => {
+    expect(displayTitle({ youtubeVideoId: 'x' } as never)).toBe('x');
   });
 });
