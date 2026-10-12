@@ -18,7 +18,7 @@
     "seed": "yarn --cwd ./server seed",
     "test": "yarn --cwd ./client test",
     "sync:bm25": "node scripts/sync-bm25-core.mjs",
-    "install:all": "yarn install --frozen-lockfile && yarn --cwd server install --frozen-lockfile && yarn --cwd client install --frozen-lockfile",
+    "install:all": "yarn install --frozen-lockfile && yarn --cwd server install --frozen-lockfile && yarn --cwd client install --frozen-lockfile && yarn --cwd site install --frozen-lockfile",
     "site": "yarn --cwd ./site dev",
     "site:build": "yarn --cwd ./site build",
     "site:test": "yarn --cwd ./site test",

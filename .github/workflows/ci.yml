@@ -3,7 +3,7 @@
 # embeddings.ranking.test.ts probes Ollama and videos.smoke.test.ts probes
 # Strapi, so neither needs services here.
 #
-# One job, three installs (root + client + server). Each package owns its
+# One job, four installs (root + client + server + site). Each package owns its
 # dependencies — there is no workspace and no hoisting. Keeping Strapi's
 # React 18 unreachable from the React 19 client is deliberate: sharing a
 # root lets the two majors meet, which breaks SSR.
@@ -29,6 +29,7 @@ jobs:
             yarn.lock
             server/yarn.lock
             client/yarn.lock
+            site/yarn.lock
 
       - name: Install all packages
         run: yarn install:all
@@ -44,8 +45,18 @@ jobs:
         run: npx tsc --noEmit
         working-directory: server
 
+      - name: Typecheck site
+        run: npx tsc --noEmit
+        working-directory: site
+
       - name: Test
         run: yarn test
+
+      # The site has its own suite and its own vitest config, so the root
+      # `yarn test` (which is the client's) does not reach it. Without this
+      # step its tests would never run in CI.
+      - name: Test site
+        run: yarn site:test
 
       # `tsc --noEmit` and the real Vite build check different things
       # (module resolution edge cases, asset imports, Rollup tree-shaking) —

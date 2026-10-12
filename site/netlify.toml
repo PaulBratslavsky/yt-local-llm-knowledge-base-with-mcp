@@ -1,0 +1,11 @@
+# The site is built locally against a running Strapi and deployed as
+# finished output — Netlify never builds it, because Strapi is not
+# reachable from their runners.
+[build]
+  publish = "dist"
+  command = ""
+
+[[headers]]
+  for = "/search-index.json"
+  [headers.values]
+    Cache-Control = "public, max-age=300"
