@@ -13,7 +13,7 @@ const docs: SearchDoc[] = [
     sections: 'Scheduling Storage classes',
     tags: ['kubernetes'],
     verdict: 'worth_it',
-    score: 83,
+    contentScore: 83,
   },
   {
     id: 'strapi',
@@ -25,7 +25,7 @@ const docs: SearchDoc[] = [
     sections: 'Setup Tiering',
     tags: ['strapi', 'mcp'],
     verdict: 'worth_it',
-    score: 91,
+    contentScore: 91,
   },
 ];
 
@@ -73,5 +73,43 @@ describe('runSearch', () => {
     expect(hit.title).toBe('How the scheduler works');
     expect(hit.author).toBe('Cluster channel');
     expect(hit.description).toBe('Kubernetes scheduling internals.');
+  });
+
+  // MiniSearch names its own relevance field `score` on every result and
+  // sorts by it. A stored field called `score` lands on the same property,
+  // so the list silently sorts by the video's content score instead and the
+  // field boosts stop mattering entirely.
+  it('ranks by textual relevance, not by the video content score', () => {
+    const ranked = createIndex([
+      {
+        id: 'exact',
+        title: 'TanStack Start deep dive',
+        author: '',
+        description: '',
+        overview: '',
+        takeaways: '',
+        sections: '',
+        tags: [],
+        verdict: 'worth_it',
+        contentScore: 10,
+      },
+      {
+        id: 'passing-mention',
+        title: 'Unrelated video',
+        author: '',
+        description: '',
+        overview: 'mentions tanstack once',
+        takeaways: '',
+        sections: '',
+        tags: [],
+        verdict: 'worth_it',
+        contentScore: 99,
+      },
+    ]);
+
+    expect(runSearch(ranked, 'tanstack').map((d) => d.id)).toEqual([
+      'exact',
+      'passing-mention',
+    ]);
   });
 });

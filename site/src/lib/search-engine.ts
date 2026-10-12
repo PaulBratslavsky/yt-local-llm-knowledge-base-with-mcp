@@ -25,7 +25,10 @@ export function createIndex(docs: SearchDoc[]): MiniSearch<SearchDoc> {
       'sections',
       'tags',
     ],
-    storeFields: ['id', 'title', 'author', 'description', 'tags', 'verdict', 'score'],
+    // Never store a field named `score`: MiniSearch assigns stored fields
+    // onto the result object, over its own `score` (the relevance), and then
+    // sorts by it — which would order results by content score.
+    storeFields: ['id', 'title', 'author', 'description', 'tags', 'verdict', 'contentScore'],
     searchOptions: {
       boost: FIELD_BOOSTS,
       prefix: true,
@@ -61,7 +64,7 @@ export function runSearch(
     .filter((doc) => {
       if (opts.tag && !(doc.tags ?? []).includes(opts.tag)) return false;
       if (opts.verdict && doc.verdict !== opts.verdict) return false;
-      if (typeof opts.minScore === 'number' && (doc.score ?? 0) < opts.minScore) {
+      if (typeof opts.minScore === 'number' && (doc.contentScore ?? 0) < opts.minScore) {
         return false;
       }
       return true;

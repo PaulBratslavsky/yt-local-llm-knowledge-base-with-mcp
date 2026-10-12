@@ -49,4 +49,11 @@ describe('renderMarkdown', () => {
       '<a href="https://example.com"',
     );
   });
+
+  it('keeps a markdown list a list', () => {
+    const html = renderMarkdown('- one\n- two');
+    expect(html).toContain('<ul>');
+    expect(html).toContain('<li>one</li>');
+  });
 });
+

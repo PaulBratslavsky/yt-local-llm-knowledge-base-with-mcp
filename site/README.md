@@ -4,9 +4,11 @@ A static, searchable build of the knowledge base summary layer.
 
 ## What it publishes
 
-Per video: title, author, thumbnail, verdict, content score, overview, key
+Per video: title, author, verdict, content score and the reason behind it,
+overview, key
 takeaways, sections with timecoded links into the video, action steps, tags,
-and the readable article when one exists.
+and the readable article when one exists. No thumbnails — the allowlist
+carries only fields the pages actually render.
 
 It does **not** publish raw transcripts, embeddings, or the BM25 index. The
 `fields[]` allowlist in `src/lib/video.ts` is the mechanism, applied by the
@@ -48,7 +50,7 @@ of them navigates here.
 ## Checks
 
 ```bash
-yarn site:test              # 66 unit tests, no stack needed
-yarn --cwd site tsc --noEmit  # typecheck
+yarn site:test              # 76 unit tests, no stack needed
+cd site && npx astro sync && npx tsc --noEmit  # typecheck
 yarn site:build             # build + output guard
 ```

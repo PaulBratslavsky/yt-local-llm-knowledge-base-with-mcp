@@ -11,8 +11,14 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const DIST = fileURLToPath(new URL('../dist/', import.meta.url));
-const FORBIDDEN = ['transcriptSegments', 'summaryEmbedding', 'passageEmbeddings'];
-const TEXT = /\.(html|json|js|css|txt|xml)$/;
+const FORBIDDEN = [
+  'transcriptSegments',
+  'summaryEmbedding',
+  'passageEmbeddings',
+  'rawText',
+  'rawSegments',
+];
+const TEXT = /\.(html|json|js|css|txt|xml|svg|map|webmanifest)$/;
 
 function walk(dir) {
   const out = [];

@@ -88,3 +88,25 @@ describe('VerdictBadge', () => {
     expect(html).not.toContain('Content score');
   });
 });
+
+describe('TakeawayList', () => {
+  // The model writes markdown into keyTakeaways — 17 of the current library's
+  // overviews and many takeaways carry `**bold**` and list markers. Rendered
+  // as plain text they show the asterisks.
+  it('renders markdown emphasis in a takeaway', async () => {
+    const html = await container.renderToString(TakeawayList, {
+      props: { takeaways: [{ text: '**Scheduling:** binds pods to nodes' }] },
+    });
+
+    expect(html).toContain('<strong>Scheduling:</strong>');
+    expect(html).not.toContain('**Scheduling:**');
+  });
+
+  it('escapes raw HTML inside a takeaway', async () => {
+    const html = await container.renderToString(TakeawayList, {
+      props: { takeaways: [{ text: 'before <img src=x onerror="alert(1)"> after' }] },
+    });
+
+    expect(html).not.toContain('onerror="');
+  });
+});

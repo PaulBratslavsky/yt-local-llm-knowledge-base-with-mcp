@@ -34,6 +34,10 @@ const title = displayTitle(video);
       <p class="mt-4 text-base leading-relaxed text-slate-800">{video.verdictSummary}</p>
     )}
 
+    {video.verdictReason && (
+      <p class="mt-2 text-sm leading-relaxed text-slate-500">{video.verdictReason}</p>
+    )}
+
     <p class="mt-4">
       <a
         class="text-sm text-blue-700 hover:underline"
@@ -50,7 +54,10 @@ const title = displayTitle(video);
         <h2 class="text-sm font-medium uppercase tracking-wide text-slate-500">
           Overview
         </h2>
-        <p class="mt-3 text-sm leading-relaxed text-slate-800">{video.summaryOverview}</p>
+        <div
+          class="prose prose-slate prose-sm mt-3 max-w-none leading-relaxed"
+          set:html={renderMarkdown(video.summaryOverview)}
+        />
       </section>
     )}
 

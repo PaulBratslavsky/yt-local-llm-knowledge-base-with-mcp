@@ -8,16 +8,20 @@ export const FORBIDDEN_FIELDS = [
   'transcriptSegments',
   'summaryEmbedding',
   'passageEmbeddings',
+  // The Transcript relation's own fields. Nothing populates it today, but a
+  // future `populate[transcript]` would publish other people's spoken words
+  // verbatim — the spec excludes raw transcripts for that reason as much as
+  // for size.
+  'rawText',
+  'rawSegments',
 ] as const;
 
 /** The only Video fields the site fetches. Adding a field here is a
  *  deliberate act; anything absent cannot appear in the output. */
 export const VIDEO_FIELDS = [
   'youtubeVideoId',
-  'url',
   'videoTitle',
   'videoAuthor',
-  'videoThumbnailUrl',
   'summaryTitle',
   'summaryDescription',
   'summaryOverview',

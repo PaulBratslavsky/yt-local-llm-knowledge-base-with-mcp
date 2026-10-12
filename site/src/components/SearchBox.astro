@@ -17,8 +17,9 @@ const { autofocus = false } = Astro.props;
     type="search"
   />
   <select
-    class="mt-2 rounded-lg border border-slate-300 px-2 py-1 text-sm"
+    class="mt-2 rounded-lg border border-slate-300 px-2 py-1 text-sm disabled:opacity-50"
     data-search-tag
+    disabled
   >
     <option value="">All tags</option>
   </select>

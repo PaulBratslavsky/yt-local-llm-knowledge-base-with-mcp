@@ -2,20 +2,27 @@ import { describe, expect, it } from 'vitest';
 import { FORBIDDEN_FIELDS, VIDEO_FIELDS } from './video';
 import { buildVideoQuery, fetchGeneratedVideos } from './strapi';
 
-/** A `fetch` stand-in that serves canned pages and records the URLs asked for. */
-function fakeFetch(pages: { data: unknown[]; pageCount: number }[]) {
+/** A `fetch` stand-in that serves canned pages and records the URLs asked for.
+ *  `total` defaults to the number of rows across all pages, which is what a
+ *  healthy Strapi reports. */
+function fakeFetch(
+  pages: { data: unknown[]; pageCount: number }[],
+  meta?: { total?: number | null; omitPageCount?: boolean },
+) {
   const calls: string[] = [];
+  const total =
+    meta && 'total' in meta ? meta.total : pages.reduce((n, p) => n + p.data.length, 0);
   const impl = async (url: string | URL) => {
     calls.push(String(url));
     const page = Number(new URL(String(url)).searchParams.get('pagination[page]') ?? '1');
     const body = pages[page - 1];
+    const pagination: Record<string, unknown> = { page };
+    if (!meta?.omitPageCount) pagination.pageCount = body.pageCount;
+    if (total !== null && total !== undefined) pagination.total = total;
     return {
       ok: true,
       status: 200,
-      json: async () => ({
-        data: body.data,
-        meta: { pagination: { page, pageCount: body.pageCount } },
-      }),
+      json: async () => ({ data: body.data, meta: { pagination } }),
     } as Response;
   };
   return { impl: impl as unknown as typeof fetch, calls };
@@ -44,7 +51,14 @@ describe('buildVideoQuery', () => {
   it('publishes only generated summaries, newest first', () => {
     const params = buildVideoQuery(1, 100);
     expect(params.get('filters[summaryStatus][$eq]')).toBe('generated');
-    expect(params.get('sort')).toBe('summaryGeneratedAt:desc');
+    expect(params.get('sort[0]')).toBe('summaryGeneratedAt:desc');
+  });
+
+  // summaryGeneratedAt is not unique. Two rows sharing a timestamp across a
+  // page boundary can be returned in a different order for each page
+  // request, which drops one row and duplicates another.
+  it('breaks ordering ties on a unique key so paging is stable', () => {
+    expect(buildVideoQuery(1, 100).get('sort[1]')).toBe('youtubeVideoId:asc');
   });
 
   it('populates the four nested shapes the pages render', () => {
@@ -123,5 +137,32 @@ describe('fetchGeneratedVideos', () => {
     await expect(
       fetchGeneratedVideos({ baseUrl: 'http://localhost:1340/api', fetchImpl: impl }),
     ).rejects.toThrow(/unexpected/i);
+  });
+
+  // Review Focus 1's other half: not "Strapi is down" but "Strapi answered
+  // and we got less than the library". A build that ships 100 of 172 videos
+  // and exits 0 is the worst outcome available here, because nobody looks.
+  it('throws when it fetched fewer rows than Strapi says exist', async () => {
+    const { impl } = fakeFetch([{ data: [row('a'), row('b')], pageCount: 1 }], {
+      total: 172,
+    });
+
+    await expect(
+      fetchGeneratedVideos({ baseUrl: 'http://localhost:1340/api', fetchImpl: impl }),
+    ).rejects.toThrow(/2 .*172|172/);
+  });
+
+  // `withCount: false` in server/config/api.ts — an ordinary Strapi perf
+  // tweak — removes pageCount and total. Without them a one-page read looks
+  // exactly like a complete library.
+  it('throws when Strapi does not say how many videos exist', async () => {
+    const { impl } = fakeFetch([{ data: [row('a')], pageCount: 1 }], {
+      total: null,
+      omitPageCount: true,
+    });
+
+    await expect(
+      fetchGeneratedVideos({ baseUrl: 'http://localhost:1340/api', fetchImpl: impl }),
+    ).rejects.toThrow(/how many|total/i);
   });
 });

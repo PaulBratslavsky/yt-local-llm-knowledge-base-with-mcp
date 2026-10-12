@@ -28,7 +28,10 @@ export function buildVideoQuery(page: number, pageSize: number): URLSearchParams
   }
 
   params.set('filters[summaryStatus][$eq]', 'generated');
-  params.set('sort', 'summaryGeneratedAt:desc');
+  params.set('sort[0]', 'summaryGeneratedAt:desc');
+  // summaryGeneratedAt is not unique, and a tie ordered differently on two
+  // page requests silently drops one row and duplicates another.
+  params.set('sort[1]', 'youtubeVideoId:asc');
   params.set('pagination[page]', String(page));
   params.set('pagination[pageSize]', String(pageSize));
 
@@ -57,6 +60,7 @@ export async function fetchGeneratedVideos({
   const rows: unknown[] = [];
   let page = 1;
   let pageCount = 1;
+  let expectedTotal: number | null = null;
 
   do {
     const url = `${root}/videos?${buildVideoQuery(page, pageSize).toString()}`;
@@ -78,7 +82,7 @@ export async function fetchGeneratedVideos({
 
     const payload = (await response.json()) as {
       data?: unknown;
-      meta?: { pagination?: { pageCount?: number } };
+      meta?: { pagination?: { pageCount?: number; total?: number } };
     };
 
     if (!Array.isArray(payload.data)) {
@@ -87,10 +91,35 @@ export async function fetchGeneratedVideos({
       );
     }
 
+    const pagination = payload.meta?.pagination;
+
+    if (page === 1) {
+      // Without a declared total there is no way to tell a complete library
+      // from a truncated one, and `withCount: false` in Strapi's config
+      // removes it. Refuse rather than guess: a one-page read of a 172-video
+      // library looks exactly like a complete 100-video library.
+      const total = Number(pagination?.total);
+      if (!Number.isFinite(total)) {
+        throw new Error(
+          `Strapi did not report how many videos exist (meta.pagination.total ` +
+            `missing from ${url}). Refusing to build a library whose ` +
+            `completeness cannot be checked — is withCount disabled?`,
+        );
+      }
+      expectedTotal = total;
+    }
+
     rows.push(...payload.data);
-    pageCount = Number(payload.meta?.pagination?.pageCount) || 1;
+    pageCount = Number(pagination?.pageCount) || 1;
     page += 1;
   } while (page <= pageCount);
+
+  if (rows.length !== expectedTotal) {
+    throw new Error(
+      `Fetched ${rows.length} videos but Strapi reports ${expectedTotal} exist. ` +
+        'Refusing to build a partial site.',
+    );
+  }
 
   if (rows.length === 0) {
     throw new Error(

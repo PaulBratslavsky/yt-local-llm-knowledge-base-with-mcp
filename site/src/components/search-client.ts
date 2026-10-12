@@ -19,6 +19,7 @@ if (input && results) {
 
   const fillTags = (docs: SearchDoc[]) => {
     if (!tagSelect || tagSelect.options.length > 1) return;
+    tagSelect.disabled = false;
     const names = [...new Set(docs.flatMap((d) => d.tags ?? []))].sort();
     for (const name of names) {
       const option = document.createElement('option');
@@ -82,6 +83,16 @@ if (input && results) {
 
   input.addEventListener('input', search);
   tagSelect?.addEventListener('change', search);
+
+  // Load the index immediately rather than on the first keystroke. The tag
+  // facet is filled from it, and an enabled <select> holding only "All tags"
+  // reads as "this library has no tags". Hooking `focus` is not enough:
+  // autofocus fires while the HTML is parsing, before this deferred module
+  // runs. The box only exists on the two search-first pages, so fetching
+  // here is what those pages are for.
+  void ensureIndex().catch(() => {
+    // Leave the facet disabled; the first keystroke retries and reports.
+  });
 
   // Cmd/Ctrl-K focuses search from anywhere on the page.
   document.addEventListener('keydown', (e) => {

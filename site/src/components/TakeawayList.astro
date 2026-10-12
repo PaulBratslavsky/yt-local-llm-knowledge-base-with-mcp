@@ -1,5 +1,6 @@
 ---
 import type { Video } from '../lib/video';
+import { renderMarkdown } from '../lib/markdown';
 
 interface Props {
   takeaways: Video['keyTakeaways'];
@@ -13,8 +14,13 @@ const { takeaways } = Astro.props;
     <h2 class="text-sm font-medium uppercase tracking-wide text-slate-500">
       Key takeaways
     </h2>
-    <ul class="mt-3 list-disc space-y-2 pl-5 text-sm leading-relaxed">
-      {takeaways.map((t) => <li>{t.text}</li>)}
+    <!-- Block render, not inline: the model writes multi-line takeaways
+         containing their own nested lists, which an inline parse leaves as
+         literal `*` markers. prose styles whatever comes back. -->
+    <ul
+      class="prose prose-slate prose-sm mt-3 max-w-none list-disc space-y-2 pl-5 leading-relaxed"
+    >
+      {takeaways.map((t) => <li set:html={renderMarkdown(t.text)} />)}
     </ul>
   </section>
 )}

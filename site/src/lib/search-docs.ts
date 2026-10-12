@@ -10,7 +10,11 @@ export type SearchDoc = {
   sections: string;
   tags: string[];
   verdict: string;
-  score: number;
+  /** The video's content score. Deliberately NOT `score`: MiniSearch puts
+   *  its own relevance score on a field of that name and sorts by it, so a
+   *  stored `score` overwrites relevance and the list silently orders by
+   *  content score instead. */
+  contentScore: number;
 };
 
 /** The index covers the summary layer only.
@@ -29,6 +33,6 @@ export function buildSearchDocs(videos: Video[]): SearchDoc[] {
     sections: (video.sections ?? []).map((s) => s.heading).join(' '),
     tags: (video.tags ?? []).map((t) => t.name),
     verdict: video.watchVerdict ?? '',
-    score: video.finalScore ?? 0,
+    contentScore: video.finalScore ?? 0,
   }));
 }

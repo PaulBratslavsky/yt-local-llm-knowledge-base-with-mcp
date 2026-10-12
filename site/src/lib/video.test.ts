@@ -17,11 +17,13 @@ describe('the published field allowlist', () => {
     }
   });
 
-  it('names the three retrieval fields explicitly', () => {
+  it('names every piece of retrieval state the spec excludes', () => {
     expect(FORBIDDEN_FIELDS).toEqual([
       'transcriptSegments',
       'summaryEmbedding',
       'passageEmbeddings',
+      'rawText',
+      'rawSegments',
     ]);
   });
 

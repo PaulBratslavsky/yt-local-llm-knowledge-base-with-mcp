@@ -39,7 +39,7 @@ describe('buildSearchDocs', () => {
     const doc = buildSearchDocs([video])[0];
     expect(doc.tags).toEqual(['kubernetes']);
     expect(doc.verdict).toBe('worth_it');
-    expect(doc.score).toBe(83);
+    expect(doc.contentScore).toBe(83);
   });
 
   it('tolerates a row with nothing but an id', () => {
@@ -56,6 +56,6 @@ describe('buildSearchDocs', () => {
     expect(doc.id).toBe('x');
     expect(doc.title).toBe('x');
     expect(doc.takeaways).toBe('');
-    expect(doc.score).toBe(0);
+    expect(doc.contentScore).toBe(0);
   });
 });
