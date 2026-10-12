@@ -170,9 +170,16 @@ above the 150–250 KB this document first estimated, because key
 takeaways alone are 189 KB of it. Still one cold fetch of ~133 KB over
 the wire, so the in-memory design holds.
 
-One Astro island loads the index and runs MiniSearch in memory. Every
-other page ships zero JavaScript. Facets: tag, verdict, score range.
-Cmd-K opens search from any page.
+One Astro island loads the index and runs MiniSearch in memory. Facets:
+tag, verdict, score range. Cmd-K opens search from any page.
+
+**Amended after the first build.** This document originally said every
+other page ships zero JavaScript. It no longer does, deliberately: the
+video page embeds the player and seeks it on a timecode click, which the
+author asked for once the site's purpose — talking over a video while
+sharing the screen — was clear. The budget still holds in spirit; the
+islands are plain modules Astro bundles, the two on a video page inline
+into the HTML, and a tag page ships only the theme toggle.
 
 In-memory rather than Pagefind because the corpus is small enough to fit
 comfortably, facets are a first-class need for "discussing related

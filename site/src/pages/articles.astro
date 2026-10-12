@@ -10,12 +10,19 @@ const withArticles = entries
   .sort((a, b) => (b.summaryGeneratedAt ?? '').localeCompare(a.summaryGeneratedAt ?? ''));
 ---
 
-<BaseLayout title="Articles · YT knowledge base">
-  <h1 class="text-2xl font-medium">Articles</h1>
-  <p class="mt-1 text-sm text-slate-500">
-    {withArticles.length} videos with a full written version.
+<BaseLayout
+  active="articles"
+  description="The videos that have a full written version."
+  title="Articles · YT Knowledge Base"
+>
+  <h1 class="text-[38px] font-semibold leading-tight tracking-[-0.03em] text-[var(--ink)]">
+    Articles
+  </h1>
+  <p class="mt-2 text-[16px] text-[var(--ink-muted)]">
+    {withArticles.length} videos with a full written version, newest first.
   </p>
-  <ul class="mt-6 space-y-5">
+
+  <ul class="mt-8 grid list-none gap-2.5 p-0">
     {withArticles.map((video) => <li><VideoCard video={video} /></li>)}
   </ul>
 </BaseLayout>

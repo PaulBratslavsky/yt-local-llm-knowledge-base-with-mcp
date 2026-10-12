@@ -4,25 +4,35 @@ import { tagSlug } from '../lib/tags';
 
 interface Props {
   tags: Video['tags'];
+  heading?: string;
 }
 
-const { tags } = Astro.props;
+const { tags, heading } = Astro.props;
 
 // collectTags skips a name with no slug, so a pill for one would 404.
 const linkable = tags.filter((t) => tagSlug(t.name) !== '');
 ---
 
-{linkable.length > 0 && (
-  <ul class="mt-8 flex flex-wrap gap-2">
-    {linkable.map((t) => (
-      <li>
-        <a
-          class="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-700 hover:bg-slate-200"
-          href={`/t/${tagSlug(t.name)}`}
-        >
-          {t.name}
-        </a>
-      </li>
-    ))}
-  </ul>
-)}
+{
+  linkable.length > 0 && (
+    <div>
+      {heading && (
+        <h2 class="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--ink-muted)]">
+          {heading}
+        </h2>
+      )}
+      <ul class="mt-3 flex list-none flex-wrap gap-2 p-0">
+        {linkable.map((t) => (
+          <li>
+            <a
+              class="inline-block rounded-full bg-[var(--chip-bg)] px-3.5 py-2 text-[13px] text-[var(--ink-soft)] no-underline hover:text-[var(--ink)]"
+              href={`/t/${tagSlug(t.name)}`}
+            >
+              {t.name}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}

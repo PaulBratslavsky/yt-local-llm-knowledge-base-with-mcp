@@ -3,43 +3,114 @@ import { getCollection } from 'astro:content';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import SearchBox from '../components/SearchBox.astro';
 import VideoCard from '../components/VideoCard.astro';
+import { collectTags, tagSlug } from '../lib/tags';
 
 const entries = await getCollection('videos');
 const videos = entries.map((e) => e.data);
 
 const recent = [...videos]
   .sort((a, b) => (b.summaryGeneratedAt ?? '').localeCompare(a.summaryGeneratedAt ?? ''))
-  .slice(0, 10);
+  .slice(0, 8);
 
-const top = [...videos]
-  .sort((a, b) => (b.finalScore ?? 0) - (a.finalScore ?? 0))
-  .slice(0, 10);
+const top = [...videos].sort((a, b) => (b.finalScore ?? 0) - (a.finalScore ?? 0)).slice(0, 8);
+
+const tags = collectTags(videos);
+const articleCount = videos.filter((v) => Boolean(v.readableArticle)).length;
 ---
 
 <BaseLayout
-  title="YT knowledge base"
-  description="Searchable summaries of the videos in my library."
+  active="library"
+  description="Searchable, timecoded summaries of the videos in my library."
+  title="YT Knowledge Base"
 >
-  <h1 class="text-2xl font-medium">Find a video</h1>
-  <p class="mt-1 text-sm text-slate-500">{videos.length} summarized videos.</p>
+  <h1
+    class="text-[38px] font-semibold leading-[1.08] tracking-[-0.03em] text-[var(--ink)] sm:text-[46px]"
+  >
+    What are we talking about?
+  </h1>
+  <p class="mt-3 text-[17px] text-[var(--ink-muted)]">
+    {videos.length} videos read, summarized and timecoded. Search runs in the page — no
+    round trip per keystroke.
+  </p>
 
-  <div class="mt-6">
+  <div class="mt-7">
     <SearchBox autofocus={true} />
   </div>
 
-  <section class="mt-12">
-    <h2 class="text-sm font-medium uppercase tracking-wide text-slate-500">Recent</h2>
-    <ul class="mt-3 space-y-5">
-      {recent.map((video) => <li><VideoCard video={video} /></li>)}
-    </ul>
-  </section>
+  <div class="mt-11 grid items-start gap-12 lg:grid-cols-[minmax(0,1fr)_280px]" data-browse>
+    <div>
+      <section>
+        <h2
+          class="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--ink-muted)]"
+        >
+          Recently summarized
+        </h2>
+        <ul class="mt-4 grid list-none gap-2.5 p-0">
+          {recent.map((video) => <li><VideoCard video={video} /></li>)}
+        </ul>
+      </section>
 
-  <section class="mt-12">
-    <h2 class="text-sm font-medium uppercase tracking-wide text-slate-500">
-      Highest scoring
-    </h2>
-    <ul class="mt-3 space-y-5">
-      {top.map((video) => <li><VideoCard video={video} /></li>)}
-    </ul>
-  </section>
+      <section class="mt-12">
+        <h2
+          class="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--ink-muted)]"
+        >
+          Highest scoring
+        </h2>
+        <ul class="mt-4 grid list-none gap-2.5 p-0">
+          {top.map((video) => <li><VideoCard video={video} /></li>)}
+        </ul>
+      </section>
+    </div>
+
+    <aside>
+      <h2 class="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--ink-muted)]">
+        Topics
+      </h2>
+      <ul class="mt-3.5 flex list-none flex-wrap gap-2 p-0">
+        {
+          tags.map((tag) => (
+            <li>
+              <a
+                class="inline-flex items-center gap-2 rounded-full border border-[var(--line)] bg-[var(--card)] px-3.5 py-2 text-[13px] text-[var(--ink-soft)] no-underline hover:text-[var(--ink)]"
+                href={`/t/${tag.slug}`}
+              >
+                {tag.name}
+                <span class="tabular-nums text-[var(--ink-faint)]">{tag.count}</span>
+              </a>
+            </li>
+          ))
+        }
+      </ul>
+
+      <div
+        class="mt-8 rounded-2xl border border-[var(--line)] bg-[var(--card)] px-5 py-5"
+      >
+        <h2
+          class="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--ink-muted)]"
+        >
+          In the library
+        </h2>
+        <dl class="mt-3.5 grid gap-3">
+          <div class="flex items-baseline justify-between">
+            <dt class="text-sm text-[var(--ink-muted)]">Summarized</dt>
+            <dd class="text-base font-semibold tabular-nums text-[var(--ink)]">
+              {videos.length}
+            </dd>
+          </div>
+          <div class="flex items-baseline justify-between">
+            <dt class="text-sm text-[var(--ink-muted)]">With an article</dt>
+            <dd class="text-base font-semibold tabular-nums text-[var(--ink)]">
+              {articleCount}
+            </dd>
+          </div>
+          <div class="flex items-baseline justify-between">
+            <dt class="text-sm text-[var(--ink-muted)]">Topics</dt>
+            <dd class="text-base font-semibold tabular-nums text-[var(--ink)]">
+              {tags.length}
+            </dd>
+          </div>
+        </dl>
+      </div>
+    </aside>
+  </div>
 </BaseLayout>

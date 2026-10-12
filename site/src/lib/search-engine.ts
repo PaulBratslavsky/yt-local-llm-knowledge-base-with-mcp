@@ -45,6 +45,29 @@ export type SearchOptions = {
   minScore?: number;
 };
 
+/** Does this document pass the facets? Shared by the query path and the
+ *  browse path so a facet cannot mean one thing while typing and another
+ *  thing at rest. */
+export function matchesFacets(doc: SearchDoc, opts: SearchOptions): boolean {
+  if (opts.tag && !(doc.tags ?? []).includes(opts.tag)) return false;
+  if (opts.verdict && doc.verdict !== opts.verdict) return false;
+  if (typeof opts.minScore === 'number' && (doc.contentScore ?? 0) < opts.minScore) {
+    return false;
+  }
+  return true;
+}
+
+/** The library narrowed by facet alone, best-rated first.
+ *
+ *  Picking a facet with an empty search box should narrow what you are
+ *  browsing, not search for nothing. MiniSearch has no match-all query, so
+ *  this path filters the documents directly. */
+export function filterDocs(docs: readonly SearchDoc[], opts: SearchOptions): SearchDoc[] {
+  return docs
+    .filter((doc) => matchesFacets(doc, opts))
+    .sort((a, b) => (b.contentScore ?? 0) - (a.contentScore ?? 0));
+}
+
 /** Ranked matches, optionally narrowed by facet.
  *
  *  A blank query returns nothing rather than the whole library — the home
@@ -61,12 +84,5 @@ export function runSearch(
   return index
     .search(trimmed)
     .map((hit) => hit as unknown as SearchDoc)
-    .filter((doc) => {
-      if (opts.tag && !(doc.tags ?? []).includes(opts.tag)) return false;
-      if (opts.verdict && doc.verdict !== opts.verdict) return false;
-      if (typeof opts.minScore === 'number' && (doc.contentScore ?? 0) < opts.minScore) {
-        return false;
-      }
-      return true;
-    });
+    .filter((doc) => matchesFacets(doc, opts));
 }

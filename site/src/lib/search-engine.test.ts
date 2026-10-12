@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createIndex, runSearch } from './search-engine';
+import { createIndex, filterDocs, runSearch } from './search-engine';
 import type { SearchDoc } from './search-docs';
 
 const docs: SearchDoc[] = [
@@ -111,5 +111,29 @@ describe('runSearch', () => {
       'exact',
       'passing-mention',
     ]);
+  });
+});
+
+describe('filterDocs', () => {
+  // Picking a facet with the search box empty should narrow the library,
+  // not search for nothing and show an empty page.
+  it('returns the whole library when no facet is set', () => {
+    expect(filterDocs(docs, {}).map((d) => d.id)).toEqual(['strapi', 'kube']);
+  });
+
+  it('narrows by tag, verdict and minimum score', () => {
+    expect(filterDocs(docs, { tag: 'mcp' }).map((d) => d.id)).toEqual(['strapi']);
+    expect(filterDocs(docs, { minScore: 90 }).map((d) => d.id)).toEqual(['strapi']);
+    expect(filterDocs(docs, { verdict: 'skip' })).toEqual([]);
+  });
+
+  it('applies every facet at once', () => {
+    expect(filterDocs(docs, { tag: 'mcp', minScore: 95 })).toEqual([]);
+  });
+
+  // With no query there is no relevance to rank by, so the best-rated
+  // video leads rather than whichever happened to be fetched first.
+  it('orders by content score, best first', () => {
+    expect(filterDocs(docs, {}).map((d) => d.contentScore)).toEqual([91, 83]);
   });
 });

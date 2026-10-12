@@ -31,7 +31,7 @@ All run from the **repo root** unless noted.
 | `yarn test` | Full vitest suite via `client/`, 230 tests (Strapi + Ollama down). Also runs as the sole step of CI's `Test` job. |
 | `yarn site` | Astro dev server on **4330** (not 4321 — another project on this machine holds it). Needs Strapi up. |
 | `yarn site:build` | Static build + output guard. Fails loudly if Strapi is unreachable or returns nothing. |
-| `yarn site:test` | The site's 76 vitest tests. **Not** covered by `yarn test`, which is the client's suite. |
+| `yarn site:test` | The site's 96 vitest tests. **Not** covered by `yarn test`, which is the client's suite. |
 | `yarn site:deploy` | `netlify deploy --prod` from `site/dist`. |
 | `yarn install:all` | `yarn install --frozen-lockfile` for the root, `server/`, `client/` and `site/` package.json's. What CI runs to install everything. |
 

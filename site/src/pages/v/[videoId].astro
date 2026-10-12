@@ -1,6 +1,8 @@
 ---
 import { getCollection } from 'astro:content';
 import BaseLayout from '../../layouts/BaseLayout.astro';
+import YouTubeEmbed from '../../components/YouTubeEmbed.astro';
+import ChapterRail from '../../components/ChapterRail.astro';
 import VerdictBadge from '../../components/VerdictBadge.astro';
 import TakeawayList from '../../components/TakeawayList.astro';
 import SectionList from '../../components/SectionList.astro';
@@ -19,63 +21,183 @@ export async function getStaticPaths() {
 
 const { video } = Astro.props;
 const title = displayTitle(video);
+const chapterCount = video.sections.filter((s) => typeof s.timeSec === 'number').length;
 ---
 
-<BaseLayout title={title} description={video.summaryDescription ?? undefined}>
-  <article>
-    <p class="text-sm text-slate-500">{video.videoAuthor}</p>
-    <h1 class="mt-1 text-3xl font-medium leading-tight">{title}</h1>
+<BaseLayout
+  active="library"
+  description={video.summaryDescription ?? undefined}
+  title={`${title} · YT Knowledge Base`}
+  wide={true}
+>
+  {/*
+    Notes left, video right. On lg+ the rail is sticky so the player stays
+    on screen while the notes scroll past it; below that they stack with the
+    player first, because on a phone the video is the thing you want in
+    reach.
+  */}
+  <div class="grid items-start lg:grid-cols-[minmax(0,6fr)_minmax(0,4fr)]">
+    <div
+      class="order-2 border-[var(--line)] bg-[var(--bg-subtle)] px-5 pb-20 pt-8 sm:px-10 lg:order-1 lg:border-r lg:px-14"
+    >
+      <a
+        class="inline-flex items-center gap-1.5 text-[13.5px] text-[var(--ink-muted)] no-underline hover:text-[var(--ink)]"
+        href="/"
+      >
+        <svg
+          aria-hidden="true"
+          fill="none"
+          height="14"
+          stroke="currentColor"
+          stroke-linecap="round"
+          stroke-width="2.2"
+          viewBox="0 0 24 24"
+          width="14"
+        >
+          <path d="M15 5l-7 7 7 7"></path>
+        </svg>
+        Library
+      </a>
 
-    <div class="mt-4">
-      <VerdictBadge verdict={video.watchVerdict} score={video.finalScore} />
+      {
+        video.videoAuthor && (
+          <p class="mt-5 text-sm font-medium text-[var(--ink-muted)]">
+            {video.videoAuthor}
+          </p>
+        )
+      }
+
+      <h1
+        class="mt-2 max-w-[20ch] text-[34px] font-semibold leading-[1.12] tracking-[-0.025em] text-[var(--ink)] sm:text-[40px]"
+      >
+        {title}
+      </h1>
+
+      <div class="mt-5">
+        <VerdictBadge
+          chapters={chapterCount}
+          score={video.finalScore}
+          verdict={video.watchVerdict}
+        />
+      </div>
+
+      {
+        video.verdictSummary && (
+          <div class="mt-6 rounded-2xl border border-[var(--line)] bg-[var(--card)] px-6 py-5">
+            <h2 class="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--ink-muted)]">
+              Is it worth your time
+            </h2>
+            <p class="mt-2.5 text-[17px] leading-relaxed text-[var(--ink)]">
+              {video.verdictSummary}
+            </p>
+            {video.verdictReason && (
+              <p class="mt-2.5 text-[14.5px] leading-relaxed text-[var(--ink-muted)]">
+                {video.verdictReason}
+              </p>
+            )}
+          </div>
+        )
+      }
+
+      {
+        video.summaryOverview && (
+          <section class="mt-9">
+            <h2 class="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--ink-muted)]">
+              Overview
+            </h2>
+            <div
+              class="prose mt-3 max-w-[68ch] text-[17px] leading-relaxed"
+              set:html={renderMarkdown(video.summaryOverview)}
+            />
+          </section>
+        )
+      }
+
+      <TakeawayList takeaways={video.keyTakeaways} />
+      <SectionList sections={video.sections} videoId={video.youtubeVideoId} />
+      <ActionStepList steps={video.actionSteps} />
+
+      {/* Shown here only on a phone; on desktop it lives in the rail. */}
+      <div class="mt-10 lg:hidden">
+        <TagPills heading="Topics" tags={video.tags} />
+      </div>
+
+      {
+        video.readableArticle && (
+          <section class="mt-14 border-t border-[var(--line)] pt-10">
+            <h2 class="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--ink-muted)]">
+              Readable article
+            </h2>
+            <div
+              class="prose mt-5 max-w-[68ch] leading-relaxed"
+              set:html={renderMarkdown(video.readableArticle)}
+            />
+          </section>
+        )
+      }
+
+      <footer class="mt-14 border-t border-[var(--line)] pt-5">
+        <p class="max-w-[62ch] text-[13px] leading-relaxed text-[var(--ink-muted)]">
+          Summarized by a local model from the video's own transcript. Timecodes are
+          recovered from the captions, never written by the model. Treat this as reading
+          notes, not a replacement for watching.
+        </p>
+      </footer>
     </div>
 
-    {video.verdictSummary && (
-      <p class="mt-4 text-base leading-relaxed text-slate-800">{video.verdictSummary}</p>
-    )}
+    <aside class="order-1 bg-[var(--card)] lg:sticky lg:top-[57px] lg:order-2">
+      <YouTubeEmbed title={title} videoId={video.youtubeVideoId} />
 
-    {video.verdictReason && (
-      <p class="mt-2 text-sm leading-relaxed text-slate-500">{video.verdictReason}</p>
-    )}
+      <div class="border-b border-[var(--line)] px-6 py-5" data-idle data-now-panel>
+        <p
+          class="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--ink-muted)]"
+        >
+          <span data-now-idle>Jump to a moment</span>
+          <span data-now-live>Playing from <span data-now-time>--:--</span></span>
+        </p>
+        <p
+          class="mt-2 text-[15px] leading-snug text-[var(--ink-soft)]"
+          data-now-idle
+        >
+          Click any timecode — in the walkthrough or the chapter list — and the player
+          jumps there.
+        </p>
+        <p
+          class="mt-2 text-[16px] font-medium leading-snug text-[var(--ink)]"
+          data-now-heading
+          data-now-live
+        >
+        </p>
 
-    <p class="mt-4">
-      <a
-        class="text-sm text-blue-700 hover:underline"
-        href={youtubeUrlAt(video.youtubeVideoId)}
-        rel="noopener"
-        target="_blank"
-      >
-        Watch on YouTube
-      </a>
-    </p>
+        <div class="mt-4 flex flex-wrap gap-2">
+          <button
+            class="inline-flex h-10 items-center gap-2 rounded-[9px] border border-[var(--line)] bg-[var(--bg-subtle)] px-3.5 text-[13.5px] font-medium text-[var(--ink-body)] hover:border-[var(--line-strong)]"
+            data-copy-moment
+            hidden
+            type="button"
+          >
+            Copy link
+          </button>
+          <a
+            class="inline-flex h-10 items-center rounded-[9px] border border-[var(--line)] bg-[var(--bg-subtle)] px-3.5 text-[13.5px] font-medium text-[var(--ink-body)] no-underline hover:border-[var(--line-strong)]"
+            href={youtubeUrlAt(video.youtubeVideoId)}
+            rel="noopener"
+            target="_blank"
+          >
+            Open on YouTube
+          </a>
+        </div>
+      </div>
 
-    {video.summaryOverview && (
-      <section class="mt-8">
-        <h2 class="text-sm font-medium uppercase tracking-wide text-slate-500">
-          Overview
-        </h2>
-        <div
-          class="prose prose-slate prose-sm mt-3 max-w-none leading-relaxed"
-          set:html={renderMarkdown(video.summaryOverview)}
-        />
-      </section>
-    )}
-
-    <TakeawayList takeaways={video.keyTakeaways} />
-    <SectionList videoId={video.youtubeVideoId} sections={video.sections} />
-    <ActionStepList steps={video.actionSteps} />
-    <TagPills tags={video.tags} />
-
-    {video.readableArticle && (
-      <section class="mt-12 border-t border-slate-200 pt-8">
-        <h2 class="text-sm font-medium uppercase tracking-wide text-slate-500">
-          Readable article
-        </h2>
-        <div
-          class="prose prose-slate mt-4 max-w-none text-sm leading-relaxed"
-          set:html={renderMarkdown(video.readableArticle)}
-        />
-      </section>
-    )}
-  </article>
+      {/* The rail is a desktop affordance: on a phone it would sit between
+          the player and the notes, and the walkthrough below already holds
+          every one of these timecodes. */}
+      <div class="hidden lg:block">
+        <ChapterRail sections={video.sections} />
+        <div class="px-6 py-5 lg:pb-8">
+          <TagPills heading="Topics" tags={video.tags} />
+        </div>
+      </div>
+    </aside>
+  </div>
 </BaseLayout>

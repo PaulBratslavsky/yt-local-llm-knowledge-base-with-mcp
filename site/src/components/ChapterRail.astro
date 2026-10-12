@@ -1,0 +1,44 @@
+---
+import type { Video } from '../lib/video';
+import { orderedSections } from '../lib/sections';
+import { formatTimecode } from '../lib/video';
+
+interface Props {
+  sections: Video['sections'];
+}
+
+const { sections } = Astro.props;
+
+// Only grounded sections are jump points; an ungrounded one has no moment
+// to jump to, and listing it with no time would just be a dead row.
+const chapters = orderedSections(sections).filter((s) => typeof s.timeSec === 'number');
+---
+
+{
+  chapters.length > 0 && (
+    <div class="border-b border-[var(--line)] px-6 py-5">
+      <h2 class="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--ink-muted)]">
+        Chapters
+      </h2>
+      <ul class="mt-3 grid list-none gap-0.5 p-0">
+        {chapters.map((s) => (
+          <li>
+            <button
+              class="chapter-row flex min-h-11 w-full items-start gap-3 rounded-[10px] px-3 py-2.5 text-left"
+              data-seek={Math.floor(s.timeSec as number)}
+              data-seek-label={s.heading}
+              type="button"
+            >
+              <span class="chapter-time flex-none text-[13.5px] font-semibold tabular-nums text-[var(--ink-muted)]">
+                {formatTimecode(s.timeSec as number)}
+              </span>
+              <span class="chapter-label min-w-0 text-[14.5px] leading-snug text-[var(--ink-soft)]">
+                {s.heading}
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}

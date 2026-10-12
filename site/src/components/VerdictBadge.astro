@@ -2,9 +2,10 @@
 interface Props {
   verdict?: 'worth_it' | 'skim' | 'skip' | null;
   score?: number | null;
+  chapters?: number;
 }
 
-const { verdict, score } = Astro.props;
+const { verdict, score, chapters = 0 } = Astro.props;
 
 const LABEL = {
   worth_it: 'Worth watching',
@@ -12,20 +13,45 @@ const LABEL = {
   skip: 'Skip it',
 } as const;
 
+// Three bands, each distinguished by lightness as well as hue so the
+// difference survives a projector or a colour-blind viewer.
 const TONE = {
-  worth_it: 'bg-emerald-50 text-emerald-900 ring-emerald-200',
-  skim: 'bg-amber-50 text-amber-900 ring-amber-200',
-  skip: 'bg-slate-100 text-slate-700 ring-slate-200',
+  worth_it: { bg: 'var(--ok-bg)', text: 'var(--ok-text)', dot: 'var(--ok-dot)' },
+  skim: { bg: 'var(--warn-bg)', text: 'var(--warn-text)', dot: 'var(--warn-dot)' },
+  skip: { bg: 'var(--mute-bg)', text: 'var(--mute-text)', dot: 'var(--mute-dot)' },
 } as const;
+
+const tone = verdict ? TONE[verdict] : null;
 ---
 
-<div class="flex items-center gap-3">
-  {verdict && (
-    <span class={`rounded-full px-3 py-1 text-xs font-medium ring-1 ${TONE[verdict]}`}>
-      {LABEL[verdict]}
-    </span>
-  )}
-  {typeof score === 'number' && (
-    <span class="text-xs text-slate-500">Content score {score}</span>
-  )}
+<div class="flex flex-wrap items-center gap-2.5">
+  {
+    verdict && tone && (
+      <span
+        class="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[13px] font-semibold"
+        style={`background: ${tone.bg}; color: ${tone.text}`}
+      >
+        <span
+          class="h-[7px] w-[7px] rounded-full"
+          style={`background: ${tone.dot}`}
+        />
+        {LABEL[verdict]}
+      </span>
+    )
+  }
+  {
+    typeof score === 'number' && (
+      <span class="inline-flex items-baseline gap-1.5 rounded-full border border-[var(--line)] bg-[var(--card)] px-3 py-1.5 text-[13px] text-[var(--ink-muted)]">
+        Content score
+        <strong class="text-[14px] font-semibold text-[var(--ink)]">{score}</strong>
+      </span>
+    )
+  }
+  {
+    chapters > 0 && (
+      <span class="rounded-full border border-[var(--line)] bg-[var(--card)] px-3 py-1.5 text-[13px] text-[var(--ink-muted)]">
+        {chapters} {chapters === 1 ? 'chapter' : 'chapters'}
+      </span>
+    )
+  }
 </div>

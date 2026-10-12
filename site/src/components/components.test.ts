@@ -7,6 +7,10 @@ import VerdictBadge from './VerdictBadge.astro';
 
 let container: AstroContainer;
 
+/** The rendered text, as a reader sees it — free of the markup that a
+ *  restyle changes and a reader never notices. */
+const readable = (html: string) => html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+
 beforeAll(async () => {
   container = await AstroContainer.create();
 });
@@ -63,10 +67,12 @@ describe('SectionList', () => {
       },
     });
 
-    expect(html).toContain('Ungrounded');
+    expect(readable(html)).toContain('Ungrounded');
     expect(html).toContain('--:--');
     expect(html).not.toContain('t=0s');
-    expect(html).not.toContain('<a');
+    // No link and no seek target: there is no moment to send anyone to.
+    expect(html).not.toContain('href=');
+    expect(html).not.toContain('data-seek=');
   });
 });
 
@@ -75,8 +81,8 @@ describe('VerdictBadge', () => {
     const html = await container.renderToString(VerdictBadge, {
       props: { verdict: 'worth_it', score: 83 },
     });
-    expect(html).toContain('Worth watching');
-    expect(html).toContain('Content score 83');
+    expect(readable(html)).toContain('Worth watching');
+    expect(readable(html)).toContain('Content score 83');
   });
 
   // A row rated before the hybrid score landed has neither.
@@ -84,8 +90,8 @@ describe('VerdictBadge', () => {
     const html = await container.renderToString(VerdictBadge, {
       props: { verdict: null, score: null },
     });
-    expect(html).not.toContain('Worth watching');
-    expect(html).not.toContain('Content score');
+    expect(readable(html)).not.toContain('Worth watching');
+    expect(readable(html)).not.toContain('Content score');
   });
 });
 
@@ -99,7 +105,7 @@ describe('TakeawayList', () => {
     });
 
     expect(html).toContain('<strong>Scheduling:</strong>');
-    expect(html).not.toContain('**Scheduling:**');
+    expect(readable(html)).not.toContain('**Scheduling:**');
   });
 
   it('escapes raw HTML inside a takeaway', async () => {
