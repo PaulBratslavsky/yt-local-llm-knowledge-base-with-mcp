@@ -5,6 +5,13 @@
   publish = "dist"
   command = ""
 
+# Netlify's "pretty URLs" post-processing lowercases every path. YouTube
+# video ids are case-sensitive and all 172 of ours contain uppercase, so it
+# 301s every video page to a slug that is not a real video id — and the id
+# IS the permanent slug here, chosen so an old pasted link still resolves.
+[build.processing.html]
+  pretty_urls = false
+
 [[headers]]
   for = "/search-index.json"
   [headers.values]
