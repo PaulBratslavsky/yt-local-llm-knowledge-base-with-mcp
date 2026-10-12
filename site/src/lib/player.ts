@@ -38,3 +38,16 @@ export function seekCommand(seconds: number): string | null {
   if (target === null) return null;
   return JSON.stringify({ event: 'command', func: 'seekTo', args: [target, true] });
 }
+
+/** A link to this page at a given moment, for pasting into a conversation.
+ *
+ *  Replaces any `t=` already present rather than appending a second one, so
+ *  copying twice from the same page does not stack them up. */
+export function momentUrl(href: string, seconds: number): string | null {
+  const target = wholeSecond(seconds);
+  if (target === null) return null;
+
+  const url = new URL(href);
+  url.searchParams.set('t', String(target));
+  return url.toString();
+}

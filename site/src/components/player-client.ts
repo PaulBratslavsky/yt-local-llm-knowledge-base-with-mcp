@@ -1,4 +1,4 @@
-import { embedUrl, seekCommand } from '../lib/player';
+import { embedUrl, momentUrl, seekCommand } from '../lib/player';
 
 /** Click-to-seek.
  *
@@ -76,26 +76,72 @@ if (player) {
       copyButton.hidden = false;
       copyButton.textContent = `Copy link at ${formatTimecode(currentSec)}`;
     }
+    // A link left over from the previous moment points at the wrong place.
+    const stale = document.querySelector<HTMLElement>('[data-copy-fallback]');
+    if (stale) stale.hidden = true;
   });
 
-  // Shares the moment, not the page: the URL carries ?t= so whoever opens it
-  // lands where the conversation was.
+  /** Copy, by whichever route this browser allows.
+   *
+   *  The async Clipboard API is the good path, but it needs a permission
+   *  that is simply denied in some browsers and contexts. The legacy
+   *  execCommand path works where that one does not. Returns false only
+   *  when neither worked, and the caller then shows the link instead —
+   *  never a prompt(), which browsers suppress, leaving the person with
+   *  nothing to copy and no way to tell. */
+  const copyText = async (text: string): Promise<boolean> => {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // Fall through to the legacy path.
+    }
+
+    try {
+      const scratch = document.createElement('textarea');
+      scratch.value = text;
+      scratch.setAttribute('readonly', '');
+      scratch.style.position = 'fixed';
+      scratch.style.top = '-1000px';
+      document.body.append(scratch);
+      scratch.select();
+      const copied = document.execCommand('copy');
+      scratch.remove();
+      return copied;
+    } catch {
+      return false;
+    }
+  };
+
+  // Shares the moment, not the page: the URL carries ?t= so whoever opens
+  // it lands where the conversation was.
   copyButton?.addEventListener('click', async () => {
     if (currentSec === null) return;
-    const url = new URL(window.location.href);
-    url.searchParams.set('t', String(currentSec));
+    const url = momentUrl(window.location.href, currentSec);
+    if (url === null) return;
 
-    const label = copyButton.textContent;
-    try {
-      await navigator.clipboard.writeText(url.toString());
+    const label = `Copy link at ${formatTimecode(currentSec)}`;
+    const copied = await copyText(url);
+
+    if (copied) {
       copyButton.textContent = 'Link copied';
-    } catch {
-      copyButton.textContent = 'Press ⌘C to copy';
-      window.prompt('Copy this link', url.toString());
+      window.setTimeout(() => {
+        copyButton.textContent = label;
+      }, 1600);
+      return;
     }
-    window.setTimeout(() => {
-      copyButton.textContent = label;
-    }, 1600);
+
+    // Neither clipboard route worked. Put the link on the page, selected,
+    // so it can still be copied by hand.
+    copyButton.hidden = true;
+    const fallback = document.querySelector<HTMLElement>('[data-copy-fallback]');
+    const field = fallback?.querySelector('input');
+    if (fallback && field) {
+      fallback.hidden = false;
+      field.value = url;
+      field.focus();
+      field.select();
+    }
   });
 
   // A link shared with ?t= opens at that moment and highlights its section.

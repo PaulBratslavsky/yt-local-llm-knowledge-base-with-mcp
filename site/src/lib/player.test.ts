@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { embedUrl, seekCommand } from './player';
+import { embedUrl, momentUrl, seekCommand } from './player';
 
 describe('embedUrl', () => {
   it('enables the JS API so the page can drive the player', () => {
@@ -50,5 +50,31 @@ describe('seekCommand', () => {
   it('refuses a seek it cannot express', () => {
     expect(seekCommand(Number.NaN)).toBeNull();
     expect(seekCommand(-1)).toBeNull();
+  });
+});
+
+describe('momentUrl', () => {
+  const page = 'https://notes.example/v/abc123';
+
+  it('points at the moment being discussed', () => {
+    expect(momentUrl(page, 95)).toBe(`${page}?t=95`);
+  });
+
+  // Copying twice from the same page must not stack up t= parameters.
+  it('replaces a timecode already in the link', () => {
+    expect(momentUrl(`${page}?t=10`, 95)).toBe(`${page}?t=95`);
+  });
+
+  it('keeps any other query the link carries', () => {
+    expect(momentUrl(`${page}?ref=chat`, 95)).toBe(`${page}?ref=chat&t=95`);
+  });
+
+  it('floors a fractional second', () => {
+    expect(momentUrl(page, 95.7)).toBe(`${page}?t=95`);
+  });
+
+  it('refuses a position it cannot express', () => {
+    expect(momentUrl(page, Number.NaN)).toBeNull();
+    expect(momentUrl(page, -1)).toBeNull();
   });
 });
