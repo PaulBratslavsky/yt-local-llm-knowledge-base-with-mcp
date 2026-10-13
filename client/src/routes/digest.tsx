@@ -8,6 +8,10 @@ import { BackendErrorPanel } from '#/components/BackendErrorPanel';
 import { DigestChat } from '#/components/DigestChat';
 import { generateDigestArticle } from '#/data/server-functions/digest';
 import {
+  generateAndSaveDigestArticle,
+  type SavedDigestRef,
+} from '#/lib/services/digest-article';
+import {
   saveDigest,
   loadDigest,
   type LoadDigestResult,
@@ -117,7 +121,11 @@ function DigestReport({
   // checked for a cached digest — if one exists, `initialSavedDigest`
   // carries it and its articleMarkdown (if present) seeds `article` so
   // the Article tab renders cached without regenerating.
-  const [savedDigest, setSavedDigest] = useState<StrapiDigest | null>(
+  // Only what the page uses: whether a saved row exists, and its article.
+  // A full StrapiDigest from the loader satisfies this; a save tells us
+  // just these two fields, and claiming the rest was the lie behind the
+  // `{} as StrapiDigest` casts.
+  const [savedDigest, setSavedDigest] = useState<SavedDigestRef | null>(
     initialSavedDigest,
   );
   const [article, setArticle] = useState<string | null>(
@@ -138,7 +146,6 @@ function DigestReport({
               digest={digest}
               videos={videos}
               article={article}
-              savedDigest={savedDigest}
               onArticleGenerated={setArticle}
               onSaved={setSavedDigest}
             />
@@ -223,8 +230,8 @@ function DigestStructuredView({
    * save so we don't lose it. Null when the user hasn't opened the Article
    * tab yet and no saved row had one cached. */
   article: string | null;
-  savedDigest: StrapiDigest | null;
-  onSaved: (saved: StrapiDigest | null) => void;
+  savedDigest: SavedDigestRef | null;
+  onSaved: (saved: SavedDigestRef | null) => void;
 }>) {
   return (
     <>
@@ -456,7 +463,6 @@ function DigestArticleView({
   digest,
   videos,
   article,
-  savedDigest,
   onArticleGenerated,
   onSaved,
 }: Readonly<{
@@ -465,16 +471,14 @@ function DigestArticleView({
   /** Seeded from a previously-saved digest row, or populated after a fresh
    * generation. When non-null we're in the "rendered" state. */
   article: string | null;
-  savedDigest: StrapiDigest | null;
   onArticleGenerated: (markdown: string) => void;
-  onSaved: (saved: StrapiDigest) => void;
+  onSaved: (saved: SavedDigestRef) => void;
 }>) {
   if (!article) {
     return (
       <DigestArticleGenerate
         digest={digest}
         videos={videos}
-        savedDigest={savedDigest}
         onArticleGenerated={onArticleGenerated}
         onSaved={onSaved}
       />
@@ -485,57 +489,59 @@ function DigestArticleView({
       digest={digest}
       videos={videos}
       article={article}
-      savedDigest={savedDigest}
       onArticleGenerated={onArticleGenerated}
       onSaved={onSaved}
     />
   );
 }
 
+// Runs the two-step workflow and turns its outcome into what the page
+// shows. The decisions live in generateAndSaveDigestArticle, which is
+// tested without React; this only renders the result.
+//
+// A failed save returns an error AND the article: the model did the work,
+// so the article still goes on screen and the person is told it was not
+// kept. Returning ok here regardless of the save was issue #10.
 async function runGenerateAndSave(input: {
   digest: Digest;
   videos: StrapiVideo[];
-  savedDigest: StrapiDigest | null;
   onArticleGenerated: (md: string) => void;
-  onSaved: (saved: StrapiDigest) => void;
+  onSaved: (saved: SavedDigestRef) => void;
 }): Promise<{ ok: true } | { ok: false; error: string }> {
-  const videoIds = input.videos.map((v) => v.youtubeVideoId);
-  const result = await generateDigestArticle({ data: { videoIds } });
-  if (result.status === 'error') return { ok: false, error: result.error };
-  input.onArticleGenerated(result.article);
-
-  // Upsert the saved digest with the new article. This also saves the
-  // structured digest metadata if it hasn't been saved before — consistent
-  // with the video reader, where generating auto-persists.
-  const saved = await saveDigest({
-    data: {
-      digest: input.digest,
-      youtubeVideoIds: videoIds,
-      articleMarkdown: result.article,
-    },
+  const outcome = await generateAndSaveDigestArticle({
+    digest: input.digest,
+    videoIds: input.videos.map((v) => v.youtubeVideoId),
+    generate: (videoIds) => generateDigestArticle({ data: { videoIds } }),
+    save: (args) => saveDigest({ data: args }),
   });
-  if (saved.status === 'ok') {
-    input.onSaved({
-      ...(input.savedDigest ?? ({} as StrapiDigest)),
-      documentId: saved.digestDocumentId,
-      articleMarkdown: result.article,
-    } as StrapiDigest);
+
+  if (outcome.status === 'generate-failed') {
+    return { ok: false, error: outcome.error };
   }
+
+  input.onArticleGenerated(outcome.article);
+
+  if (outcome.status === 'save-failed') {
+    return {
+      ok: false,
+      error: `Article generated, but saving it failed: ${outcome.error}. Copy it before leaving this page.`,
+    };
+  }
+
+  input.onSaved(outcome.saved);
   return { ok: true };
 }
 
 function DigestArticleGenerate({
   digest,
   videos,
-  savedDigest,
   onArticleGenerated,
   onSaved,
 }: Readonly<{
   digest: Digest;
   videos: StrapiVideo[];
-  savedDigest: StrapiDigest | null;
   onArticleGenerated: (md: string) => void;
-  onSaved: (saved: StrapiDigest) => void;
+  onSaved: (saved: SavedDigestRef) => void;
 }>) {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -548,7 +554,6 @@ function DigestArticleGenerate({
       const res = await runGenerateAndSave({
         digest,
         videos,
-        savedDigest,
         onArticleGenerated,
         onSaved,
       });
@@ -588,18 +593,17 @@ function DigestArticleRendered({
   digest,
   videos,
   article,
-  savedDigest,
   onArticleGenerated,
   onSaved,
 }: Readonly<{
   digest: Digest;
   videos: StrapiVideo[];
   article: string;
-  savedDigest: StrapiDigest | null;
   onArticleGenerated: (md: string) => void;
-  onSaved: (saved: StrapiDigest) => void;
+  onSaved: (saved: SavedDigestRef) => void;
 }>) {
   const [regenerating, setRegenerating] = useState(false);
+  const [regenerateError, setRegenerateError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
   const copy = async () => {
@@ -622,14 +626,19 @@ function DigestArticleRendered({
       return;
     }
     setRegenerating(true);
+    setRegenerateError(null);
     try {
-      await runGenerateAndSave({
+      const res = await runGenerateAndSave({
         digest,
         videos,
-        savedDigest,
         onArticleGenerated,
         onSaved,
       });
+      if (!res.ok) setRegenerateError(res.error);
+    } catch (err) {
+      setRegenerateError(
+        err instanceof Error ? err.message : 'Regenerating the article failed',
+      );
     } finally {
       setRegenerating(false);
     }
@@ -654,6 +663,14 @@ function DigestArticleRendered({
             {regenerating ? 'Regenerating…' : 'Regenerate article'}
           </Button>
         </div>
+        {regenerateError && (
+          <div
+            className="mt-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive"
+            role="alert"
+          >
+            {regenerateError}
+          </div>
+        )}
       </section>
     </>
   );
@@ -736,8 +753,8 @@ function DigestActionBar({
   digest: Digest;
   videos: StrapiVideo[];
   article: string | null;
-  savedDigest: StrapiDigest | null;
-  onSaved: (saved: StrapiDigest | null) => void;
+  savedDigest: SavedDigestRef | null;
+  onSaved: (saved: SavedDigestRef | null) => void;
 }>) {
   const router = useRouter();
   const [copied, setCopied] = useState(false);
@@ -772,10 +789,9 @@ function DigestActionBar({
       // Optimistic: mark the row as saved so the button label flips
       // without waiting for a re-fetch.
       onSaved({
-        ...(savedDigest ?? ({} as StrapiDigest)),
         documentId: res.digestDocumentId,
         articleMarkdown: article ?? savedDigest?.articleMarkdown ?? null,
-      } as StrapiDigest);
+      });
       window.setTimeout(() => setSaveMsg(null), 2500);
     } else {
       setSaveMsg(`Save failed: ${res.error}`);
