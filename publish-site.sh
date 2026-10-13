@@ -29,6 +29,7 @@ esac
 [[ $# -le 1 ]] || die "Too many arguments. Usage: publish-site.sh [--draft]"
 
 STRAPI_URL="${STRAPI_BASE_URL:-http://localhost:1340/api}"
+LIVE_URL="https://boisterous-lamington-cc0eed.netlify.app"
 
 [[ "${SITE_SKIP_STRAPI_FETCH:-}" == "1" ]] && {
   printf '\n\033[31m%s\033[0m\n' "SITE_SKIP_STRAPI_FETCH=1 is exported in this shell.
@@ -84,11 +85,16 @@ Then run this again. (Without the link the CLI would create a new project
 rather than updating the existing one.)"
 
 if [[ "${DRAFT}" == true ]]; then
-  say "Deploying a draft (not the live URL)"
+  say "Deploying a PREVIEW — the live site is NOT being updated"
   (cd site && npx netlify deploy --dir=dist)
+  # A draft run used to end on "Done." next to a URL, which reads exactly
+  # like a successful publish. It is not one, and the difference is a
+  # whole day of stale content before anyone notices.
+  printf '\n\033[33m%s\033[0m\n' "PREVIEW ONLY — the live site still shows the previous build.
+Open the draft URL above to check it, then publish for real with:
+  yarn site:publish"
 else
   say "Deploying to the live URL"
   (cd site && npx netlify deploy --prod --dir=dist)
+  printf '\n\033[32m%s\033[0m\n' "Published live: ${LIVE_URL}"
 fi
-
-say "Done."
