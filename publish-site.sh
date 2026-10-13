@@ -11,8 +11,22 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
+say() { printf '\n\033[1m%s\033[0m\n' "$1"; }
+die() { printf '\n\033[31m%s\033[0m\n' "$1" >&2; exit 1; }
+
+# Reject anything unrecognised rather than falling through. A mistyped
+# --draft used to leave DRAFT=false and publish to the live URL, which is
+# the one mistake this script must not make quietly.
 DRAFT=false
-[[ "${1:-}" == "--draft" ]] && DRAFT=true
+case "${1:-}" in
+  "") ;;
+  --draft) DRAFT=true ;;
+  *) die "Unknown argument: $1
+Usage: publish-site.sh [--draft]
+  (no argument)  publish to the live URL
+  --draft        publish to a preview URL instead" ;;
+esac
+[[ $# -le 1 ]] || die "Too many arguments. Usage: publish-site.sh [--draft]"
 
 STRAPI_URL="${STRAPI_BASE_URL:-http://localhost:1340/api}"
 
@@ -22,9 +36,6 @@ That flag is for typechecking; a build with it set loads no videos.
 Unset it and run this again." >&2
   exit 1
 }
-
-say() { printf '\n\033[1m%s\033[0m\n' "$1"; }
-die() { printf '\n\033[31m%s\033[0m\n' "$1" >&2; exit 1; }
 
 # ── 1. Is there anything to build from? ──────────────────────────────────────
 say "Checking Strapi at ${STRAPI_URL}"
@@ -49,13 +60,16 @@ say "Building"
 yarn --cwd ./site build
 
 PAGES=$(find site/dist -name 'index.html' | wc -l | tr -d ' ')
+VIDEO_PAGES=$(find site/dist/v -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
 INDEX_KB=$(( $(wc -c < site/dist/search-index.json) / 1024 ))
-echo "  ${PAGES} pages · search index ${INDEX_KB} KB"
+echo "  ${PAGES} pages (${VIDEO_PAGES} videos) · search index ${INDEX_KB} KB"
 
-# A page count well under the library means something dropped silently.
-if [[ "${PAGES}" -lt "${GENERATED}" ]]; then
-  die "Built ${PAGES} pages from ${GENERATED} videos — that is fewer than expected.
-Refusing to publish. Check the build output above."
+# Compare video pages only. Counting every index.html lets the home, topic
+# and article pages pad the total, so a build that dropped most of the
+# library could still clear the bar.
+if [[ "${VIDEO_PAGES}" -lt "${GENERATED}" ]]; then
+  die "Built ${VIDEO_PAGES} video pages from ${GENERATED} generated summaries.
+Refusing to publish a partial library. Check the build output above."
 fi
 
 # ── 3. Publish. ──────────────────────────────────────────────────────────────
