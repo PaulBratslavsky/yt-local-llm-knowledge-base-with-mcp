@@ -10,7 +10,7 @@
     "server": "yarn --cwd ./server develop",
     "setup:client": "cd client && yarn && node ../copy-env.mjs ./",
     "setup:server": "cd server && yarn && node ../copy-env.mjs ./",
-    "setup": "yarn install && yarn setup:client && yarn setup:server",
+    "setup": "yarn install && yarn setup:client && yarn setup:server && yarn setup:site",
     "dev": "yarn concurrently \"cd server && yarn develop\" \"npx wait-on http://localhost:1340 && cd client && yarn dev\"",
     "start": "./start.sh",
     "start:fresh": "./start.sh --restart-ollama",
@@ -18,7 +18,14 @@
     "seed": "yarn --cwd ./server seed",
     "test": "yarn --cwd ./client test",
     "sync:bm25": "node scripts/sync-bm25-core.mjs",
-    "install:all": "yarn install --frozen-lockfile && yarn --cwd server install --frozen-lockfile && yarn --cwd client install --frozen-lockfile"
+    "install:all": "yarn install --frozen-lockfile && yarn --cwd server install --frozen-lockfile && yarn --cwd client install --frozen-lockfile && yarn --cwd site install --frozen-lockfile",
+    "site": "yarn --cwd ./site dev",
+    "site:build": "yarn --cwd ./site build",
+    "site:test": "yarn --cwd ./site test",
+    "site:deploy": "yarn --cwd ./site deploy",
+    "setup:site": "cd site && yarn && node ../copy-env.mjs ./",
+    "site:publish": "./publish-site.sh",
+    "site:publish:draft": "./publish-site.sh --draft"
   },
   "dependencies": {
     "concurrently": "^8.2.2",

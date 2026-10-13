@@ -57,3 +57,6 @@ server/public/uploads/*
 *.sqlite3
 *.sql
 *.db
+
+# Local Netlify folder
+.netlify

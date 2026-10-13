@@ -1,0 +1,35 @@
+---
+import { getCollection } from 'astro:content';
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { collectTags } from '../lib/tags';
+
+const entries = await getCollection('videos');
+const tags = collectTags(entries.map((e) => e.data));
+---
+
+<BaseLayout active="topics" title="Topics · YT Knowledge Base">
+  <h1 class="text-[38px] font-semibold leading-tight tracking-[-0.03em] text-[var(--ink)]">
+    Topics
+  </h1>
+  <p class="mt-2 text-[16px] text-[var(--ink-muted)]">
+    {tags.length} topics across the library. Most used first.
+  </p>
+
+  <ul class="mt-8 grid list-none gap-2.5 p-0 sm:grid-cols-2">
+    {
+      tags.map((tag) => (
+        <li>
+          <a
+            class="flex items-baseline justify-between gap-4 rounded-2xl border border-[var(--line)] bg-[var(--card)] px-5 py-4 no-underline hover:border-[var(--line-strong)]"
+            href={`/t/${tag.slug}`}
+          >
+            <span class="text-[17px] font-semibold text-[var(--ink)]">{tag.name}</span>
+            <span class="text-[14px] tabular-nums text-[var(--ink-muted)]">
+              {tag.count} {tag.count === 1 ? 'video' : 'videos'}
+            </span>
+          </a>
+        </li>
+      ))
+    }
+  </ul>
+</BaseLayout>

@@ -1,0 +1,33 @@
+---
+import type { Video } from '../lib/video';
+import { renderMarkdown } from '../lib/markdown';
+
+interface Props {
+  takeaways: Video['keyTakeaways'];
+}
+
+const { takeaways } = Astro.props;
+---
+
+{
+  takeaways.length > 0 && (
+    <section class="mt-10">
+      <h2 class="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--ink-muted)]">
+        Key takeaways
+      </h2>
+      <ul class="mt-4 grid list-none gap-2.5 p-0">
+        {takeaways.map((t) => (
+          <li class="flex items-start gap-3.5 rounded-[14px] border border-[var(--line)] bg-[var(--card)] px-5 py-4">
+            <span class="mt-[9px] h-[7px] w-[7px] flex-none rounded-full bg-[var(--accent)]" />
+            {/* Block render: the model writes multi-line takeaways with
+                their own nested lists. prose styles whatever comes back. */}
+            <div
+              class="prose prose-sm min-w-0 max-w-none flex-1 text-[15.5px] leading-relaxed"
+              set:html={renderMarkdown(t.text)}
+            />
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}

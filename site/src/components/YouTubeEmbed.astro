@@ -1,0 +1,29 @@
+---
+import { embedUrl } from '../lib/player';
+
+interface Props {
+  videoId: string;
+  title: string;
+}
+
+const { videoId, title } = Astro.props;
+---
+
+<div class="bg-black">
+  <div class="relative aspect-video w-full">
+    <iframe
+      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+      allowfullscreen
+      class="absolute inset-0 h-full w-full"
+      data-player
+      data-video-id={videoId}
+      loading="lazy"
+      referrerpolicy="strict-origin-when-cross-origin"
+      src={embedUrl(videoId)}
+      title={`${title} — YouTube player`}></iframe>
+  </div>
+</div>
+
+<script>
+  import './player-client.ts';
+</script>

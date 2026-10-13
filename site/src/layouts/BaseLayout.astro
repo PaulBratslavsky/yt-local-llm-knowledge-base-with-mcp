@@ -1,0 +1,80 @@
+---
+import '../styles/global.css';
+import SiteHeader from '../components/SiteHeader.astro';
+
+interface Props {
+  title: string;
+  description?: string;
+  /** Full-bleed pages (the video page) lay out their own columns. */
+  wide?: boolean;
+  active?: 'library' | 'articles' | 'topics';
+}
+
+const { title, description, wide = false, active } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    {description && <meta name="description" content={description} />}
+
+    {/*
+      Paints the theme before first paint, so a dark-mode visitor never sees
+      a white flash. Inline and un-bundled by necessity: a module script runs
+      after the document renders. The storage key is duplicated from
+      lib/theme.ts because an inline script cannot import — theme.test.ts
+      fails if the two ever drift.
+    */}
+    <script is:inline>
+      (() => {
+        const systemDark = () =>
+          window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        let stored = null;
+        try {
+          stored = localStorage.getItem('ytkb-theme');
+        } catch {
+          // Private mode or blocked storage: follow the system instead.
+        }
+        document.documentElement.dataset.theme =
+          stored === 'light' || stored === 'dark' ? stored : systemDark();
+      })();
+    </script>
+  </head>
+
+  <body class="bg-[var(--bg)] text-[var(--ink)]">
+    <SiteHeader active={active} />
+
+    {
+      wide ? (
+        <main>
+          <slot />
+        </main>
+      ) : (
+        <main class="mx-auto max-w-5xl px-5 py-12 sm:px-8">
+          <slot />
+        </main>
+      )
+    }
+
+    {/*
+      Cmd-K from any page. Only the pages carrying a search box ship the
+      search island; everywhere else the shortcut navigates to one that does.
+    */}
+    <script is:inline>
+      document.addEventListener('keydown', (event) => {
+        if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'k') return;
+        event.preventDefault();
+        const box = document.querySelector('[data-search-input]');
+        if (box) {
+          box.focus();
+          box.select();
+        } else {
+          window.location.href = '/';
+        }
+      });
+    </script>
+  </body>
+</html>

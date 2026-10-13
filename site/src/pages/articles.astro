@@ -1,0 +1,28 @@
+---
+import { getCollection } from 'astro:content';
+import BaseLayout from '../layouts/BaseLayout.astro';
+import VideoCard from '../components/VideoCard.astro';
+
+const entries = await getCollection('videos');
+const withArticles = entries
+  .map((e) => e.data)
+  .filter((v) => Boolean(v.readableArticle))
+  .sort((a, b) => (b.summaryGeneratedAt ?? '').localeCompare(a.summaryGeneratedAt ?? ''));
+---
+
+<BaseLayout
+  active="articles"
+  description="The videos that have a full written version."
+  title="Articles · YT Knowledge Base"
+>
+  <h1 class="text-[38px] font-semibold leading-tight tracking-[-0.03em] text-[var(--ink)]">
+    Articles
+  </h1>
+  <p class="mt-2 text-[16px] text-[var(--ink-muted)]">
+    {withArticles.length} videos with a full written version, newest first.
+  </p>
+
+  <ul class="mt-8 grid list-none gap-2.5 p-0">
+    {withArticles.map((video) => <li><VideoCard video={video} /></li>)}
+  </ul>
+</BaseLayout>

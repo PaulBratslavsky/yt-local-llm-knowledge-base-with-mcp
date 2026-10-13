@@ -1,0 +1,62 @@
+---
+import { getCollection } from 'astro:content';
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import VideoCard from '../../components/VideoCard.astro';
+import { collectTags, tagSlug } from '../../lib/tags';
+
+export async function getStaticPaths() {
+  const entries = await getCollection('videos');
+  const videos = entries.map((e) => e.data);
+
+  return collectTags(videos).map((tag) => ({
+    params: { tag: tag.slug },
+    props: {
+      tag,
+      videos: videos
+        .filter((v) => v.tags.some((t) => tagSlug(t.name) === tag.slug))
+        .sort((a, b) => (b.finalScore ?? 0) - (a.finalScore ?? 0)),
+    },
+  }));
+}
+
+const { tag, videos } = Astro.props;
+---
+
+<BaseLayout active="topics" title={`${tag.name} · YT Knowledge Base`}>
+  <a
+    class="inline-flex items-center gap-1.5 text-[13.5px] text-[var(--ink-muted)] no-underline hover:text-[var(--ink)]"
+    href="/topics"
+  >
+    <svg
+      aria-hidden="true"
+      fill="none"
+      height="14"
+      stroke="currentColor"
+      stroke-linecap="round"
+      stroke-width="2.2"
+      viewBox="0 0 24 24"
+      width="14"
+    >
+      <path d="M15 5l-7 7 7 7"></path>
+    </svg>
+    All topics
+  </a>
+
+  <p
+    class="mt-5 text-xs font-semibold uppercase tracking-[0.08em] text-[var(--ink-muted)]"
+  >
+    Topic
+  </p>
+  <h1
+    class="mt-2 text-[38px] font-semibold leading-tight tracking-[-0.03em] text-[var(--ink)]"
+  >
+    {tag.name}
+  </h1>
+  <p class="mt-2 text-[16px] text-[var(--ink-muted)]">
+    {videos.length} {videos.length === 1 ? 'video' : 'videos'}, highest scoring first
+  </p>
+
+  <ul class="mt-8 grid list-none gap-2.5 p-0">
+    {videos.map((video) => <li><VideoCard video={video} /></li>)}
+  </ul>
+</BaseLayout>

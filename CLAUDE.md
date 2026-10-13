@@ -4,12 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository shape
 
-Two-package monorepo with an unversioned root:
+Three-package monorepo with an unversioned root:
 
 - `client/` — TanStack Start (Vite + React 19) app on port **3005**. Server functions and Nitro API routes live alongside the React routes.
 - `server/` — Strapi 5 (SQLite for dev) on port **1340**. Hosts the data model, REST API, the official Strapi MCP server at `/mcp`, and the `seed-data/` archive.
+- `site/` — Astro 6 static build of the summary layer on port **4330**, searchable in the browser, deployed to Netlify. Reads Strapi at build time only; publishes no transcripts, embeddings or BM25 index. See `site/README.md` and `docs/superpowers/specs/2026-10-11-static-knowledge-site-design.md`.
 - `docs/` — design notes, planning docs, and architecture deep-dive (`architecture.md`).
-- Root `package.json` is a shell that delegates to the two packages via `yarn` workspaces-style scripts. **Do not run app code from the root** — it has no `src/`.
+- Root `package.json` is a shell that delegates to the three packages via `yarn` workspaces-style scripts. **Do not run app code from the root** — it has no `src/`.
 
 The two halves are independent: the client never imports from `server/` and vice versa. They communicate over Strapi's REST API and (for write-side internal services) authenticated REST calls in `client/src/lib/services/strapi-client.ts`.
 
@@ -28,7 +29,12 @@ All run from the **repo root** unless noted.
 | `yarn seed` | Imports `server/seed-data/seed.tar.gz`. **Run before starting Strapi** — needs exclusive write to SQLite. |
 | `yarn export` | Exports current Strapi DB to `server/seed-data/seed.tar.gz`. |
 | `yarn test` | Full vitest suite via `client/`, 230 tests (Strapi + Ollama down). Also runs as the sole step of CI's `Test` job. |
-| `yarn install:all` | `yarn install --frozen-lockfile` for the root, `server/`, and `client/` package.json's. What CI runs to install everything. |
+| `yarn site` | Astro dev server on **4330** (not 4321 — another project on this machine holds it). Needs Strapi up. |
+| `yarn site:build` | Static build + output guard. Fails loudly if Strapi is unreachable or returns nothing. |
+| `yarn site:test` | The site's 96 vitest tests. **Not** covered by `yarn test`, which is the client's suite. |
+| `yarn site:publish` | **The one to use for a content update.** Checks Strapi, rebuilds, sanity-checks the page count, deploys live. `yarn site:publish:draft` for a preview URL first. |
+| `yarn site:deploy` | `netlify deploy --prod` from `site/dist` — deploys whatever is already built, without rebuilding. |
+| `yarn install:all` | `yarn install --frozen-lockfile` for the root, `server/`, `client/` and `site/` package.json's. What CI runs to install everything. |
 
 Strapi's own upgrade codemod is run from `server/`, not the root:
 `yarn --cwd server upgrade:dry` (review the diff first), then
@@ -87,7 +93,15 @@ push — see `docs/adr/0009-ci-and-static-gates.md`).
 
 ```bash
 cd client && npx tsc --noEmit                  # client typecheck (no project-wide script)
+cd site && npx astro sync && npx tsc --noEmit  # site typecheck
 ```
+
+`astro sync` generates `.astro/types.d.ts`, which `tsconfig.json` includes
+and `.gitignore` excludes — without it a clean checkout cannot typecheck.
+The site also needs `src/astro-shims.d.ts`: Astro types `.astro`
+imports inside `.astro` files, but not a `.ts` file importing one, and the
+component tests do exactly that. `astro check` would cover it but its
+integration does not support Astro 6 yet.
 
 There is no lint command — TypeScript and tests are the only static gates. The server has its own `tsconfig.json` and is built by Strapi when it boots.
 
