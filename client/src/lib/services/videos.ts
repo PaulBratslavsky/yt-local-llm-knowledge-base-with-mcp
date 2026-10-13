@@ -746,6 +746,51 @@ export async function updateVideoSignalScoresService(input: {
   return result.ok ? { success: true } : { success: false, error: result.error };
 }
 
+// Partial-update path for the value-score fields. Used by the Settings
+// backfill that derives a placeholder valueScore from an existing verdict
+// on rows generated before the score existed. A service rather than a raw
+// PUT so that every write of a score field goes through this file — the
+// property ADR-0005 claims and, until issue #5, did not have.
+export async function updateVideoValueScoreService(input: {
+  documentId: string;
+  valueScore: number;
+  /** `'derived'` marks a placeholder backfilled from the verdict, so the
+   *  UI can tell it apart from a real model score. */
+  valueScoreSource: 'derived' | 'model';
+  /** Recomputed hybrid score, from the new valueScore and the row's
+   *  existing signalScore via `computeFinalScore`. */
+  finalScore: number;
+}): Promise<{ success: true } | { success: false; error: string }> {
+  const result = await strapiFetch<StrapiVideo>(
+    'PUT',
+    `/api/videos/${input.documentId}`,
+    {
+      body: {
+        data: {
+          valueScore: input.valueScore,
+          valueScoreSource: input.valueScoreSource,
+          finalScore: input.finalScore,
+        },
+      },
+    },
+  );
+  return result.ok ? { success: true } : { success: false, error: result.error };
+}
+
+// Writes only the hybrid score, for rows whose two components are already
+// correct — the Settings finalScore backfill after a weight change.
+export async function updateVideoFinalScoreService(input: {
+  documentId: string;
+  finalScore: number;
+}): Promise<{ success: true } | { success: false; error: string }> {
+  const result = await strapiFetch<StrapiVideo>(
+    'PUT',
+    `/api/videos/${input.documentId}`,
+    { body: { data: { finalScore: input.finalScore } } },
+  );
+  return result.ok ? { success: true } : { success: false, error: result.error };
+}
+
 // Manually set the timeSec of a single section on a Video row. Strapi's
 // repeatable-component semantics mean we have to PUT the whole sections
 // array back with the one field updated. Keeps heading/body untouched.
