@@ -17,7 +17,9 @@ import {
   stripVideoForClient,
   updateVideoEmbeddingService,
   updateVideoPassagesService,
+  updateVideoFinalScoreService,
   updateVideoSignalScoresService,
+  updateVideoValueScoreService,
   updateVideoVerdictService,
   type PaginatedVideos,
   type StrapiTag,
@@ -28,10 +30,10 @@ import {
 import {
   aggregateSignalScore,
   computeSignalScores,
+  signalInputForTranscript,
 } from '#/lib/services/content-signals';
 import {
   CURRENT_INDEX_PARAMS,
-  cleanTranscript,
   type BM25IndexParams,
 } from '#/lib/services/transcript';
 import {
@@ -1468,22 +1470,15 @@ export const backfillValueScores = createServerFn({ method: 'POST' })
         if (!row.watchVerdict || !row.documentId) continue;
         const score = backfillScoreFromVerdict(row.watchVerdict);
         const finalScore = computeFinalScore(score, row.signalScore) ?? score;
-        const write = await strapiFetch<StrapiVideo>(
-          'PUT',
-          `/api/videos/${row.documentId}`,
-          {
-            body: {
-              data: {
-                valueScore: score,
-                // Tag the source so UI surfaces can treat this as a
-                // "needs upgrade" placeholder vs a real model score.
-                valueScoreSource: 'derived',
-                finalScore,
-              },
-            },
-          },
-        );
-        if (write.ok) updated += 1;
+        // Tagged 'derived' so UI surfaces can treat this as a "needs
+        // upgrade" placeholder rather than a real model score.
+        const write = await updateVideoValueScoreService({
+          documentId: row.documentId,
+          valueScore: score,
+          valueScoreSource: 'derived',
+          finalScore,
+        });
+        if (write.success) updated += 1;
       }
       const pageCount = result.meta?.pagination?.pageCount ?? 1;
       if (page >= pageCount) break;
@@ -1670,15 +1665,16 @@ export const regenerateVideoSignals = createServerFn({ method: 'POST' })
         error: 'No cached transcript yet — full Regenerate first.',
       };
     }
-    const cleaned = cleanTranscript(rawText);
-    const wordCount = (cleaned.match(/\b[\w'-]+\b/g) ?? []).length;
     const durationSec =
       (row.transcript as { durationSec?: number | null } | null | undefined)
         ?.durationSec ?? null;
+    // Same helper generation uses. Cleaning the joined rawText here instead
+    // produced a different score for an unchanged video (issue #5).
+    const signalInput = signalInputForTranscript(rawText);
     const scores = computeSignalScores({
       rawText,
-      cleanedText: cleaned,
-      wordCount,
+      cleanedText: signalInput.cleanedText,
+      wordCount: signalInput.wordCount,
       durationSec,
     });
     const composite = aggregateSignalScore(scores);
@@ -1727,15 +1723,14 @@ export const backfillSignalScores = createServerFn({ method: 'POST' })
           skipped += 1;
           continue;
         }
-        const cleaned = cleanTranscript(rawText);
-        const wordCount = (cleaned.match(/\b[\w'-]+\b/g) ?? []).length;
         const durationSec =
           (row.transcript as { durationSec?: number | null } | null | undefined)
             ?.durationSec ?? null;
+        const signalInput = signalInputForTranscript(rawText);
         const scores = computeSignalScores({
           rawText,
-          cleanedText: cleaned,
-          wordCount,
+          cleanedText: signalInput.cleanedText,
+          wordCount: signalInput.wordCount,
           durationSec,
         });
         const composite = aggregateSignalScore(scores);
@@ -1823,12 +1818,11 @@ export const backfillFinalScores = createServerFn({ method: 'POST' })
         if (!row.documentId) continue;
         const finalScore = computeFinalScore(row.valueScore, row.signalScore);
         if (finalScore === null) continue;
-        const write = await strapiFetch<StrapiVideo>(
-          'PUT',
-          `/api/videos/${row.documentId}`,
-          { body: { data: { finalScore } } },
-        );
-        if (write.ok) updated += 1;
+        const write = await updateVideoFinalScoreService({
+          documentId: row.documentId,
+          finalScore,
+        });
+        if (write.success) updated += 1;
       }
       const pageCount = result.meta?.pagination?.pageCount ?? 1;
       if (page >= pageCount) break;

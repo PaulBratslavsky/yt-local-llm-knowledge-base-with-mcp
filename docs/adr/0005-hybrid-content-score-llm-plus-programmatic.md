@@ -40,16 +40,20 @@ Industry pattern (Reddit content quality, news-item ranking, Stack Overflow): co
 
 **What we accept.**
 
-- Three score fields = three writers (summary save in `learning.ts`, verdict-only re-rate in `regenerateVideoVerdict`, signal-only recompute in `regenerateVideoSignals`). All three must write `finalScore` consistently.
+- Five writers touch the score fields: summary save in `learning.ts`, verdict-only re-rate in `regenerateVideoVerdict`, signal-only recompute in `regenerateVideoSignals`, and the `backfillValueScores` / `backfillFinalScores` Settings backfills. All five must write `finalScore` consistently.
 
-  **Not true as written (2026-09-30).** There are five writers — `backfillValueScores` and `backfillFinalScores` also write score fields, with raw `strapiFetch` PUTs — and they do not agree: the summary-save path cleans the transcript per caption segment while the signal-only recompute cleans the whole joined string, so the same video gets different `signalScore` from each. `content-signals.test.ts` covers only the five pure sub-signal functions; `computeFinalScore` and `FINAL_SCORE_WEIGHTS` have no test at all. Tracked in issue #5.
+  **This was false until 2026-10-13 (issue #5).** The writers disagreed: summary save cleaned the transcript per caption segment, to keep a start time per surviving word for timecode grounding, while the recompute and backfill paths cleaned the whole joined string. The filler list collapses repeated words, and YouTube auto-captions repeat across caption boundaries constantly, so the two passes produced different text, a different word count, and therefore different speaking-pace, lexical-density and compression-ratio signals. Pressing "Generate score" straight after a generation moved the user-visible number with no content change.
+
+  Fixed by `signalInputForTranscript` in `content-signals.ts`: one helper, one cleaning, used by every writer. Whole-string cleaning is the canonical one. A content-quality score must not depend on where a captioner happened to break a line, and it is what the library already holds — checked against 100 scored videos, the whole-string result reproduces every stored `signalScore` exactly, so the fix needs no backfill. Segment-aware cleaning keeps its own job: one start time per surviving word, which is what grounds timecodes (ADR-0004). That is chunking's input, not scoring's.
 - Backfill is a real operational concern. The Settings panel's "Refresh content scores" button covers it; the per-card "Score —" chip covers individual rows.
 - Weight tuning is a single-line change (`FINAL_SCORE_WEIGHTS`) but means re-running the backfill to recompute every row's `finalScore` against the new weights.
 
 **What's enforced in code.**
 
 - `valueScoreSource` distinguishes `'model'` (real LLM rating) from `'derived'` (placeholder backfilled from `watchVerdict` thresholds). UI never displays derived values as if they were real ratings.
-- All writers should go through the score services in `videos.ts`; don't bypass them. (Two backfills currently do — see the note above and issue #5.)
+- Every writer goes through the score services in `videos.ts` — `updateVideoVerdictService`, `updateVideoSignalScoresService`, `updateVideoValueScoreService`, `updateVideoFinalScoreService`. There are no raw `strapiFetch` PUTs of score fields left in `data/server-functions/videos.ts`; `grep "'PUT'"` over that file returns nothing.
+- Every writer takes its signal input from `signalInputForTranscript`. Cleaning a transcript any other way before scoring it reintroduces issue #5.
+- `score-consistency.test.ts` covers the helper, both of its branches, and `computeFinalScore` / `FINAL_SCORE_WEIGHTS` — including that the weights sum to one, which is what keeps the result on a 0–100 scale. The weight-tuning workflow above now has a guard.
 
 **Deferred.**
 

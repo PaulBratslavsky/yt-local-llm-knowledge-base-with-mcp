@@ -19,7 +19,47 @@
 // worth the complexity for v1.
 
 import { gzipSync } from 'node:zlib';
-import { STOPWORDS } from './transcript';
+import { cleanTranscript, STOPWORDS } from './transcript';
+
+// -----------------------------------------------------------------------------
+// The one way a transcript becomes signal input
+// -----------------------------------------------------------------------------
+//
+// Every writer that computes a signalScore takes its text from here, and
+// only from here. They used to clean their own way: summary generation
+// scored the per-caption-segment cleaning it already had in hand, while the
+// recompute and backfill paths cleaned the whole joined string. The filler
+// list collapses repeated words, and YouTube auto-captions repeat across
+// caption boundaries constantly — "…here is" / "is that…" — so the
+// per-segment pass kept repeats the whole-string pass removed. Different
+// text, different word count, and therefore different speaking-pace,
+// lexical-density and compression-ratio signals. Pressing "Generate score"
+// straight after a generation moved the user-visible number with no content
+// change (issue #5).
+//
+// Whole-string cleaning is the canonical one, for two reasons. A content
+// quality score must not depend on where a captioner happened to break a
+// line — segment boundaries are an artifact of caption chunking, not a
+// property of the video. And it is what the stored library already holds:
+// checked against 100 scored videos, the whole-string result reproduces
+// every stored signalScore, while the segment-aware result differs on 7 of
+// them. Picking the other one would have restated scores for no gain.
+//
+// Segment-aware cleaning is still correct for its own job — it keeps one
+// start time per surviving word, which is what grounds timecodes
+// (ADR-0004). That is chunking's input, not scoring's.
+
+export type SignalInput = {
+  cleanedText: string;
+  /** Words in `cleanedText`, by the same regex the signal maths has always
+   *  used. Kept identical so this change restates no stored score. */
+  wordCount: number;
+};
+
+export function signalInputForTranscript(rawText: string | null | undefined): SignalInput {
+  const cleanedText = cleanTranscript(rawText ?? '');
+  return { cleanedText, wordCount: countWords(cleanedText) };
+}
 
 // -----------------------------------------------------------------------------
 // Types

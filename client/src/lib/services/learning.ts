@@ -38,6 +38,7 @@ import {
 import {
   aggregateSignalScore,
   computeSignalScores,
+  signalInputForTranscript,
 } from '#/lib/services/content-signals';
 import { withRetry } from '#/lib/retry';
 import { fetchYouTubeTranscript } from '#/lib/services/youtube-transcript';
@@ -1136,13 +1137,13 @@ export async function buildSummaryDraft(
   // in <100ms over the cleaned transcript. Stored alongside the LLM's
   // valueScore for hybrid ranking. See content-signals.ts for the
   // per-signal methodology.
-  const wordCount = prepared
-    ? prepared.wordStartMs.length
-    : (cleaned.match(/\b[\w'-]+\b/g) ?? []).length;
+  // Through the shared helper so generation, the single recompute and the
+  // backfill cannot drift apart — see signalInputForTranscript.
+  const signalInput = signalInputForTranscript(rawTranscript.transcript);
   const signalScores = computeSignalScores({
     rawText: rawTranscript.transcript,
-    cleanedText: cleaned,
-    wordCount,
+    cleanedText: signalInput.cleanedText,
+    wordCount: signalInput.wordCount,
     durationSec: rawTranscript.durationSec,
   });
   const signalScore = aggregateSignalScore(signalScores);
