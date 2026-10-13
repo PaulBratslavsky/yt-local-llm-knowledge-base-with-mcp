@@ -8,7 +8,7 @@
     "build": "astro build && node scripts/verify-output.mjs",
     "preview": "astro preview --port 4330",
     "test": "vitest run",
-    "deploy": "netlify deploy --prod --dir=dist"
+    "deploy": "npx netlify deploy --prod --dir=dist"
   },
   "dependencies": {
     "@fontsource-variable/geist": "5.2.9",

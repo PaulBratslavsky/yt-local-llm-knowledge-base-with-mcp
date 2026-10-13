@@ -23,7 +23,9 @@ describe('a video with nothing in a component array', () => {
     const html = await container.renderToString(SectionList, {
       props: { videoId: 'abc123', sections: [] },
     });
-    expect(html).not.toContain('Sections');
+    // The heading the component actually renders — asserting on a string
+    // it never emits is a test that cannot fail.
+    expect(html).not.toContain('Walkthrough');
   });
 
   it('renders no Key takeaways block', async () => {
@@ -37,7 +39,7 @@ describe('a video with nothing in a component array', () => {
     const html = await container.renderToString(ActionStepList, {
       props: { steps: [] },
     });
-    expect(html).not.toContain('Action steps');
+    expect(html).not.toContain('Your plan');
   });
 });
 

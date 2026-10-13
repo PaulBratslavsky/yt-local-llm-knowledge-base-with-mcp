@@ -20,6 +20,18 @@ const STRAPI_BASE_URL =
 const strapiVideoLoader: Loader = {
   name: 'yt-kb-strapi-videos',
   load: async ({ store, parseData, logger, generateDigest }) => {
+    // `astro sync` runs loaders, and CI typechecks without a Strapi. The
+    // flag exists for that one case. It is never set by a build path, and
+    // verify-output.mjs fails the build if it ever is — an empty site
+    // published quietly is the outcome this whole package is built to avoid.
+    if (process.env.SITE_SKIP_STRAPI_FETCH === '1') {
+      logger.warn(
+        'SITE_SKIP_STRAPI_FETCH=1 — no videos loaded. Valid for sync and ' +
+          'typecheck only; a build made this way publishes nothing.',
+      );
+      return;
+    }
+
     logger.info(`Fetching videos from ${STRAPI_BASE_URL}`);
 
     const rows = await fetchGeneratedVideos({ baseUrl: STRAPI_BASE_URL });

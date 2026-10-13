@@ -30,6 +30,18 @@ function walk(dir) {
   return out;
 }
 
+// The sync/typecheck escape hatch must never reach a build: with it set the
+// loader returns nothing, and the build would otherwise publish an empty
+// site without complaining.
+if (process.env.SITE_SKIP_STRAPI_FETCH === '1') {
+  console.error(
+    'SITE_SKIP_STRAPI_FETCH=1 is set during a build. That flag is for ' +
+      '`astro sync` and typechecking only — this build loaded no videos.\n' +
+      'Unset it and build again.',
+  );
+  process.exit(1);
+}
+
 const files = walk(DIST);
 const violations = [];
 

@@ -47,8 +47,11 @@ jobs:
 
       # `astro sync` first: tsconfig includes .astro/types.d.ts, which is
       # generated and gitignored, so tsc alone fails on a clean checkout.
+      # Sync runs the content loader, and there is no Strapi here — the flag
+      # skips the fetch. verify-output.mjs refuses a build with it set, so it
+      # cannot leak into one.
       - name: Typecheck site
-        run: npx astro sync && npx tsc --noEmit
+        run: SITE_SKIP_STRAPI_FETCH=1 npx astro sync && npx tsc --noEmit
         working-directory: site
 
       - name: Test

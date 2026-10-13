@@ -1,5 +1,29 @@
 # Static Knowledge Site Implementation Plan
 
+> **Status: executed and superseded. Kept as a record of what was planned,
+> not as a description of the code.**
+>
+> The site shipped; the plan below describes the shape it was expected to
+> take, and several parts of that turned out to be wrong. Where the two
+> disagree, the code and `site/README.md` are right. The differences that
+> matter:
+>
+> - **No `strapi-community-astro-loader` and no `@strapi/client`.** Its
+>   latest release pins `engines.node` to one Node minor this repo is past,
+>   so `site/src/lib/strapi.ts` fetches Strapi directly.
+> - **Port 4330**, not Astro's default 4321, which another project holds.
+> - **The site ships JavaScript** — three small Astro islands (theme, player,
+>   search) rather than "every other page ships zero JavaScript". The spec
+>   records that amendment and the reason.
+> - **The video page embeds the player** and seeks it on a timecode click,
+>   which the plan did not contemplate at all.
+> - **Publishing is `yarn site:publish`**, which checks the stack, rebuilds
+>   and deploys.
+>
+> What has *not* changed, and must not: the `fields[]` allowlist is the
+> privacy mechanism, and `scripts/verify-output.mjs` proves it held over the
+> bytes that ship.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A static, searchable Astro site built from the yt-kb summary layer, so a video's summary, key points and timecoded sections can be found in seconds mid-conversation.

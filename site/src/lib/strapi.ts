@@ -110,7 +110,15 @@ export async function fetchGeneratedVideos({
     }
 
     rows.push(...payload.data);
-    pageCount = Number(pagination?.pageCount) || 1;
+
+    // Strapi may report the total without a page count. Deriving it from the
+    // total keeps a multi-page library complete; stopping at page one would
+    // fetch a fraction and then blame the row count for the shortfall.
+    const reported = Number(pagination?.pageCount);
+    pageCount =
+      Number.isFinite(reported) && reported > 0
+        ? reported
+        : Math.max(1, Math.ceil((expectedTotal ?? 0) / pageSize));
     page += 1;
   } while (page <= pageCount);
 

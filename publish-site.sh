@@ -16,6 +16,13 @@ DRAFT=false
 
 STRAPI_URL="${STRAPI_BASE_URL:-http://localhost:1340/api}"
 
+[[ "${SITE_SKIP_STRAPI_FETCH:-}" == "1" ]] && {
+  printf '\n\033[31m%s\033[0m\n' "SITE_SKIP_STRAPI_FETCH=1 is exported in this shell.
+That flag is for typechecking; a build with it set loads no videos.
+Unset it and run this again." >&2
+  exit 1
+}
+
 say() { printf '\n\033[1m%s\033[0m\n' "$1"; }
 die() { printf '\n\033[31m%s\033[0m\n' "$1" >&2; exit 1; }
 

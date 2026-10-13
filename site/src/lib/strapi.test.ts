@@ -152,6 +152,28 @@ describe('fetchGeneratedVideos', () => {
     ).rejects.toThrow(/2 .*172|172/);
   });
 
+  // Strapi can report the total without reporting a page count. Stopping at
+  // page one would then fetch a fraction of the library and blame the row
+  // count for it, when the real gap is the missing metadata.
+  it('derives the page count from the total when Strapi omits it', async () => {
+    const { impl, calls } = fakeFetch(
+      [
+        { data: [row('a'), row('b')], pageCount: 0 },
+        { data: [row('c')], pageCount: 0 },
+      ],
+      { total: 3, omitPageCount: true },
+    );
+
+    const rows = await fetchGeneratedVideos({
+      baseUrl: 'http://localhost:1340/api',
+      fetchImpl: impl,
+      pageSize: 2,
+    });
+
+    expect(rows).toHaveLength(3);
+    expect(calls).toHaveLength(2);
+  });
+
   // `withCount: false` in server/config/api.ts — an ordinary Strapi perf
   // tweak — removes pageCount and total. Without them a one-page read looks
   // exactly like a complete library.
