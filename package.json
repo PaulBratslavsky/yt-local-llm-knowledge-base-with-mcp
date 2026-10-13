@@ -23,7 +23,9 @@
     "site:build": "yarn --cwd ./site build",
     "site:test": "yarn --cwd ./site test",
     "site:deploy": "yarn --cwd ./site deploy",
-    "setup:site": "cd site && yarn && node ../copy-env.mjs ./"
+    "setup:site": "cd site && yarn && node ../copy-env.mjs ./",
+    "site:publish": "./publish-site.sh",
+    "site:publish:draft": "./publish-site.sh --draft"
   },
   "dependencies": {
     "concurrently": "^8.2.2",

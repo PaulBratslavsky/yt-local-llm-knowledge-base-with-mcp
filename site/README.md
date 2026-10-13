@@ -28,13 +28,29 @@ yarn site:build   # from the repo root
 The build fails if Strapi is unreachable, returns an error, or returns no
 videos, rather than publishing an empty site.
 
-## Deploy
+## Publishing a content update
+
+The site shows the library as of the last build, so new or regenerated
+summaries need a republish. One command, from the repo root, with the stack
+running:
 
 ```bash
-yarn site:deploy  # netlify deploy --prod --dir=dist
+yarn site:publish         # check Strapi, rebuild, deploy live
+yarn site:publish:draft   # same, but to a preview URL
 ```
 
-First time only: `npx netlify login && npx netlify link`.
+It refuses to publish rather than ship something wrong: no Strapi, no videos,
+or fewer pages built than the library has all stop it before the deploy.
+
+`yarn site:deploy` is the lower-level step — it ships whatever is already in
+`dist/` without rebuilding.
+
+**Run the Netlify CLI from `site/`, never the repo root.** It reads the linked
+project from its working directory, not from `--dir`: at the root it finds no
+link and creates a brand new project instead of updating this one. `publish-site.sh`
+handles this, and refuses to run if `site/.netlify/state.json` is missing.
+
+First time only: `cd site && npx netlify login && npx netlify link`.
 
 ## Search
 

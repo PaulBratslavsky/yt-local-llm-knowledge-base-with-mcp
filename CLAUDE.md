@@ -32,7 +32,8 @@ All run from the **repo root** unless noted.
 | `yarn site` | Astro dev server on **4330** (not 4321 — another project on this machine holds it). Needs Strapi up. |
 | `yarn site:build` | Static build + output guard. Fails loudly if Strapi is unreachable or returns nothing. |
 | `yarn site:test` | The site's 96 vitest tests. **Not** covered by `yarn test`, which is the client's suite. |
-| `yarn site:deploy` | `netlify deploy --prod` from `site/dist`. |
+| `yarn site:publish` | **The one to use for a content update.** Checks Strapi, rebuilds, sanity-checks the page count, deploys live. `yarn site:publish:draft` for a preview URL first. |
+| `yarn site:deploy` | `netlify deploy --prod` from `site/dist` — deploys whatever is already built, without rebuilding. |
 | `yarn install:all` | `yarn install --frozen-lockfile` for the root, `server/`, `client/` and `site/` package.json's. What CI runs to install everything. |
 
 Strapi's own upgrade codemod is run from `server/`, not the root:
