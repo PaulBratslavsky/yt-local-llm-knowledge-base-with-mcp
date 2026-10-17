@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from '@tanstack/react-router';
 import { Button } from '#/components/ui/button';
 import {
@@ -9,6 +9,7 @@ import {
   listRegenerableVideos,
   regenerateVideoVerdict,
 } from '#/data/server-functions/videos';
+import { runCancellableBatch } from '#/lib/cancellable-batch';
 
 // One unified panel for content scoring. Two paths, clearly separated by
 // speed/cost so the user can choose:
@@ -44,7 +45,17 @@ export function ContentSignalsPanel() {
     | { kind: 'done'; ok: number; failed: number; total: number }
     | { kind: 'cancelled'; ok: number; failed: number; total: number }
   >({ kind: 'idle' });
+  // Two halves of the same flag, deliberately. The state drives the button
+  // label; the ref is what the running loop reads. State alone cannot work:
+  // the loop holds the closure it started with, and a click only ever makes
+  // a new one, so the run would never see the change (issue #11).
   const [aiCancelRequested, setAiCancelRequested] = useState(false);
+  const aiCancelRef = useRef(false);
+
+  const requestAiCancel = () => {
+    aiCancelRef.current = true;
+    setAiCancelRequested(true);
+  };
   const [aiVisible, setAiVisible] = useState(false);
 
   const refresh = async () => {
@@ -91,39 +102,38 @@ export function ContentSignalsPanel() {
 
   const handleAiRegenerate = async () => {
     if (aiState.kind === 'running') return;
+    aiCancelRef.current = false;
     setAiCancelRequested(false);
+
     const videos = await listRegenerableVideos();
-    const total = videos.length;
-    if (total === 0) {
+    if (videos.length === 0) {
       setAiState({ kind: 'done', ok: 0, failed: 0, total: 0 });
       return;
     }
-    let ok = 0;
-    let failed = 0;
-    setAiState({ kind: 'running', current: 0, total, lastVideo: null });
-    for (let i = 0; i < videos.length; i += 1) {
-      if (aiCancelRequested) {
-        setAiState({ kind: 'cancelled', ok, failed, total });
-        return;
-      }
-      const v = videos[i];
-      setAiState({
-        kind: 'running',
-        current: i + 1,
-        total,
-        lastVideo: v.videoTitle ?? v.videoId,
-      });
-      try {
-        const result = await regenerateVideoVerdict({
-          data: { videoId: v.videoId },
-        });
-        if (result.status === 'ok') ok += 1;
-        else failed += 1;
-      } catch {
-        failed += 1;
-      }
-    }
-    setAiState({ kind: 'done', ok, failed, total });
+
+    setAiState({ kind: 'running', current: 0, total: videos.length, lastVideo: null });
+
+    const outcome = await runCancellableBatch({
+      items: videos,
+      labelOf: (v) => v.videoTitle ?? v.videoId,
+      isCancelled: () => aiCancelRef.current,
+      onProgress: ({ current, total, label }) =>
+        setAiState({ kind: 'running', current, total, lastVideo: label }),
+      process: async (v) => {
+        const result = await regenerateVideoVerdict({ data: { videoId: v.videoId } });
+        return result.status === 'ok';
+      },
+    });
+
+    setAiState({
+      kind: outcome.status === 'cancelled' ? 'cancelled' : 'done',
+      ok: outcome.ok,
+      failed: outcome.failed,
+      total: outcome.total,
+    });
+
+    // Both endings changed the library, so refresh either way. The old code
+    // returned early on cancel and left the panel's counts stale.
     await refresh();
     await router.invalidate();
   };
@@ -237,7 +247,7 @@ export function ContentSignalsPanel() {
                   type="button"
                   size="sm"
                   variant="outline"
-                  onClick={() => setAiCancelRequested(true)}
+                  onClick={requestAiCancel}
                   disabled={aiCancelRequested}
                 >
                   {aiCancelRequested ? 'Stopping…' : 'Cancel'}
