@@ -22,6 +22,16 @@ Streamable HTTP transport, enabled by `server.mcp.enabled` in
 `config/server.ts` (env `MCP_ENABLED`, default on). The server is
 stateless — each POST is an ephemeral session scoped to the token.
 
+Turning `MCP_ENABLED` off is safe for your tokens. It used not to be: the
+three admin actions registered behind the same flag as the tools, and
+Strapi admin's bootstrap deletes every `admin::permission` row whose
+action is not registered — which is exactly where an API token's grants
+live. One boot with the flag off silently emptied every token's grants,
+and switching MCP back on did not restore them. The actions now register
+unconditionally in `src/mcp-official/index.ts`, before the flag is read;
+an action no tool references is inert. `mcp-permissions.guard.test.ts`
+fails if that ordering is ever reversed.
+
 ## Authentication
 
 The official server authenticates **admin API tokens** (not content API
