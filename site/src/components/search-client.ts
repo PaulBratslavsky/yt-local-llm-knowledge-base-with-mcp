@@ -5,6 +5,7 @@ import {
   type SearchOptions,
 } from '../lib/search-engine';
 import type { SearchDoc } from '../lib/search-docs';
+import { thumbnailUrl } from '../lib/player';
 
 const input = document.querySelector<HTMLInputElement>('[data-search-input]');
 const results = document.querySelector<HTMLElement>('[data-search-results]');
@@ -64,25 +65,64 @@ if (input && results) {
     minScore: activeFacet === 'high' ? 85 : undefined,
   });
 
+  const VERDICT: Record<string, { label: string; bg: string; text: string; dot: string }> = {
+    worth_it: { label: 'Worth watching', bg: 'var(--ok-bg)', text: 'var(--ok-text)', dot: 'var(--ok-dot)' },
+    skim: { label: 'Skim it', bg: 'var(--warn-bg)', text: 'var(--warn-text)', dot: 'var(--warn-dot)' },
+    skip: { label: 'Skip it', bg: 'var(--mute-bg)', text: 'var(--mute-text)', dot: 'var(--mute-dot)' },
+  };
+
+  /** Mirrors VideoCard.astro. The two are written twice because one is
+   *  built by Astro and one by the island at runtime; if they drift, a
+   *  search result stops looking like the thing it points at. */
   const card = (hit: SearchDoc) => {
-    const high = (hit.contentScore ?? 0) >= 85;
-    const scoreStyle = high
-      ? 'background: var(--ok-bg); color: var(--ok-text)'
-      : 'background: var(--chip-bg); color: var(--ink-soft)';
+    const score = hit.contentScore ?? 0;
+    const tone =
+      score >= 70
+        ? 'background: var(--ok-bg); color: var(--ok-text)'
+        : score >= 50
+          ? 'background: var(--accent-soft); color: var(--accent-text)'
+          : 'background: var(--chip-bg); color: var(--ink-soft)';
+    const verdict = VERDICT[hit.verdict ?? ''];
+    const thumb = thumbnailUrl(hit.id);
+
     return `
       <li>
-        <a class="block rounded-2xl border border-[var(--line)] bg-[var(--card)] px-6 py-5 no-underline hover:border-[var(--line-strong)]"
-           href="/v/${encodeURIComponent(hit.id)}">
-          <div class="flex items-start gap-4">
-            <div class="min-w-0 flex-1">
-              <h3 class="text-[18px] font-semibold leading-snug tracking-[-0.012em] text-[var(--ink)]">${escapeHtml(hit.title)}</h3>
-              <p class="mt-1 text-[13.5px] text-[var(--ink-muted)]">${escapeHtml(hit.author ?? '')}</p>
-              <p class="mt-2 text-[15px] leading-relaxed text-[var(--ink-soft)]">${escapeHtml(hit.description ?? '')}</p>
+        <article class="group overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--card)] transition-shadow hover:shadow-[0_1px_2px_rgba(9,9,11,0.04),0_12px_32px_rgba(9,9,11,0.07)]">
+          <a class="flex flex-col no-underline sm:flex-row" href="/v/${encodeURIComponent(hit.id)}">
+            ${
+              thumb
+                ? `<div class="relative aspect-video w-full flex-none self-start overflow-hidden bg-black sm:w-[264px]">
+                     <img alt="" class="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+                          height="360" loading="lazy" src="${escapeHtml(thumb)}" width="480" />
+                     <span class="absolute right-2 top-2 inline-flex h-7 min-w-[34px] items-center justify-center rounded-lg px-2 text-[13px] font-semibold tabular-nums backdrop-blur-sm"
+                           style="${tone}">${escapeHtml(String(score))}</span>
+                   </div>`
+                : ''
+            }
+            <div class="min-w-0 flex-1 px-5 py-4">
+              <div class="flex flex-wrap items-center gap-2">
+                ${
+                  verdict
+                    ? `<span class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] font-semibold uppercase tracking-wide"
+                             style="background: ${verdict.bg}; color: ${verdict.text}">
+                         <span class="h-[6px] w-[6px] rounded-full" style="background: ${verdict.dot}"></span>
+                         ${verdict.label}
+                       </span>`
+                    : ''
+                }
+                <span class="truncate text-[13px] text-[var(--ink-muted)]">${escapeHtml(hit.author ?? '')}</span>
+              </div>
+              <h3 class="mt-2 text-[17px] font-semibold leading-snug tracking-[-0.012em] text-[var(--ink)]">${escapeHtml(hit.title)}</h3>
+              <p class="mt-1.5 line-clamp-3 text-[14.5px] leading-relaxed text-[var(--ink-soft)]">${escapeHtml(hit.description ?? '')}</p>
+              <div class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[12.5px] text-[var(--ink-faint)]">
+                ${(hit.tags ?? [])
+                  .slice(0, 3)
+                  .map((name) => `<span class="rounded-full bg-[var(--chip-bg)] px-2 py-0.5 text-[var(--ink-muted)]">${escapeHtml(name)}</span>`)
+                  .join('')}
+              </div>
             </div>
-            <span class="inline-flex h-8 min-w-[46px] flex-none items-center justify-center rounded-[9px] px-2.5 text-[15px] font-semibold tabular-nums"
-                  style="${scoreStyle}">${escapeHtml(String(hit.contentScore ?? 0))}</span>
-          </div>
-        </a>
+          </a>
+        </article>
       </li>`;
   };
 

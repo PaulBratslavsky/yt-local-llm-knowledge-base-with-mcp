@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { embedUrl, momentUrl, seekCommand } from './player';
+import { embedUrl, momentUrl, seekCommand, thumbnailUrl } from './player';
 
 describe('embedUrl', () => {
   it('enables the JS API so the page can drive the player', () => {
@@ -76,5 +76,23 @@ describe('momentUrl', () => {
   it('refuses a position it cannot express', () => {
     expect(momentUrl(page, Number.NaN)).toBeNull();
     expect(momentUrl(page, -1)).toBeNull();
+  });
+});
+
+describe('thumbnailUrl', () => {
+  // Derived rather than fetched. Strapi stores this exact URL on every row,
+  // but deriving it keeps the field out of the published allowlist and out
+  // of the search index — the allowlist is the privacy mechanism, so the
+  // fewer fields it names the better.
+  it('points at the still YouTube serves for a video', () => {
+    expect(thumbnailUrl('abc123')).toBe('https://i.ytimg.com/vi/abc123/hqdefault.jpg');
+  });
+
+  it('escapes an id rather than letting it reshape the path', () => {
+    expect(thumbnailUrl('../../evil')).not.toContain('../');
+  });
+
+  it('has no url for a missing id, so the card can fall back', () => {
+    expect(thumbnailUrl('')).toBeNull();
   });
 });
