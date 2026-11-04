@@ -40,12 +40,12 @@ and carry the admin permissions that gate the tools it should see. We
 expose three custom actions (a token sees only the tools its permissions
 allow):
 
-- `api::yt-kb-mcp.read` — the 14 read tools.
+- `api::yt-kb-mcp.read` — the 15 read tools.
 - `api::yt-kb-mcp.write` — ordinary data mutations: `saveSummary`,
   `tagVideo`, `untagVideo`, `saveNote`.
 - `api::yt-kb-mcp.maintenance` — the expensive / external-side-effect /
-  hard-to-undo tools: `addVideo` and `fetchTranscript` (hit YouTube),
-  `reindexEmbeddings` (long Ollama run), `generateDigest` (LLM cost).
+  hard-to-undo tools: `addVideo` and `fetchTranscript` (hit YouTube) and
+  `reindexEmbeddings` (long Ollama run).
 
 Mix to taste: read-only for a safe browsing token; read + write for
 browse-and-annotate (can't trigger reindexes or YouTube fetches);
@@ -83,7 +83,7 @@ Rotate by minting a new token and revoking the old one
 
 ## Tools
 
-22 tools across three permission tiers — 14 read, 4 write, 4 maintenance:
+22 tools across three permission tiers — 15 read, 4 write, 3 maintenance:
 
 | Tool | Tier | Purpose |
 |---|---|---|
@@ -101,13 +101,13 @@ Rotate by minting a new token and revoking the old one
 | `aggregateByTag` | read | Gather summary data for every video matching a set of tags (avoids N `getVideo` round-trips) |
 | `listUntagged` | read | List videos with zero tags + enough context to suggest tags |
 | `listTags` | read | List existing tags |
+| `generateDigest` | read | Bundle compiled summary fields for 2–5 videos into one payload for cross-video synthesis |
 | `saveSummary` | write | Persist a frontier-model-generated summary to a Video |
 | `tagVideo` / `untagVideo` | write | Add / remove a tag on a video |
 | `saveNote` | write | Attach a short note to a video |
 | `addVideo` | maintenance | Ingest a YouTube URL (creates Video + fetches transcript) |
 | `fetchTranscript` | maintenance | Fetch from YouTube + upsert; acts as "regenerate" with `force=true` |
 | `reindexEmbeddings` | maintenance | Backfill / refresh topical embeddings (`missing` / `stale` / `all`); serial Ollama run |
-| `generateDigest` | maintenance | Bundle compiled summary fields for 2–5 videos into one payload for cross-video synthesis |
 
 Alongside these, the connecting token also sees Strapi's **built-in
 per-content-type CRUD tools** (`list_video`, `get_video`, …) if it carries
