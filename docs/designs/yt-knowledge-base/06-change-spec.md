@@ -111,9 +111,11 @@ implemented in this round.
   `@tiptap/markdown` (B fact-check). A dependency migration, not a fix.
 - **`better-sqlite3` / `js-yaml` staleness** (B fact-check Nits 6, 7). Low
   real risk; fold into the next routine dependency pass.
-- **The three open Strapi CVEs dated 2026-10-27** with no published fix
-  (CVE-2026-118170/118171/118172). Nothing to apply. Re-check at the next
-  Strapi upgrade; `04` Decision 2 records them.
+- **The three reported Strapi CVEs dated 2026-10-27** with no published fix
+  (CVE-2026-118170/118171/118172). Nothing to apply. ⚠️ **Per third-party
+  aggregators only — not in Strapi's own GitHub advisories or docs**, so
+  treat this triage as unconfirmed rather than authoritative. Re-check at the
+  next Strapi upgrade; `04` Decision 2 records them.
 - **`passageEmbeddings` returned by `semanticSearchVideos`** is covered by
   G3; the broader question of whether MCP tools should return it at all is
   part of B-12, deferred.
@@ -200,8 +202,16 @@ contain.
   for M1; removing the now-redundant arguments is a Nit folded into M11.
 - `client/src/lib/services/videos.smoke.test.ts:87-98` asserts the public
   role can create a tag and currently fails with `expected 400 to be 200`.
-  After this edit it **passes unchanged** — do not weaken it. (M2 changes it
-  again, for a different reason.)
+  **Its expectation is wrong in both directions and must be corrected to
+  `201`** — a correction, not a weakening, because Strapi's `create` has
+  always returned 201.
+- **The video-create test at `:47-73` is currently passing vacuously.** It
+  branches on `if (res.status === 400)` and asserts `toBe(200)` only in the
+  `else`. `test-smoke-001` already exists in the live library, so the dedupe
+  middleware throws 400, the test takes the first branch, and the `200`
+  assertion is never evaluated. Against a clean database it would fail.
+  **Correct it to `201` here**, so M10's test-isolation work does not surface
+  it as a new failure. (M2 changes this file again, for a different reason.)
 - `CLAUDE.md`'s gotcha list claims this failure is "a pre-existing bug… not
   something this repo's changes caused". Delete that sentence and the
   surrounding claim in the same commit.
@@ -218,8 +228,12 @@ contain.
      -H 'Content-Type: application/json' \
      --data '{"data":{"name":"EGM Check Tag"}}'
    ```
-   Expect `200` (was `400`). Then confirm the slug was generated, parsing
-   JSON rather than grepping text:
+   Expect **`201`** (was `400`). Strapi's core-api `create` sets
+   `ctx.status = 201`
+   (`server/node_modules/@strapi/core/dist/core-api/controller/collection-type.js:50`),
+   and `server/src/api/tag/controllers/tag.ts` is a bare factory that does not
+   override it. Then confirm the slug was generated, parsing JSON rather than
+   grepping text:
    ```bash
    curl -s 'http://localhost:1340/api/tags?filters[name][$eq]=egm%20check%20tag&fields[0]=name&fields[1]=slug' \
      | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s).data?.[0];console.log(r?.name,"|",r?.slug);})'
@@ -232,7 +246,7 @@ contain.
    This is the user-visible bug; verifying only the API would miss the
    `createTagService` → `createVideoService` path that drops the tag.
 
-**Done when:** `POST /api/tags` with only a name returns 200 with a
+**Done when:** `POST /api/tags` with only a name returns **201** with a
 generated slug; the tag smoke test passes; a new tag typed on `/new-post`
 is attached to the created video and filterable on `/feed`.
 
@@ -326,7 +340,7 @@ the existing local-first choice in that function.
   longer has. **Rewrite them to assert the new contract**, which is a
   stronger test than deleting them: an anonymous `POST /api/videos` returns
   **403**, and the same `POST` with `Authorization: Bearer
-  ${process.env.STRAPI_API_TOKEN}` returns **200**. Keep the existing
+  ${process.env.STRAPI_API_TOKEN}` returns **201**. Keep the existing
   auto-skip when Strapi is unreachable. If the token is absent from the
   environment, skip the positive half with a message rather than failing.
   (M7 changes this file again for isolation — G15.)
@@ -345,7 +359,8 @@ the existing local-first choice in that function.
      --data '{"data":{"youtubeVideoId":"egmcheck001","url":"https://y.t/x","summaryStatus":"pending"}}'
    ```
    Expect `403`. Then the same request with
-   `-H "Authorization: Bearer $STRAPI_API_TOKEN"` → expect `200`.
+   `-H "Authorization: Bearer $STRAPI_API_TOKEN"` → expect **`201`** (create
+   sets 201; see M1). Reads are 200, `update` is 200, `delete` is 204.
    Also confirm reads still work anonymously: `GET /api/videos` → `200`.
    And confirm the delete grants are gone:
    `curl -X DELETE .../api/notes/<id>` anonymously → `403`.
@@ -355,7 +370,7 @@ the existing local-first choice in that function.
    function — stop and ask rather than restoring the public grants.
 6. `yarn site:build` against the scratch Strapi → still produces pages.
 
-**Done when:** anonymous writes return 403, tokened writes return 200,
+**Done when:** anonymous writes return 403, tokened creates return 201,
 anonymous reads return 200, sharing a video through the UI works, and the
 site builds.
 
@@ -607,18 +622,39 @@ stated so the implementer does not choose:
 | YouTube oEmbed | 10_000 | Already degrades to `{}` on failure |
 | DuckDuckGo | 10_000 | Already degrades to `[]` |
 
-The Ollama **chat** paths go through `@tanstack/ai`'s adapter rather than a
-bare `fetch`. If that adapter exposes no signal or timeout option, **do not
-restructure it** — record it in the implementation log as not covered and
-move on. The generation pipeline's hang is then still possible; M8's health
-view is what surfaces it.
+The Ollama **chat** paths go through `@tanstack/ai`'s `chat()` rather than a
+bare `fetch`, and **it does take an abort handle** — `abortController` on the
+options object (`client/node_modules/@tanstack/ai/dist/esm/activities/chat/index.d.ts:111`),
+documented with a `setTimeout(() => abortController.abort(), …)` example at
+`types.d.ts:806-807`, and consumed by the activity at
+`activities/chat/index.js:199-200`. Pass one, with `abort()` scheduled on the
+Ollama budget (120_000).
 
-`friendlyOllamaError`'s `TIMEOUT_PATTERNS`
-(`client/src/lib/services/ollama-errors.ts:30`) already exist and currently
-match nothing real. An `AbortSignal.timeout` rejection is a `TimeoutError`
-`DOMException`, whose message may not match those patterns — **check, and
-extend the pattern list if it doesn't**, so a timeout surfaces as a timeout
-rather than a generic failure.
+**State the limit honestly in the implementation log:**
+`@tanstack/ai-ollama`'s text adapter never references the signal — `grep abort`
+over `client/node_modules/@tanstack/ai-ollama/dist/esm/adapters/text.js`
+returns nothing, and its options expose only `model` and `host`. So the abort
+ends the activity and the agent loop, but does **not** cancel the in-flight
+HTTP request to Ollama. That still converts an unbounded hang into a bounded
+failure, which is what G5 asks for; it does not free the Ollama worker.
+
+**The error classifier needs a precedence fix, not new patterns.** Node's
+`AbortSignal.timeout` rejects with a `TimeoutError` `DOMException` whose
+message is "The operation was aborted due to timeout", which already matches
+`/timeout/i`, the first entry of `TIMEOUT_PATTERNS`
+(`client/src/lib/services/ollama-errors.ts:30`). The problem is order:
+`friendlyOllamaError` tests `HOST_PATTERNS` **first** (`:36-38`), and that
+list contains `/fetch failed/i` and `/11434/` (`:13-21`). So any timeout
+whose message got wrapped as "fetch failed" — which undici commonly does —
+or that carries the Ollama URL is reported as **"AI server unreachable. Is
+Ollama running on port 11434?"**: a confident recovery hint for the wrong
+cause, sending the owner to restart a service that is running fine.
+
+Fix the precedence: detect the timeout first, ideally on the error's `name`
+(`TimeoutError`) rather than its message, before the host patterns run. Add
+unit tests for both shapes — the bare `DOMException` and a
+`fetch failed`-wrapped message carrying `11434` — and **watch the second one
+fail first**, because it is the one that is broken today.
 
 **Verification:**
 1. Typecheck both packages; `yarn test`.
@@ -1138,19 +1174,67 @@ match across the two files. A test is sufficient; a sync script is better.
 `server/src/mcp/tools/add-video.ts:93-144` creates a transcript, then N tags,
 then the video, as separate Document Service writes. A throw partway leaves
 an orphan transcript and orphan tags. It runs inside Strapi, so
-`strapi.db.transaction` is available. Wrap the whole write set and re-check
-the dedupe `findFirst` (`:67-69`) **inside** the transaction. Ten partial
-failures from a bulk ingest are ten orphans otherwise.
+`strapi.db.transaction` is available and is the right API — confirmed in the
+installed typings (`@strapi/database/dist/index.d.ts:54-55`). Wrap the whole
+write set and re-check the dedupe `findFirst` (`:67-69`) **inside** the
+transaction. Ten partial failures from a bulk ingest are ten orphans
+otherwise.
 
-**Edit 6 — `busy_timeout` (G16).** `server/config/database.ts:46-51` sets
-only `filename` and `useNullAsDefault`, with a 60 s
-`acquireConnectionTimeout`. Under M7's bulk, concurrent writers serialise on
-one connection and surface as an opaque 60 s timeout or `SQLITE_BUSY`. Add a
-`busy_timeout` to the sqlite connection config (5000 ms) via the
-`pool.afterCreate` hook or the driver's connection options — **whichever
-`better-sqlite3` 12.8.0 with Strapi's knex actually supports; check the
-installed source before writing it, and if neither is available, stop and
-ask** rather than adding config that is silently ignored.
+Two things to know before writing it. **Strapi's docs mark database
+transactions experimental and "subject to change in future versions"** —
+note that in the commit message so a future upgrade knows to re-check. And
+**every Document Service repository method is already individually wrapped**
+in its own transaction (`@strapi/core/dist/services/document-service/repository.js:565-576`),
+with nested transactions joining the outer one via AsyncLocalStorage — which
+is exactly why wrapping works here, and why you **do not** pass a `trx`
+handle to the inner calls. Writing them as ordinary Document Service calls
+inside the block is correct.
+
+**Edit 6 — bound and surface write contention (G16). The original
+`busy_timeout` plan was wrong twice over; this is the corrected version.**
+
+Two facts from the installed source changed this edit:
+
+1. **`busy_timeout` is already 5000 ms.** `better-sqlite3` 12.8.0 defaults it
+   (`server/node_modules/better-sqlite3/lib/database.js:34`:
+   `'timeout' in options ? options.timeout : 5000`), applied as
+   `sqlite3_busy_timeout`. Setting 5000 would be a no-op, and a verification
+   asserting "non-zero" could never fail — which this spec's own rule
+   forbids ("A guard you have not watched fail is not a guard").
+2. **It addresses the wrong layer.** knex pins the SQLite pool to a single
+   connection (`server/node_modules/knex/lib/dialects/sqlite3/index.js:215-217`:
+   `{ min: 1, max: 1 }`), and Strapi's own code notes "sqlite does not support
+   connection pooling" (`@strapi/database/dist/index.js:40-42`). So two
+   in-process writers **queue in the knex pool**, governed by
+   `acquireConnectionTimeout` — the 60 s already configured — not by SQLite's
+   busy handler. `busy_timeout` only helps against another OS **process**
+   holding the write lock: the admin panel, a `strapi import`, or this spec's
+   own scratch/live split.
+
+Also: the "driver's connection options" path does not exist. knex's
+better-sqlite3 dialect forwards only `{ nativeBinding, readonly }` to the
+constructor (`knex/lib/dialects/better-sqlite3/index.js:11-18`) and drops
+`timeout`, so config written there is silently ignored. **Only
+`pool.afterCreate` works** — `@strapi/database/dist/connection.js:26-42`
+chains a user hook after Strapi's own, and the `conn` it receives is the
+native better-sqlite3 `Database` (Strapi uses it for
+`pragma foreign_keys = on`), so `conn.pragma('busy_timeout = <ms>')` is valid.
+
+**So do this instead.** The real failure under M7's bulk is a 60 s queue wait
+reported as an opaque connection-acquisition timeout:
+- Lower `acquireConnectionTimeout` in `server/config/database.ts` to something
+  a human reads as "contention", not "hung" — **20_000**.
+- Keep M7's semaphore as the actual bound on write concurrency; it is the
+  lever that prevents the queue from forming.
+- **Optionally** raise `busy_timeout` above the default via `pool.afterCreate`
+  as separately-justified defence against the cross-process case (the admin
+  panel or an import running while the app writes). If you do, pick a value
+  that differs from 5000 — **20_000** — and verify by reading back **that**
+  number, so the check can fail.
+
+Record in the implementation log that single-process `SQLITE_BUSY` is **not
+reproducible** here, so this edit is bounding and surfacing contention rather
+than fixing a bug anyone has seen.
 
 **Verification:**
 1. `yarn --cwd server test` passes; `cd server && npx tsc --noEmit` passes
@@ -1164,13 +1248,17 @@ ask** rather than adding config that is silently ignored.
    transcript create and the video create (temporarily throw — a
    **temporary stub, reverted before commit, and `git diff` confirmed clean
    of it**), then confirm no orphan transcript row remains.
-5. `busy_timeout`: confirm it is actually set, by query rather than by
-   inspection — `PRAGMA busy_timeout;` against the scratch database through
-   Strapi's console (`yarn --cwd server strapi console`).
+5. Contention settings, by query rather than inspection, through
+   `yarn --cwd server strapi console` against the **scratch** database:
+   `acquireConnectionTimeout` reads back 20_000 from the resolved config, and
+   — only if you took the optional `pool.afterCreate` step —
+   `PRAGMA busy_timeout;` returns **20000**, not the 5000 default. Asserting
+   "non-zero" here proves nothing, because 5000 is the shipped default.
 
 **Done when:** the server suite runs in CI, `strict: true` compiles, the
 drift guard fails when the files disagree, a mid-transaction failure leaves
-no orphan, and `busy_timeout` reads back non-zero.
+no orphan, and the contention settings read back the values above — not the
+shipped defaults.
 
 **Rollback:** revert the commit. No data step.
 
@@ -1192,11 +1280,20 @@ the row is marked `failed` for a reason nobody can read. `videoTitle` and
 `url` and `videoThumbnailUrl` in the same schema already get this right.
 
 Change all four to `"type": "text"`, keeping the `maxLength` validators.
-**This is a schema change, so say what happens to existing rows:** `string`
-→ `text` is a widening on both SQLite and Postgres, so no data moves and no
-backfill is needed. Verify on a **copy** of the real database by booting
-Strapi against it and confirming all 191 rows still read back intact, before
-touching anything else.
+**This is a schema change, so say what happens to existing rows.** No
+*values* change and no backfill is needed — `string` and `text` both map to
+a knex text-ish column, and Strapi applies the change itself on boot (its
+schema diff flags the changed type and issues `.alter()`; `sync()` runs on
+every boot with no production guard).
+
+**But on SQLite, knex implements `.alter()` as a table rebuild** —
+create-copy-drop-rename, not a true `ALTER`. So while the data is preserved,
+the table is recreated, which is a materially bigger operation than
+"widening" suggests. That makes the next sentence non-negotiable rather than
+precautionary: **back up `server/.tmp/data.db` first, then verify on the
+copy** by booting Strapi against it and confirming all 191 rows read back
+intact, with `videoTitle` populated, before this change goes anywhere near
+the real file.
 
 **Edit 2 — cap the note prompt (G13).**
 `client/src/lib/services/notes.ts:184-193` (`loadTranscriptText`) applies no
@@ -1298,14 +1395,30 @@ Last, because nothing depends on it and it touches many files.
   moves that namespace logs "MCP server disabled" indistinguishably from
   `MCP_ENABLED=false`. Log at `warn` when `MCP_ENABLED` is true but the
   namespace is absent.
-- `server/config/server.ts:12` and `04` Decision 8 — state the MCP floor as
-  **5.47.0** (the official docs' number; installed is 5.52.1). Add the
-  fact-checker's forward note: from Strapi 5.53.0 the built-in MCP server
-  moves to MCP SDK v2 (JSON Schema 2020-12), and the installed tree is on
-  `@modelcontextprotocol/sdk@1.30.0`, so the 20 hand-written tools meet that
-  change on the next minor upgrade.
-- `server/package.json` engines — raise the floor to `>=22.0.0` to match
-  Strapi 5.52.1's documented minimum (G17 / B-24).
+- `server/config/server.ts:13` and `04` Decision 8 — **confirm** the MCP
+  floor reads 5.47.0 (the official docs' number; installed is 5.52.1). The
+  comment already says "(5.47+)", so this is a check, not an edit; line 12 is
+  just `},`. Add the forward note: from Strapi 5.53.0 the built-in MCP server
+  moves to MCP TypeScript SDK v2, under the **renamed** packages
+  `@modelcontextprotocol/server@2.0.0` and `@modelcontextprotocol/node@2.0.0`
+  (not `sdk@2.x`), with schemas serialized as JSON Schema 2020-12. The
+  installed tree is on
+  `@modelcontextprotocol/sdk@1.30.0`. Note **22** registered tools, not 20 —
+  20 files, but `tags.ts` exports three
+  (`server/src/mcp-official/tools.ts:41-73`). The exposure is narrower than
+  it sounds: `grep @modelcontextprotocol server/src` returns nothing, because
+  this app imports no SDK symbol and passes zod schemas through Strapi's
+  registry. The one thing to re-verify after that upgrade is that each tool's
+  advertised schema still compiles as JSON Schema 2020-12.
+- `server/package.json` engines — set to **`">=22.0.0 <=26.x.x"`**. Raising
+  only the floor would leave `<=24.x.x`, which is now *narrower* than Strapi
+  supports: Strapi's own `engines` are `>=22.0.0 <=26.x.x` and its docs list
+  Node 22, 24 and 26. Floor 22 matches 5.52.1's documented minimum
+  (G17 / B-24).
+- `server/package.json` — `@types/node` is `^20` while the engine floor
+  becomes 22. Raise it to `^22` **in the same commit as M9's
+  `strict: true`**, or Node 22+ APIs will be under-typed exactly when strict
+  checking starts caring.
 - `client/.env.example` — add the commented `OLLAMA_SYNTHESIS_MODEL`, which
   is read at `client/src/lib/env.ts:43` and undeclared.
 - `CLAUDE.md` — the stale numbers: it says 230 tests and 96 site tests;
