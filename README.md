@@ -15,7 +15,7 @@ No accounts. No cloud AI. Runs entirely on your machine against a local [Ollama]
 - **Notes that stick** — "Summarize to note" turns a chat conversation into a markdown note attached to the video. MCP clients (Claude Desktop, etc.) can also leave notes. Every note is markdown; every note renders timecode chips back into the player.
 - **Semantic discovery** — per-video embeddings from the summary layer power "Related videos" on the learn page and library-wide semantic search on the feed. Same `embeddings.ts` infra ready to layer onto transcript chunks for moment-level search.
 - **Frontier-model bridge via MCP** — the official [Strapi MCP server](https://modelcontextprotocol.io) (built into Strapi 5.47+) at `/mcp` lets you drive the knowledge base from Claude Desktop / Claude Code / Cursor with a bigger model when you need one. 22 tools cover transcripts, videos, tags, notes — tiered read/write/maintenance, defined once in Strapi, no duplication with the in-app chat. See [`docs/mcp.md`](./docs/mcp.md).
-- **Handles long videos** — map-reduce summary pipeline kicks in past ~25K tokens. Transcript caching means regeneration never re-hits YouTube.
+- **Handles long videos** — map-reduce summary pipeline kicks in past ~15K tokens. Transcript caching means regeneration never re-hits YouTube.
 - **Fully TanStack stack** — [TanStack Start](https://tanstack.com/start) (Vite + React 19) + [TanStack Router](https://tanstack.com/router) + TanStack AI + [Tailwind v4](https://tailwindcss.com).
 
 ---
@@ -279,7 +279,7 @@ Stored vectors carry two invalidation keys: `embeddingModel` (the Ollama model t
 The model is explicitly instructed NOT to emit timecodes in its output. After generation, each section runs through BM25 against the transcript chunks; the top match's real caption-segment start becomes the section's `timeSec`. Same pattern is used in chat to ground every `[mm:ss]` the model does emit, with drift flagged in the Sources accordion.
 
 ### Map-reduce for long videos
-Transcripts over ~25K estimated tokens split into 2500-word windows (50-word overlap). Each window produces bullet notes in parallel (up to `MAP_CONCURRENCY`); a final reduce pass synthesizes the structured summary. Chunk timecodes come from real caption segments, not wpm estimation.
+Transcripts over ~15K estimated tokens split into 2500-word windows (50-word overlap). Each window produces bullet notes in parallel (up to `MAP_CONCURRENCY`); a final reduce pass synthesizes the structured summary. Chunk timecodes come from real caption segments, not wpm estimation.
 
 ---
 
