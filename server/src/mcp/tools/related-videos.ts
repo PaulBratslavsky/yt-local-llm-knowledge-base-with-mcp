@@ -45,7 +45,7 @@ type VideoRow = VideoWithEmbedding & {
 export const relatedVideosTool: ToolDef<z.infer<typeof schema>> = {
   name: 'relatedVideos',
   description:
-    'Find semantically similar videos in the library by cosine similarity over the per-video topical embedding. Returns youtubeVideoId + documentId + title + author + score for each neighbor. Target must have a current embedding — run reindexEmbeddings first if it doesn\'t.',
+    'Find semantically similar videos in the library by cosine similarity over the per-video topical embedding. Returns youtubeVideoId + documentId + title + author + score for each neighbor. Target must have a current embedding — reindex it from the app\'s /settings page if it doesn\'t.',
   schema,
   execute: async (
     { videoId, limit = 6, minScore = 0.5 },
@@ -59,7 +59,7 @@ export const relatedVideosTool: ToolDef<z.infer<typeof schema>> = {
     if (embeddingStatus(target) !== 'current') {
       return {
         error:
-          'Target video has no current embedding. Call reindexEmbeddings { scope: "missing" } first.',
+          'Target video has no current embedding. Reindex it from the app\'s /settings page (embedding runs in the app, next to Ollama).',
       };
     }
     const targetVec = target.summaryEmbedding as number[];

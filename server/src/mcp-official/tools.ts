@@ -35,7 +35,6 @@ import { addVideoTool } from '../mcp/tools/add-video';
 import { saveSummaryTool } from '../mcp/tools/save-summary';
 import { saveNoteTool } from '../mcp/tools/save-note';
 import { fetchTranscriptTool } from '../mcp/tools/fetch-transcript';
-import { reindexEmbeddingsTool } from '../mcp/tools/reindex-embeddings';
 import { generateDigestTool } from '../mcp/tools/generate-digest';
 
 export const domainTools: DomainTool[] = [
@@ -69,5 +68,4 @@ export const domainTools: DomainTool[] = [
   // ---- Leaves the box (gated by api::yt-kb-mcp.maintenance) ----
   { tool: addVideoTool, title: 'Add a video', sideEffects: 'external' },
   { tool: fetchTranscriptTool, title: 'Fetch a transcript from YouTube', sideEffects: 'external' },
-  { tool: reindexEmbeddingsTool, title: 'Reindex topical embeddings', sideEffects: 'external' },
 ];
