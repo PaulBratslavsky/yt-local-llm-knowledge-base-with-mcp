@@ -13,7 +13,7 @@
   "pluginOptions": {},
   "attributes": {
     "videoSetKey": {
-      "type": "string",
+      "type": "text",
       "required": true,
       "unique": true,
       "maxLength": 500,
