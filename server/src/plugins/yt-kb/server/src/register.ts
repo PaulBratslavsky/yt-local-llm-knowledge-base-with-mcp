@@ -1,6 +1,7 @@
 import type { Core } from '@strapi/strapi';
 import components, { COMPONENT_CATEGORY } from './components';
 import { registerDocumentRules } from './document-rules';
+import { registerOfficialMcpTools } from './mcp-official';
 
 const pascal = (s: string) =>
   s.replace(/(^|-)([a-z0-9])/g, (_m, _d, c: string) => c.toUpperCase());
@@ -18,7 +19,7 @@ const pascal = (s: string) =>
  * `strapi.get('components').add` is NOT a documented plugin API. Re-check it
  * on every Strapi upgrade; if it breaks, the fallback is JSON fields.
  */
-export default ({ strapi }: { strapi: Core.Strapi }) => {
+export default async ({ strapi }: { strapi: Core.Strapi }) => {
   const toAdd: Record<string, unknown> = {};
   for (const [key, schema] of Object.entries(components)) {
     const uid = `${COMPONENT_CATEGORY}.${key}`;
@@ -36,4 +37,8 @@ export default ({ strapi }: { strapi: Core.Strapi }) => {
   strapi.log.info(`[yt-kb] registered ${Object.keys(toAdd).length} components`);
 
   registerDocumentRules(strapi);
+
+  // Must run in register(): the official MCP server locks its tool set at start.
+  const toolsEnabled = strapi.plugin('yt-kb').config('mcp') !== false;
+  await registerOfficialMcpTools(strapi, { toolsEnabled });
 };
