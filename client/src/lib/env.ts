@@ -84,6 +84,48 @@ const MAP_CONCURRENCY = (() => {
   return Math.min(parsed, 4);
 })();
 
+// The env fields startup validation looks at. A plain object rather than the
+// module's own consts so the rules can be tested without reloading the module
+// (validateOnce runs at import time and latches).
+export type ValidatableEnv = {
+  OLLAMA_MODEL: string;
+  OLLAMA_CHAT_MODEL: string;
+  STRAPI_URL: string;
+  // No default, unlike the others — readEnv returns undefined when unset.
+  // Unset and empty both mean "no Authorization header", so both warn.
+  STRAPI_API_TOKEN: string | undefined;
+};
+
+// Pure: returns every problem rather than printing. Reports all of them, not
+// just the first — a missing token and a missing model are independent, and
+// finding the second one only after fixing the first wastes a restart.
+export function envWarnings(env: ValidatableEnv): string[] {
+  const out: string[] = [];
+  if (!env.OLLAMA_MODEL) {
+    out.push('OLLAMA_MODEL resolved to an empty string — Ollama will reject every call with "model is required".');
+  }
+  if (!env.OLLAMA_CHAT_MODEL) {
+    out.push('OLLAMA_CHAT_MODEL resolved to empty — chat + query rewrite will fail.');
+  }
+  if (!env.STRAPI_URL) {
+    out.push('STRAPI_URL resolved to empty — Strapi calls will fail.');
+  }
+  if (!env.STRAPI_API_TOKEN) {
+    // Worth naming the consequence, because the symptom is confusing: an
+    // empty token means strapiFetch sends no Authorization header at all
+    // (buildHeaders guards on truthiness), so every request lands as the
+    // Public role. Today that role still holds write grants, so writes
+    // silently succeed as an anonymous caller. Once the Public role is
+    // reduced to reads, the same requests start failing with 403.
+    out.push(
+      'STRAPI_API_TOKEN is empty — requests carry no Authorization header and act as the Public role. ' +
+        'Writes will fail with 403 once the Public role is read-only. Create an API token in Strapi ' +
+        'admin (Settings -> API Tokens) and set it in client/.env.',
+    );
+  }
+  return out;
+}
+
 // One-shot startup validation. Runs at module load — the first import in any
 // request path prints warnings once per process. Doesn't throw: local-first
 // should degrade gracefully, and most of these are "works but not ideal".
@@ -91,15 +133,8 @@ let validated = false;
 function validateOnce() {
   if (validated) return;
   validated = true;
-  const warn = (msg: string) => console.warn(`[env] ${msg}`);
-  if (!OLLAMA_MODEL) {
-    warn('OLLAMA_MODEL resolved to an empty string — Ollama will reject every call with "model is required".');
-  }
-  if (!OLLAMA_CHAT_MODEL) {
-    warn('OLLAMA_CHAT_MODEL resolved to empty — chat + query rewrite will fail.');
-  }
-  if (!STRAPI_URL) {
-    warn('STRAPI_URL resolved to empty — Strapi calls will fail.');
+  for (const msg of envWarnings({ OLLAMA_MODEL, OLLAMA_CHAT_MODEL, STRAPI_URL, STRAPI_API_TOKEN })) {
+    console.warn(`[env] ${msg}`);
   }
 }
 validateOnce();
