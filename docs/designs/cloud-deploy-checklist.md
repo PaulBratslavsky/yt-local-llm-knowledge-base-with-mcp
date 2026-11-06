@@ -34,9 +34,29 @@ notes, digests and tags immediately.
 It is also why the app cannot be hosted as-is. An internet-facing Strapi
 whose own client writes anonymously means anyone can write.
 
-**To do:** Strapi admin -> Settings -> API Tokens -> Create new API Token.
-Token type **Full access** (or Custom with create/update/delete on video,
-tag, transcript, note, digest). Copy the value into `client/.env`:
+**This is NOT the MCP token.** Strapi has two kinds, in one table
+(`strapi_api_tokens`, `kind: 'content-api' | 'admin'`), and the docs are
+explicit: *"API tokens and Admin tokens are strictly separated: a Content API
+token is rejected on admin routes, and an admin token is rejected on Content
+API routes."* The content-api strategy rejects anything whose `kind` is not
+`content-api`; `/mcp` authenticates through `authenticateAdminToken()`.
+
+| | Content API token | Admin token |
+|---|---|---|
+| Admin path | Settings > Global settings > API Tokens | Settings > Administration Panel > Admin Tokens |
+| Authenticates | `/api/*` | `/mcp` and admin routes |
+| Used by | the TanStack app (`STRAPI_API_TOKEN`) | Claude Desktop / Claude Code |
+| State here | **empty — the blocker** | already working |
+
+MCP already works for this project — an Admin token carrying the three custom
+permissions (`api::yt-kb-mcp.read` / `.write` / `.maintenance`) exists and the
+tools connect. Creating the Content API token does not touch it, and the
+existing MCP token cannot stand in for it.
+
+**To do:** Strapi admin -> **Settings > Global settings > API Tokens** ->
+Create new API Token. Token type **Full access** (or Custom with
+create/update/delete on video, tag, transcript, note, digest). Token duration
+**Unlimited**. Copy the value into `client/.env`:
 
 ```
 STRAPI_API_TOKEN=<the token>
