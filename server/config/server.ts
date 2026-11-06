@@ -1,11 +1,16 @@
 import type { Core } from '@strapi/strapi';
 
 const config = ({ env }: Core.Config.Shared.ConfigParams): Core.Config.Server => ({
-  // Loopback by default. 0.0.0.0 exposed the Public-role write grants to
-  // every device on the network; this app is documented single-user and
-  // local-first (docs/adr/0001), so the LAN bind was never a decision.
-  // Set HOST explicitly to opt back in.
-  host: env('HOST', '127.0.0.1'),
+  // 0.0.0.0 is Strapi's own default and the only value a hosted container can
+  // be reached on. Strapi Cloud does not inject HOST (its defaults are the
+  // secrets: APP_KEYS, ADMIN_JWT_SECRET, API_TOKEN_SALT, JWT_SECRET,
+  // TRANSFER_TOKEN_SALT), so a loopback default here would bind inside the
+  // container and leave the platform unable to reach the server.
+  //
+  // For local use, set HOST=127.0.0.1 in server/.env (.env.example does).
+  // With the Public role now read-only the LAN exposure is reads only, but
+  // loopback is still the right local setting.
+  host: env('HOST', '0.0.0.0'),
   port: env.int('PORT', 1340),
   app: {
     keys: env.array('APP_KEYS'),
