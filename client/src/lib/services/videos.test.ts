@@ -38,7 +38,7 @@ describe('listAllVideosForEmbeddingService', () => {
       .mockResolvedValueOnce(videoPage(['a', 'b'], 1, 2))
       .mockResolvedValueOnce(videoPage(['c'], 2, 2));
 
-    const result = await listAllVideosForEmbeddingService();
+    const result = await listAllVideosForEmbeddingService([]);
 
     expect(result.videos.map((v) => v.youtubeVideoId)).toEqual(['a', 'b', 'c']);
     expect(result.error).toBeUndefined();
@@ -49,7 +49,7 @@ describe('listAllVideosForEmbeddingService', () => {
   it('reports an error instead of an empty library when the first page fails', async () => {
     fetchMock.mockRejectedValueOnce(new TypeError('fetch failed'));
 
-    const result = await listAllVideosForEmbeddingService();
+    const result = await listAllVideosForEmbeddingService([]);
 
     expect(result.videos).toEqual([]);
     expect(result.error).toMatch(/unreachable/i);
@@ -62,7 +62,7 @@ describe('listAllVideosForEmbeddingService', () => {
       .mockResolvedValueOnce(videoPage(['a', 'b'], 1, 3))
       .mockRejectedValueOnce(new TypeError('fetch failed'));
 
-    const result = await listAllVideosForEmbeddingService();
+    const result = await listAllVideosForEmbeddingService([]);
 
     expect(result.error).toMatch(/unreachable/i);
   });
@@ -70,7 +70,7 @@ describe('listAllVideosForEmbeddingService', () => {
   it('surfaces a 5xx as a backend error', async () => {
     fetchMock.mockResolvedValueOnce(new Response('', { status: 503 }));
 
-    const result = await listAllVideosForEmbeddingService();
+    const result = await listAllVideosForEmbeddingService([]);
 
     expect(result.videos).toEqual([]);
     expect(result.error).toMatch(/Backend error/i);

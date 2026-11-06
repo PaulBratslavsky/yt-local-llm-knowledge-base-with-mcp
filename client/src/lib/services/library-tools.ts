@@ -214,7 +214,7 @@ export const listVideosByTopicTool = toolDefinition({
 }).server(async ({ topic }) => {
   const needle = topic.toLowerCase().trim();
   const { videos: all, error: corpusError } =
-    await listAllVideosForEmbeddingService();
+    await listAllVideosForEmbeddingService(['passageEmbeddings']);
   // Surface the failure to the model as a tool error. Returning `videos: []`
   // would read as "your library has nothing on that topic".
   if (corpusError) throw new Error(corpusError);

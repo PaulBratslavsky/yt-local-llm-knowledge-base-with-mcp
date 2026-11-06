@@ -578,7 +578,7 @@ export type EmbeddingCoverage = {
 
 export const getEmbeddingCoverage = createServerFn({ method: 'GET' }).handler(
   async (): Promise<EmbeddingCoverage> => {
-    const { videos, error } = await listAllVideosForEmbeddingService();
+    const { videos, error } = await listAllVideosForEmbeddingService(['summaryEmbedding']);
     if (error) {
       return {
         total: 0,
@@ -780,7 +780,7 @@ export const reindexAllEmbeddings = createServerFn({ method: 'POST' })
   )
   .handler(async ({ data }): Promise<ReindexResult> => {
     const started = performance.now();
-    const { videos, error } = await listAllVideosForEmbeddingService();
+    const { videos, error } = await listAllVideosForEmbeddingService(['summaryEmbedding']);
     // Backfilling a partial library would report success having skipped
     // whatever didn't load. Refuse instead.
     if (error) return { status: 'error', error };
@@ -900,7 +900,7 @@ export const relatedVideos = createServerFn({ method: 'GET' })
     const targetVec = target.summaryEmbedding as number[];
 
     const { videos: all, error: corpusError } =
-      await listAllVideosForEmbeddingService();
+      await listAllVideosForEmbeddingService(['summaryEmbedding']);
     if (corpusError) return { status: 'error', error: corpusError };
     const limit = data.limit ?? 6;
     const minScore = data.minScore ?? 0.5;
@@ -1005,7 +1005,7 @@ export const semanticSearchVideos = createServerFn({ method: 'GET' })
     }
 
     const { videos: all, error: corpusError } =
-      await listAllVideosForEmbeddingService();
+      await listAllVideosForEmbeddingService(['summaryEmbedding']);
     if (corpusError) return { status: 'error', error: corpusError };
     const limit = data.limit ?? 20;
     const minScore = data.minScore ?? 0.35;
@@ -1074,7 +1074,7 @@ export type PassageCoverage = {
 
 export const getPassageCoverage = createServerFn({ method: 'GET' }).handler(
   async (): Promise<PassageCoverage> => {
-    const { videos, error } = await listAllVideosForEmbeddingService();
+    const { videos, error } = await listAllVideosForEmbeddingService(['passageEmbeddings']);
     if (error) {
       return {
         total: 0,
@@ -1129,7 +1129,7 @@ export const reindexAllPassages = createServerFn({ method: 'POST' })
   )
   .handler(async ({ data }): Promise<ReindexPassagesResult> => {
     const started = performance.now();
-    const { videos, error } = await listAllVideosForEmbeddingService();
+    const { videos, error } = await listAllVideosForEmbeddingService(['passageEmbeddings']);
     if (error) return { status: 'error', error };
 
     const candidates = data.force
@@ -1259,7 +1259,7 @@ export const searchLibraryPassages = createServerFn({ method: 'GET' })
     }
 
     const { videos: all, error: corpusError } =
-      await listAllVideosForEmbeddingService();
+      await listAllVideosForEmbeddingService(['passageEmbeddings']);
     if (corpusError) return { status: 'error', error: corpusError };
     const limit = data.limit ?? 20;
     const minScore = data.minScore ?? 0.4;
@@ -1373,7 +1373,7 @@ export const suggestTagsForUrl = createServerFn({ method: 'GET' })
     }
 
     const { videos: all, error: corpusError } =
-      await listAllVideosForEmbeddingService();
+      await listAllVideosForEmbeddingService(['summaryEmbedding']);
     if (corpusError) return { status: 'error', error: corpusError };
     const candidates = all.filter(
       (v) =>

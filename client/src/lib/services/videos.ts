@@ -336,12 +336,53 @@ export type EmbeddingCorpus = {
 // /search, the semantic feed and Related videos — and made the coverage
 // panels report totals over a partial library. ADR-0007: don't swallow
 // errors into empty data.
-export async function listAllVideosForEmbeddingService(): Promise<EmbeddingCorpus> {
+// The two fields heavy enough to be worth asking for by name. Measured on
+// the live database across 192 videos:
+//
+//   passageEmbeddings    80 MB   (442 KB per video)
+//   transcriptSegments   33 MB   (178 KB per video)  <- never returned, see below
+//   summaryEmbedding    2.7 MB   (14.8 KB per video)
+//   everything else      ~1 MB
+//
+// Pulling one a caller does not use costs that much on every request. Over
+// localhost it is invisible; over a network it is the difference between a
+// search and a stall.
+export type CorpusField = 'summaryEmbedding' | 'passageEmbeddings';
+
+// Every scalar on Video except the three heavy ones. Listed explicitly
+// because Strapi's `fields` is an allowlist with no exclude form — a new
+// attribute has to be added here to reach these callers, which is the safer
+// direction to fail in.
+const CORPUS_BASE_FIELDS = [
+  'youtubeVideoId', 'url', 'videoTitle', 'videoAuthor', 'videoThumbnailUrl',
+  'caption', 'summaryStatus', 'summaryTitle', 'summaryDescription',
+  'summaryOverview', 'readableArticle', 'readableArticleGeneratedAt',
+  'readableArticleModel', 'watchVerdict', 'verdictSummary', 'verdictReason',
+  'valueScore', 'valueScoreSource', 'signalScores', 'signalScore',
+  'finalScore', 'summaryGeneratedAt', 'aiModel', 'embeddingModel',
+  'embeddingVersion', 'embeddingGeneratedAt',
+];
+
+/**
+ * Walks every generated video.
+ *
+ * `include` is required rather than defaulted on purpose: a default would let
+ * a new call site silently pull 80 MB it does not use, and the compiler
+ * naming each caller is what forced the audit that introduced it.
+ *
+ * `transcriptSegments` is never requested. `stripVideoForClient` nulls it on
+ * arrival, so fetching it was 33 MB of pure waste on every call site.
+ */
+export async function listAllVideosForEmbeddingService(
+  include: CorpusField[],
+): Promise<EmbeddingCorpus> {
   const pageSize = 100;
   const all: StrapiVideo[] = [];
+  const fields = [...CORPUS_BASE_FIELDS, ...include];
   for (let page = 1; page <= 50; page += 1) {
     const result = await strapiFetch<StrapiVideo[]>('GET', '/api/videos', {
       query: {
+        fields,
         populate: ['tags', 'keyTakeaways', 'sections'],
         filters: { summaryStatus: { $eq: 'generated' } },
         sort: 'createdAt:desc',
