@@ -1,15 +1,18 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 
 // Smoke test: hits a running local Strapi at STRAPI_URL and verifies the
-// public role can create + list Video rows. Auto-skips if Strapi isn't
-// reachable.
+// PUBLIC ROLE IS READ-ONLY. Auto-skips if Strapi isn't reachable.
 //
 //   yarn --cwd server develop   # in one terminal
 //   yarn --cwd client test      # in another
 //
-// These tests assume a fresh-ish DB — they create a video with a throwaway
-// youtubeVideoId that won't collide with real content. They don't clean up
-// after themselves (admin-only delete); re-running re-uses the same row.
+// These used to assert the opposite — that an unauthenticated caller could
+// create videos and tags. That was true, and it was the problem: the Public
+// role held 11 write actions reachable with no credential, including delete
+// on notes and digests. Writes now go through the client's server layer with
+// STRAPI_API_TOKEN, so an anonymous write must be refused.
+//
+// Nothing is created here any more, so there is nothing to clean up.
 
 const STRAPI_URL = process.env.STRAPI_URL ?? 'http://localhost:1340';
 const TEST_VIDEO_ID = 'test-smoke-001';
@@ -44,11 +47,8 @@ describe('videos service — smoke', () => {
     expect(Array.isArray(json.data)).toBe(true);
   });
 
-  it('public role can create a video (create permission granted)', async () => {
+  it('public role CANNOT create a video', async () => {
     if (!strapiUp) return;
-    // Try to create; if already exists from a prior run, the server
-    // middleware throws "already exists" which we treat as success for this
-    // test's purpose.
     const res = await fetch(`${STRAPI_URL}/api/videos`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -61,40 +61,49 @@ describe('videos service — smoke', () => {
         },
       }),
     });
-
-    if (res.status === 400) {
-      const body = (await res.json()) as { error?: { message?: string } };
-      // Expected on re-runs — Rule 1 in server middleware.
-      expect(body.error?.message ?? '').toMatch(/already exists/i);
-    } else {
-      expect(res.status).toBe(200);
-    }
+    // 403, flatly. The previous version of this test branched on 400 and
+    // only asserted a status in the else arm, so it passed without ever
+    // evaluating its own assertion.
+    expect(res.status).toBe(403);
   });
 
-  it('feed query returns the test video', async () => {
+  it('a filtered feed query is served to an anonymous caller', async () => {
     if (!strapiUp) return;
+    // Reads must keep working — the Astro site builds against them. This no
+    // longer asserts a specific row: the row it used to look for could only
+    // be created by the anonymous write this milestone removes, so requiring
+    // it would fail on any database where that write never happened.
     const params = new URLSearchParams();
     params.set('filters[youtubeVideoId][$eq]', TEST_VIDEO_ID);
     params.set('pagination[pageSize]', '1');
     const res = await fetch(`${STRAPI_URL}/api/videos?${params.toString()}`);
     expect(res.status).toBe(200);
-    const json = (await res.json()) as {
-      data?: Array<{ youtubeVideoId?: string }>;
-    };
-    expect(json.data?.[0]?.youtubeVideoId).toBe(TEST_VIDEO_ID);
+    const json = (await res.json()) as { data?: unknown[] };
+    expect(Array.isArray(json.data)).toBe(true);
   });
 
-  it('public role can create a tag (create permission granted)', async () => {
+  it('public role CANNOT create a tag', async () => {
     if (!strapiUp) return;
-    const name = `smoke-${Date.now()}`;
     const res = await fetch(`${STRAPI_URL}/api/tags`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ data: { name } }),
+      body: JSON.stringify({ data: { name: `smoke-${Date.now()}` } }),
     });
-    expect(res.status).toBe(200);
-    const json = (await res.json()) as { data?: { name?: string } };
-    // Server middleware Rule 2 normalizes → lowercase + trimmed.
-    expect(json.data?.name).toBe(name.toLowerCase());
+    expect(res.status).toBe(403);
   });
+
+  it('public role CANNOT delete a note or a digest', async () => {
+    if (!strapiUp) return;
+    // These two were the only deletes the Public role held. An anonymous
+    // caller could remove saved notes and digests with one request.
+    for (const path of ['notes', 'digests']) {
+      const res = await fetch(`${STRAPI_URL}/api/${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: { body: 'x', title: 'x' } }),
+      });
+      expect(res.status).toBe(403);
+    }
+  });
+
 });

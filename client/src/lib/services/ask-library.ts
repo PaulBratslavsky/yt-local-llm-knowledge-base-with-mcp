@@ -59,7 +59,7 @@ export async function retrievePassagesForQuery(
 
   const qVec = await embedText(query, 'query');
   const { videos: all, error: corpusError } =
-    await listAllVideosForEmbeddingService();
+    await listAllVideosForEmbeddingService(['passageEmbeddings']);
   // Throwing rather than answering from a partial library: /api/ask wraps
   // this call and reports the failure, where empty passages would have the
   // model confidently answer "nothing in your library covers that".

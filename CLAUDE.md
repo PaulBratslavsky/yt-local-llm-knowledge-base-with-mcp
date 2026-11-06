@@ -28,10 +28,10 @@ All run from the **repo root** unless noted.
 | `yarn client` | Client only (assumes Strapi is up). |
 | `yarn seed` | Imports `server/seed-data/seed.tar.gz`. **Run before starting Strapi** — needs exclusive write to SQLite. |
 | `yarn export` | Exports current Strapi DB to `server/seed-data/seed.tar.gz`. |
-| `yarn test` | Full vitest suite via `client/`, 306 tests (Strapi + Ollama down). Also runs as the sole step of CI's `Test` job. |
+| `yarn test` | Full vitest suite via `client/`, 318 tests (Strapi + Ollama down). Also runs as the sole step of CI's `Test` job. |
 | `yarn site` | Astro dev server on **4330** (not 4321 — another project on this machine holds it). Needs Strapi up. |
 | `yarn site:build` | Static build + output guard. Fails loudly if Strapi is unreachable or returns nothing. |
-| `yarn site:test` | The site's 102 vitest tests. **Not** covered by `yarn test`, which is the client's suite. |
+| `yarn site:test` | The site's 105 vitest tests. **Not** covered by `yarn test`, which is the client's suite. |
 | `yarn site:publish` | **The one to use for a content update.** Checks Strapi, rebuilds, sanity-checks the page count, deploys live. `yarn site:publish:draft` for a preview URL first. |
 | `yarn site:deploy` | `netlify deploy --prod` from `site/dist` — deploys whatever is already built, without rebuilding. |
 | `yarn install:all` | `yarn install --frozen-lockfile` for the root, `server/`, `client/` and `site/` package.json's. What CI runs to install everything. |
@@ -46,7 +46,7 @@ the Strapi codemod. Do not rename it back.
 ### Tests
 
 ```bash
-yarn test                                      # from repo root — full vitest suite, 306 tests
+yarn test                                      # from repo root — full vitest suite, 318 tests
 yarn --cwd client test                         # same suite, run from client/
 yarn --cwd client test path/to/file.test.ts    # single file
 yarn --cwd client test -t "name fragment"      # filter by test name
@@ -72,7 +72,7 @@ exists as one obvious entry point and for CI symmetry with `yarn install:all`
 (also at the repo root, `yarn install --frozen-lockfile` for each of the
 three `package.json`s — root, `server/`, `client/`).
 
-**306 is measured with Strapi and Ollama both down — and is the same with
+**318 is measured with Strapi and Ollama both down — and is the same with
 them up.** `videos.smoke.test.ts` and `embeddings.ranking.test.ts` skip by
 returning early inside each `it` rather than failing, so their tests still
 count as passed and the total doesn't move with the environment. What moves
@@ -179,7 +179,7 @@ Single-pass for short transcripts; long ones split into 2500-word windows (50-wo
 
 ### MCP server lives in Strapi
 
-The **official Strapi MCP server** (built into Strapi 5.47+, enabled via `server.mcp.enabled` in `config/server.ts`) serves Streamable HTTP at `/mcp`, gated by **admin** API tokens. yt-kb's 22 domain tools (videos, transcripts, tags, notes) register onto it from `src/index.ts` `register()` via the adapter in `server/src/mcp-official/` (permissions, adapter, tools list) — which **reuses the tool bodies** in `server/src/mcp/tools/`. Three custom admin permissions tier the tools: `api::yt-kb-mcp.read` (15 read), `.write` (4 mutations), `.maintenance` (3 expensive/external-side-effect). A token sees only the tools its permissions allow. **Tool bodies are defined once** in `src/mcp/tools/` — the in-app Ollama chat does not use MCP, keeping local inference protocol-free. The previous hand-rolled `/api/mcp` server was retired. See `docs/mcp.md`.
+The **official Strapi MCP server** (built into Strapi 5.47+, enabled via `server.mcp.enabled` in `config/server.ts`) serves Streamable HTTP at `/mcp`, gated by **admin** API tokens. yt-kb's 21 domain tools (videos, transcripts, tags, notes) register onto it from `src/index.ts` `register()` via the adapter in `server/src/mcp-official/` (permissions, adapter, tools list) — which **reuses the tool bodies** in `server/src/mcp/tools/`. Three custom admin permissions tier the tools: `api::yt-kb-mcp.read` (15 read), `.write` (4 mutations), `.maintenance` (2 that hit YouTube). Strapi computes no embeddings — the app does, next to Ollama. A token sees only the tools its permissions allow. **Tool bodies are defined once** in `src/mcp/tools/` — the in-app Ollama chat does not use MCP, keeping local inference protocol-free. The previous hand-rolled `/api/mcp` server was retired. See `docs/mcp.md`.
 
 **Adding a tool:** author a `ToolDef` in `src/mcp/tools/` — schema included, in zod 3 (`@strapi/utils`, the zod the MCP SDK's schema conversion needs) — then add a one-line entry to `src/mcp-official/tools.ts` giving the tool, a title and its `sideEffects` (`none` | `write` | `external`). The adapter registers `tool.schema` and derives the admin permission tier from `sideEffects`, so there is one schema per tool and the tier follows from what the body does. See `docs/mcp.md`.
 
@@ -204,4 +204,4 @@ The **official Strapi MCP server** (built into Strapi 5.47+, enabled via `server
 - **Bump `EMBEDDING_VERSION` when changing the text-builder.** Otherwise old vectors silently survive a meaning-changing edit.
 - **Orphan node on :1340 or :3005** breaks `yarn dev` with cryptic `[strapi] fetch failed` spam from the client. `start.sh` kills these pre-flight; if you're running `yarn dev` directly, do it yourself with `lsof -ti :1340 -ti :3005 | xargs kill -9`.
 - **Pin pre-1.0 dependencies exactly.** On a `0.x` package a caret is a silent ceiling — `^0.10.3` means `<0.11.0`. `@tanstack/ai` sat 37 minors behind on a caret while the exact-pinned router family stayed current. The rule holds repo-wide: every `0.x` dependency in `client/package.json` and `server/package.json` is exact-pinned, and no caret or tilde `0.x` range is left. The four carets ADR 0010 recorded as pending exceptions (`class-variance-authority`, `next-themes`, `tiptap-markdown`, `@tailwindcss/typography`) were pinned in the follow-up pass. A new `0.x` dep added with `^` or `~` should be corrected before merge. See ADR 0010.
-- **`yarn test` is environment-dependent.** 306 passed with Strapi and Ollama both down. `videos.smoke.test.ts`'s tag-creation test fails when Strapi is live — a pre-existing bug (Strapi core doesn't auto-populate `uid` fields outside the admin UI), not something this repo's changes caused. If you run the suite against a live stack and see one failure there, it isn't yours.
+- **Tag slugs are generated server-side.** `slug` is a required `uid`, and Strapi fills uid fields only in the admin panel. The Document Service middleware in `server/src/index.ts` (Rule 2) derives it from the normalized name with `slugifyTagName` for every create path. Remove that and every new tag from the app or MCP fails `400 "slug must be defined"` — and the app swallows the error, so the tag just silently doesn't appear.

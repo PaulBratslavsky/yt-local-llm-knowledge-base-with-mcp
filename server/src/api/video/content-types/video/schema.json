@@ -29,7 +29,7 @@
       "maxLength": 2000
     },
     "videoTitle": {
-      "type": "string",
+      "type": "text",
       "maxLength": 300
     },
     "videoAuthor": {
@@ -94,7 +94,7 @@
       "enum": ["skip", "skim", "worth_it"]
     },
     "verdictSummary": {
-      "type": "string",
+      "type": "text",
       "maxLength": 280
     },
     "verdictReason": {

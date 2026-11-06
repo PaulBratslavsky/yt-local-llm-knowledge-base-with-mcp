@@ -51,3 +51,17 @@ export function momentUrl(href: string, seconds: number): string | null {
   url.searchParams.set('t', String(target));
   return url.toString();
 }
+
+/** The still YouTube serves for a video, or null when there is no id.
+ *
+ *  Derived rather than published. Strapi stores this exact URL on every
+ *  row, but deriving it keeps `videoThumbnailUrl` out of the `fields[]`
+ *  allowlist and out of the search index. The allowlist is the privacy
+ *  mechanism, so it should name only what it must.
+ *
+ *  `hqdefault` is the 16:9 frame letterboxed into a 4:3 image, so a card
+ *  that crops it back to 16:9 recovers the frame and loses the bars. */
+export function thumbnailUrl(youtubeVideoId: string): string | null {
+  if (!youtubeVideoId) return null;
+  return `https://i.ytimg.com/vi/${encodeURIComponent(youtubeVideoId)}/hqdefault.jpg`;
+}

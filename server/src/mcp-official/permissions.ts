@@ -34,10 +34,10 @@ const ACTION_DEFS = [
     uid: 'yt-kb-mcp.write',
   },
   {
-    // The expensive / external-side-effect / hard-to-undo tools:
-    // reindexEmbeddings (long Ollama run), fetchTranscript + addVideo
-    // (hit YouTube), generateDigest (LLM cost). Split out so a
-    // browse-and-annotate token (read + write) can't trigger them.
+    // The external-side-effect tools: fetchTranscript + addVideo, which
+    // hit YouTube. Split out so a browse-and-annotate token (read + write)
+    // can't trigger them. Embedding reindex is not here: inference runs in
+    // the TanStack app, not in Strapi.
     section: 'settings',
     category: 'MCP',
     displayName: 'Use maintenance / expensive yt-knowledge-base MCP tools',

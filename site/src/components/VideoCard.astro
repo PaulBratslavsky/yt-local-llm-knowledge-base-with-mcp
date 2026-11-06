@@ -1,6 +1,8 @@
 ---
 import type { Video } from '../lib/video';
 import { displayTitle } from '../lib/video';
+import { thumbnailUrl } from '../lib/player';
+import { tagSlug } from '../lib/tags';
 
 interface Props {
   video: Video;
@@ -8,62 +10,127 @@ interface Props {
 
 const { video } = Astro.props;
 
-const VERDICT_LABEL = {
-  worth_it: 'Worth watching',
-  skim: 'Skim it',
-  skip: 'Skip it',
+const VERDICT = {
+  worth_it: { label: 'Worth watching', bg: 'var(--ok-bg)', text: 'var(--ok-text)', dot: 'var(--ok-dot)' },
+  skim: { label: 'Skim it', bg: 'var(--warn-bg)', text: 'var(--warn-text)', dot: 'var(--warn-dot)' },
+  skip: { label: 'Skip it', bg: 'var(--mute-bg)', text: 'var(--mute-text)', dot: 'var(--mute-dot)' },
 } as const;
 
-const highScore = (video.finalScore ?? 0) >= 85;
+const verdict = video.watchVerdict ? VERDICT[video.watchVerdict] : null;
+const score = typeof video.finalScore === 'number' ? video.finalScore : null;
+// The thumbnail keeps 16:9 at every width and sits top-aligned. Letting it
+// stretch to the row height made the box nearly square, and object-cover
+// then cropped the sides off the still.
+const thumb = thumbnailUrl(video.youtubeVideoId);
+
+// The verdict line is the one that answers "should I click": it names who
+// this is for and who it isn't. The description only says what the video
+// covers, which every card on the page also does.
+const why = video.verdictSummary ?? video.summaryDescription ?? null;
+
+// Signals of depth, in the order someone scanning would want them.
+const chapters = video.sections.filter((s) => typeof s.timeSec === 'number').length;
+const takeaways = video.keyTakeaways.length;
+const topics = video.tags.filter((t) => tagSlug(t.name) !== '').slice(0, 3);
+
+// Score bands mirror the app's: the colour reinforces the verdict without
+// repeating it.
+const scoreTone =
+  score === null
+    ? null
+    : score >= 70
+      ? { bg: 'var(--ok-bg)', text: 'var(--ok-text)' }
+      : score >= 50
+        ? { bg: 'var(--accent-soft)', text: 'var(--accent-text)' }
+        : { bg: 'var(--chip-bg)', text: 'var(--ink-soft)' };
 ---
 
-<a
-  class="block rounded-2xl border border-[var(--line)] bg-[var(--card)] px-6 py-5 no-underline transition-colors hover:border-[var(--line-strong)]"
-  href={`/v/${video.youtubeVideoId}`}
+<article
+  class="group overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--card)] transition-shadow hover:shadow-[0_1px_2px_rgba(9,9,11,0.04),0_12px_32px_rgba(9,9,11,0.07)]"
 >
-  <div class="flex items-start gap-4">
-    <div class="min-w-0 flex-1">
+  <a class="flex flex-col no-underline sm:flex-row" href={`/v/${video.youtubeVideoId}`}>
+    {
+      thumb && (
+        <div
+          class="relative aspect-video w-full flex-none self-start overflow-hidden bg-black sm:w-[264px]"
+        >
+          {/* hqdefault is 4:3 with letterbox bars; object-cover crops back
+              to the original 16:9 frame. */}
+          <img
+            alt=""
+            class="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+            height="360"
+            loading="lazy"
+            src={thumb}
+            width="480"
+          />
+          {score !== null && scoreTone && (
+            <span
+              class="absolute right-2 top-2 inline-flex h-7 min-w-[34px] items-center justify-center rounded-lg px-2 text-[13px] font-semibold tabular-nums backdrop-blur-sm"
+              style={`background: ${scoreTone.bg}; color: ${scoreTone.text}`}
+              title="Content score"
+            >
+              {score}
+            </span>
+          )}
+        </div>
+      )
+    }
+
+    <div class="min-w-0 flex-1 px-5 py-4">
+      <div class="flex flex-wrap items-center gap-2">
+        {
+          verdict && (
+            <span
+              class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] font-semibold uppercase tracking-wide"
+              style={`background: ${verdict.bg}; color: ${verdict.text}`}
+            >
+              <span class="h-[6px] w-[6px] rounded-full" style={`background: ${verdict.dot}`} />
+              {verdict.label}
+            </span>
+          )
+        }
+        {
+          video.videoAuthor && (
+            <span class="truncate text-[13px] text-[var(--ink-muted)]">
+              {video.videoAuthor}
+            </span>
+          )
+        }
+      </div>
+
       <h3
-        class="text-[18px] font-semibold leading-snug tracking-[-0.012em] text-[var(--ink)]"
+        class="mt-2 text-[17px] font-semibold leading-snug tracking-[-0.012em] text-[var(--ink)]"
       >
         {displayTitle(video)}
       </h3>
+
       {
-        video.videoAuthor && (
-          <p class="mt-1 text-[13.5px] text-[var(--ink-muted)]">{video.videoAuthor}</p>
-        )
-      }
-      {
-        video.summaryDescription && (
-          <p class="mt-2 text-[15px] leading-relaxed text-[var(--ink-soft)]">
-            {video.summaryDescription}
+        why && (
+          <p class="mt-1.5 line-clamp-3 text-[14.5px] leading-relaxed text-[var(--ink-soft)]">
+            {why}
           </p>
         )
       }
-    </div>
 
-    <div class="flex flex-none flex-col items-end gap-2">
-      {
-        typeof video.finalScore === 'number' && (
-          <span
-            class="inline-flex h-8 min-w-[46px] items-center justify-center rounded-[9px] px-2.5 text-[15px] font-semibold tabular-nums"
-            style={
-              highScore
-                ? 'background: var(--ok-bg); color: var(--ok-text)'
-                : 'background: var(--chip-bg); color: var(--ink-soft)'
-            }
-          >
-            {video.finalScore}
-          </span>
-        )
-      }
-      {
-        video.watchVerdict && (
-          <span class="text-[12px] text-[var(--ink-faint)]">
-            {VERDICT_LABEL[video.watchVerdict]}
-          </span>
-        )
-      }
+      <div
+        class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[12.5px] text-[var(--ink-faint)]"
+      >
+        {chapters > 0 && <span>{chapters} chapters</span>}
+        {takeaways > 0 && <span>{takeaways} takeaways</span>}
+        {
+          video.readableArticle && (
+            <span class="font-medium text-[var(--accent-text)]">Full article</span>
+          )
+        }
+        {
+          topics.map((t) => (
+            <span class="rounded-full bg-[var(--chip-bg)] px-2 py-0.5 text-[var(--ink-muted)]">
+              {t.name}
+            </span>
+          ))
+        }
+      </div>
     </div>
-  </div>
-</a>
+  </a>
+</article>

@@ -500,7 +500,7 @@ export interface ApiDigestDigest extends Struct.CollectionTypeSchema {
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
     videos: Schema.Attribute.Relation<'manyToMany', 'api::video.video'>;
-    videoSetKey: Schema.Attribute.String &
+    videoSetKey: Schema.Attribute.Text &
       Schema.Attribute.Required &
       Schema.Attribute.Unique &
       Schema.Attribute.SetMinMaxLength<{
@@ -753,7 +753,7 @@ export interface ApiVideoVideo extends Struct.CollectionTypeSchema {
       Schema.Attribute.SetMinMaxLength<{
         maxLength: 1000;
       }>;
-    verdictSummary: Schema.Attribute.String &
+    verdictSummary: Schema.Attribute.Text &
       Schema.Attribute.SetMinMaxLength<{
         maxLength: 280;
       }>;
@@ -765,7 +765,7 @@ export interface ApiVideoVideo extends Struct.CollectionTypeSchema {
       Schema.Attribute.SetMinMaxLength<{
         maxLength: 2000;
       }>;
-    videoTitle: Schema.Attribute.String &
+    videoTitle: Schema.Attribute.Text &
       Schema.Attribute.SetMinMaxLength<{
         maxLength: 300;
       }>;

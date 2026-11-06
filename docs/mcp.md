@@ -7,7 +7,7 @@ path stays local-first (Ollama, BM25 grounding); MCP is the bridge for
 when you want more power than a local model can provide.
 
 Served by the **official Strapi MCP server** (built into Strapi 5.47+).
-Our 22 domain tools register onto it from `server/src/index.ts` via the
+Our 21 domain tools register onto it from `server/src/index.ts` via the
 adapter in `server/src/mcp-official/`; the tool bodies live in
 `server/src/mcp/tools/`. The previous hand-rolled server (which served
 `/api/mcp`) was retired — **that endpoint no longer exists**.
@@ -43,9 +43,13 @@ allow):
 - `api::yt-kb-mcp.read` — the 15 read tools.
 - `api::yt-kb-mcp.write` — ordinary data mutations: `saveSummary`,
   `tagVideo`, `untagVideo`, `saveNote`.
-- `api::yt-kb-mcp.maintenance` — the expensive / external-side-effect /
-  hard-to-undo tools: `addVideo` and `fetchTranscript` (hit YouTube) and
-  `reindexEmbeddings` (long Ollama run).
+- `api::yt-kb-mcp.maintenance` — the external-side-effect tools:
+  `addVideo` and `fetchTranscript`, which hit YouTube.
+
+Strapi exposes no embedding or inference tool. Embeddings are computed by the
+TanStack app next to Ollama (reindex from `/settings`) and stored on the Video
+row; MCP tools only read them. That keeps the MCP surface working on a hosted
+Strapi, where there is no Ollama.
 
 Mix to taste: read-only for a safe browsing token; read + write for
 browse-and-annotate (can't trigger reindexes or YouTube fetches);
@@ -83,7 +87,7 @@ Rotate by minting a new token and revoking the old one
 
 ## Tools
 
-22 tools across three permission tiers — 15 read, 4 write, 3 maintenance:
+21 tools across three permission tiers — 15 read, 4 write, 2 maintenance:
 
 | Tool | Tier | Purpose |
 |---|---|---|
@@ -107,7 +111,6 @@ Rotate by minting a new token and revoking the old one
 | `saveNote` | write | Attach a short note to a video |
 | `addVideo` | maintenance | Ingest a YouTube URL (creates Video + fetches transcript) |
 | `fetchTranscript` | maintenance | Fetch from YouTube + upsert; acts as "regenerate" with `force=true` |
-| `reindexEmbeddings` | maintenance | Backfill / refresh topical embeddings (`missing` / `stale` / `all`); serial Ollama run |
 
 Alongside these, the connecting token also sees Strapi's **built-in
 per-content-type CRUD tools** (`list_video`, `get_video`, …) if it carries
@@ -121,7 +124,7 @@ claude mcp add yt-knowledge-base --transport http http://localhost:1340/mcp \
 ```
 
 Then `claude mcp list` / restart Claude Code; the `yt-knowledge-base`
-server should list its tools (22 custom + any built-ins the token's
+server should list its tools (21 custom + any built-ins the token's
 permissions expose).
 
 ## Claude Desktop
@@ -253,5 +256,5 @@ Claude reasons across it and writes a summary
   the app. A Claude-authored summary is therefore invisible to score-filtered
   views (the feed filters `finalScore >= minScore`, and `$gte` excludes
   nulls) and to related-videos/semantic search until something indexes it.
-  Run `reindexEmbeddings` after, or regenerate from the app UI for full
+  Reindex from the app's `/settings` page after, or regenerate from the app UI for full
   in-app chat grounding.

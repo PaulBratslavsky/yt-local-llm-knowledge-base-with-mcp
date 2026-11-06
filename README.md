@@ -14,7 +14,7 @@ No accounts. No cloud AI. Runs entirely on your machine against a local [Ollama]
 - **Cross-video digests** — synthesize 2–5 videos into structured themes, contradictions, unique insights, and a long-form article. Saved digests are upserted by a deterministic `videoSetKey` so re-saving the same selection updates in place instead of duplicating.
 - **Notes that stick** — "Summarize to note" turns a chat conversation into a markdown note attached to the video. MCP clients (Claude Desktop, etc.) can also leave notes. Every note is markdown; every note renders timecode chips back into the player.
 - **Semantic discovery** — per-video embeddings from the summary layer power "Related videos" on the learn page and library-wide semantic search on the feed. Same `embeddings.ts` infra ready to layer onto transcript chunks for moment-level search.
-- **Frontier-model bridge via MCP** — the official [Strapi MCP server](https://modelcontextprotocol.io) (built into Strapi 5.47+) at `/mcp` lets you drive the knowledge base from Claude Desktop / Claude Code / Cursor with a bigger model when you need one. 22 tools cover transcripts, videos, tags, notes — tiered read/write/maintenance, defined once in Strapi, no duplication with the in-app chat. See [`docs/mcp.md`](./docs/mcp.md).
+- **Frontier-model bridge via MCP** — the official [Strapi MCP server](https://modelcontextprotocol.io) (built into Strapi 5.47+) at `/mcp` lets you drive the knowledge base from Claude Desktop / Claude Code / Cursor with a bigger model when you need one. 21 tools cover transcripts, videos, tags, notes — tiered read/write/maintenance, defined once in Strapi, no duplication with the in-app chat. See [`docs/mcp.md`](./docs/mcp.md).
 - **Handles long videos** — map-reduce summary pipeline kicks in past ~15K tokens. Transcript caching means regeneration never re-hits YouTube.
 - **Fully TanStack stack** — [TanStack Start](https://tanstack.com/start) (Vite + React 19) + [TanStack Router](https://tanstack.com/router) + TanStack AI + [Tailwind v4](https://tailwindcss.com).
 
@@ -167,7 +167,7 @@ Claude Desktop ──▶ POST /mcp  (Streamable HTTP + admin Bearer token)
                  Official Strapi MCP server (5.47+)
                  ├── listVideos / getVideo / searchVideos / addVideo / saveSummary
                  ├── listTranscripts / getTranscript / searchTranscript / findTranscripts / fetchTranscript
-                 └── listTags / tagVideo / untagVideo / saveNote / …  (22 tools, tiered read/write/maintenance)
+                 └── listTags / tagVideo / untagVideo / saveNote / …  (21 tools, tiered read/write/maintenance)
 ```
 
 **Quick setup:**
@@ -198,7 +198,7 @@ Claude Desktop ──▶ POST /mcp  (Streamable HTTP + admin Bearer token)
    }
    ```
 
-4. ⌘Q Claude Desktop and reopen. The connector toggles on; 22 tools appear (or fewer for a read-only token).
+4. ⌘Q Claude Desktop and reopen. The connector toggles on; 21 tools appear (or fewer for a read-only token).
 
 For Claude Code: `claude mcp add yt-knowledge-base --transport http http://localhost:1340/mcp -H "Authorization: Bearer YOUR_TOKEN"`.
 
