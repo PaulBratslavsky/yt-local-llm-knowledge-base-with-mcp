@@ -6,6 +6,26 @@ which holds the *why*. This is the running state of the *how*. Updated 2026-11-0
 Target: Strapi hosted, exposing `/mcp` and `/api`; the TanStack app and
 Ollama stay on the laptop and keep every capability they have today.
 
+## Read this first: this branch alone is NOT deployable
+
+`feat/cloud-readiness` was cut from `main`, and `main` does not contain the
+security fixes. They exist only on the unmerged `egm/security-hotfix`:
+
+| Fix | `main` / this branch | `egm/security-hotfix` |
+|---|---|---|
+| CORS | bare `'strapi::cors'` — reflects any Origin **with credentials** | locked: `origin: []`, `credentials: false` |
+| `HOST` default | `0.0.0.0` | `127.0.0.1` |
+| `@tanstack/react-start` (CVE-2026-102989, CVSS 9.3) | 1.168.48 — **vulnerable** | 1.168.60 — patched |
+
+An earlier version of this file, and `cloud-split-architecture.md`, said the
+CORS lockdown had "already landed". **It had not.** It is committed, not
+merged. Merge `egm/security-hotfix` before deploying anything.
+
+Checked 2026-11-05 with `git merge-tree`: `egm/security-hotfix` merges cleanly
+into current `main` and into this branch. A clean merge is not a clean build —
+the TanStack bump was tested against code before `main`'s #48
+(`inputValidator()` -> `validator()`); the combined tree has not been built.
+
 ## Done, on branch `feat/cloud-readiness`
 
 | | What | Evidence |
@@ -13,6 +33,7 @@ Ollama stay on the laptop and keep every capability they have today.
 | done | **Postgres driver** | `pg` pinned at 8.23.1. Booting with `DATABASE_CLIENT=postgres` against a dead port now fails with `connect ECONNREFUSED`, not `MODULE_NOT_FOUND`. |
 | done | **`varchar(255)` landmines removed** | `videoTitle`, `verdictSummary`, `videoSetKey` are now `text`. Strapi drops `maxLength` when building columns, so each could hold a value its own column could not. **5 rows in `verdict_summary` already exceed 255 today** (longest 278) and would have failed on the first Postgres write. Verified on a scratch copy through the SQLite table rebuild: all rows intact. |
 | done | **Corpus overfetch fixed** | `listAllVideosForEmbeddingService` named no `fields`, so all 11 call sites pulled every column — 50.01 MB per page of 100. Now 2.34 MB for related-videos and semantic search, 0.89 MB for coverage. This is what makes a remote database survivable. |
+| done | **M2 — Public role is read-only** | The role held 11 writes with no credential. Demonstrated on a scratch copy with bare `curl`: anonymous `POST /api/videos` 201, `DELETE /api/notes/<id>` 204. After M2: anonymous writes 403, reads 200, token-authenticated write 201. `bootstrap()` now revokes as well as seeds (`revoked=11`). **Not yet run against `data.db`** — see the token section. |
 | done | **Missing-token warning** | The app said nothing when `STRAPI_API_TOKEN` was empty. It now names the consequence. |
 
 `config/database.ts` already supported Postgres in full — `DATABASE_URL`,
@@ -27,9 +48,11 @@ host/port/user, SSL, schema, pool. Nothing needed there.
 is sent and **every write the app makes today lands as the anonymous Public
 role**.
 
-That is why M2 cannot land: the Public role's write grants are not a latent
-risk, they are load-bearing. Revoking them now breaks sharing, generation,
-notes, digests and tags immediately.
+M2 is committed on this branch, but must not be RUN against the live database
+until the token is set: `bootstrap()` revokes on every boot, and the Public
+role's write grants are load-bearing today. Booting this branch against
+`data.db` without the token breaks sharing, generation, notes, digests and
+tags immediately.
 
 It is also why the app cannot be hosted as-is. An internet-facing Strapi
 whose own client writes anonymously means anyone can write.
@@ -77,22 +100,24 @@ branch). The migration script **refuses to run** without it, by design.
 
 ## Remaining work, in order
 
-1. **M2 — Public role: reads only.** Blocked on the token above. The role
-   holds 11 write actions and 2 deletes with no credential. `bootstrap()`
-   seeds but never revokes, so this needs an explicit revocation step, not
-   just a shorter array.
-2. **A real Postgres run.** Everything above is verified against SQLite plus
+1. **Merge `egm/security-hotfix`**, then build the combined tree — not just
+   typecheck it (ADR 0009: `tsc` passed while `vite build` failed on the
+   original TanStack bump).
+2. **Set the Content API token, then boot against `data.db`** so M2's
+   revocation runs with the app able to authenticate.
+3. **A real Postgres run.** Everything above is verified against SQLite plus
    a driver-load probe. **Nothing has actually run on Postgres.** Docker is
    installed on this machine but its daemon is not running; starting it makes
    a true end-to-end test possible before any cloud spend.
-3. **Data migration to Postgres.** `strapi export` / `strapi import`, or a
+4. **Data migration to Postgres.** `strapi export` / `strapi import`, or a
    direct dump. Unproven either way.
-4. **Plugin convergence, Tasks 3-6.** Transcripts onto the plugin.
-5. **MCP tokens.** One admin token currently holds all three tiers. On a
+5. **Plugin convergence, Tasks 3-6.** Transcripts onto the plugin.
+6. **MCP tokens.** One admin token currently holds all three tiers. On a
    public host that is one credential for read, write and maintenance.
-6. **Repoint `STRAPI_URL`.** One variable — the browser never calls Strapi
-   directly, so no CORS change is needed and the empty-origin lockdown stays
-   correct.
+7. **Repoint `STRAPI_URL` and `STRAPI_API_TOKEN`** at the deployed instance
+   and a token created in *its* admin. That is the acceptance test for the
+   whole architecture. Two variables — the browser never calls Strapi
+   directly, so the empty-origin CORS lockdown (once merged) stays correct.
 
 ## Verified against the Strapi docs (2026-11-05)
 
@@ -125,6 +150,11 @@ before the earlier claims in this file.
   1.22 with the committed `yarn.lock` is not a deployment blocker.
 
 ## Known gaps not yet addressed
+
+- **`reader.ts:360` bypasses `strapiFetch`** with a raw `fetch` `PUT` to
+  `/api/videos/<id>` (pre-existing, since 2026-04-21). It attaches the token
+  with the same truthiness check, so M2 does not break it — but it makes
+  CLAUDE.md's "inline fetch to Strapi has been removed" false.
 
 - **Generation dedupe is single-node.** `inflight` is an in-process `Set`
   (`generation-state.ts`). The laptop plus an agent writing over MCP can
