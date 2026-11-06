@@ -1,6 +1,7 @@
 import type { Core } from '@strapi/strapi';
 import { errors } from '@strapi/utils';
 import { registerOfficialMcpTools } from './mcp-official';
+import { slugifyTagName } from './mcp/tools/tag-utils';
 
 type WithData = { data?: Record<string, unknown> };
 
@@ -56,7 +57,17 @@ export default {
         }
       }
 
-      // Rule 2: tag.create — normalize name for consistent dedupe.
+      // Rule 2: tag.create — normalize the name, and generate the slug.
+      //
+      // `slug` is a required `uid`, and Strapi fills uid fields only in the
+      // admin panel — not through the content API or the Document Service.
+      // Without this, POST /api/tags { data: { name } } was rejected 400
+      // ("slug must be defined") and the client's createTagService swallowed
+      // it, so a new tag typed in the share form was silently dropped.
+      //
+      // Order matters: normalize first, so the slug derives from the
+      // normalized name and app-created tags line up with MCP-created ones.
+      // An explicit slug (the MCP tools still pass one) is left alone.
       if (
         context.uid === 'api::tag.tag' &&
         context.action === 'create'
@@ -65,6 +76,9 @@ export default {
         const raw = data.name as string | undefined;
         if (typeof raw === 'string') {
           data.name = normalizeTagName(raw);
+        }
+        if (!data.slug && typeof data.name === 'string') {
+          data.slug = slugifyTagName(data.name);
         }
         (context.params as WithData).data = data;
       }
