@@ -1,7 +1,11 @@
 import type { Core } from '@strapi/strapi';
 
 const config = ({ env }: Core.Config.Shared.ConfigParams): Core.Config.Server => ({
-  host: env('HOST', '0.0.0.0'),
+  // Loopback by default. 0.0.0.0 exposed the Public-role write grants to
+  // every device on the network; this app is documented single-user and
+  // local-first (docs/adr/0001), so the LAN bind was never a decision.
+  // Set HOST explicitly to opt back in.
+  host: env('HOST', '127.0.0.1'),
   port: env.int('PORT', 1340),
   app: {
     keys: env.array('APP_KEYS'),
