@@ -1,0 +1,81 @@
+{
+  "kind": "collectionType",
+  "collectionName": "yt_kb_digests",
+  "info": {
+    "singularName": "digest",
+    "pluralName": "digests",
+    "displayName": "Digest",
+    "description": "Saved cross-video digest \u2014 structured synthesis across 2\u20135 videos. Renders with full interactivity from the decomposed components; `articleMarkdown` is the optional long-form prose variant for reading."
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {
+    "content-manager": {
+      "visible": true
+    },
+    "content-type-builder": {
+      "visible": false
+    }
+  },
+  "attributes": {
+    "videoSetKey": {
+      "type": "text",
+      "required": true,
+      "unique": true,
+      "maxLength": 500,
+      "description": "Deterministic identifier for the source-video set \u2014 sorted youtubeVideoIds joined with commas. Upsert key so resaving the same /digest URL updates the existing row instead of creating duplicates."
+    },
+    "title": {
+      "type": "string",
+      "required": true,
+      "maxLength": 200
+    },
+    "description": {
+      "type": "text",
+      "maxLength": 400
+    },
+    "overallTheme": {
+      "type": "richtext",
+      "description": "One or two paragraphs describing the shared topic or throughline."
+    },
+    "bottomLine": {
+      "type": "text",
+      "maxLength": 800,
+      "description": "The 'if you read nothing else' TL;DR. 2-4 sentences."
+    },
+    "sharedThemes": {
+      "type": "component",
+      "repeatable": true,
+      "component": "ytkb.digest-shared-theme"
+    },
+    "uniqueInsights": {
+      "type": "component",
+      "repeatable": true,
+      "component": "ytkb.digest-unique-insight"
+    },
+    "contradictions": {
+      "type": "component",
+      "repeatable": true,
+      "component": "ytkb.digest-contradiction"
+    },
+    "viewingOrder": {
+      "type": "component",
+      "repeatable": true,
+      "component": "ytkb.digest-viewing-order"
+    },
+    "articleMarkdown": {
+      "type": "richtext"
+    },
+    "videos": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "plugin::yt-kb.video",
+      "inversedBy": "digests"
+    },
+    "model": {
+      "type": "string",
+      "maxLength": 100
+    }
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "kind": "collectionType",
+  "collectionName": "yt_kb_transcripts",
+  "info": {
+    "singularName": "transcript",
+    "pluralName": "transcripts",
+    "displayName": "Transcript",
+    "description": "Cached YouTube caption data keyed by youtubeVideoId. One row per YouTube video \u2014 shared across all Video rows that reference it. Immutable source data (rawSegments, duration, title, author) from youtubei.js."
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {
+    "content-manager": {
+      "visible": true
+    },
+    "content-type-builder": {
+      "visible": false
+    }
+  },
+  "attributes": {
+    "youtubeVideoId": {
+      "type": "string",
+      "required": true,
+      "unique": true,
+      "maxLength": 32
+    },
+    "title": {
+      "type": "string",
+      "maxLength": 300
+    },
+    "author": {
+      "type": "string",
+      "maxLength": 200
+    },
+    "thumbnailUrl": {
+      "type": "text",
+      "maxLength": 2000
+    },
+    "language": {
+      "type": "string",
+      "maxLength": 10,
+      "default": "en"
+    },
+    "durationSec": {
+      "type": "integer",
+      "min": 0
+    },
+    "rawSegments": {
+      "type": "json"
+    },
+    "rawText": {
+      "type": "richtext",
+      "description": "Joined segment texts with no cleaning. Derivable from rawSegments \u2014 stored as a convenience for admin inspection and potential full-text search."
+    },
+    "fetchedAt": {
+      "type": "datetime"
+    }
+  }
+}
