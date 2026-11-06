@@ -27,6 +27,9 @@
 
   "exclude": [
     "node_modules/",
+    // Local plugins carry their own tsconfig and build; the app must not
+    // compile them (or their node_modules).
+    "src/plugins/",
     "build/",
     "dist/",
     ".cache/",

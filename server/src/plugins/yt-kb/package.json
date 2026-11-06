@@ -1,0 +1,44 @@
+{
+  "name": "strapi-plugin-yt-kb",
+  "version": "0.1.0",
+  "description": "YouTube knowledge base for Strapi 5: videos, tags, notes, digests and transcripts, with MCP tools for agents. AI runs in your own client; Strapi stores and serves.",
+  "license": "GPL-3.0-or-later",
+  "type": "commonjs",
+  "keywords": ["strapi", "strapi-plugin", "youtube", "mcp", "knowledge-base"],
+  "exports": {
+    "./package.json": "./package.json",
+    "./strapi-server": {
+      "types": "./dist/server/src/index.d.ts",
+      "source": "./server/src/index.ts",
+      "import": "./dist/server/index.mjs",
+      "require": "./dist/server/index.js",
+      "default": "./dist/server/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "strapi-plugin build",
+    "watch": "strapi-plugin watch",
+    "verify": "strapi-plugin verify",
+    "test:ts:back": "tsc -p server/tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "undici": "6.28.0",
+    "youtubei.js": "17.2.0"
+  },
+  "devDependencies": {
+    "@strapi/sdk-plugin": "6.1.1",
+    "@types/node": "^20.0.0",
+    "typescript": "5.9.3"
+  },
+  "peerDependencies": {
+    "@strapi/strapi": "^5.47.0",
+    "@strapi/utils": "^5.47.0"
+  },
+  "strapi": {
+    "kind": "plugin",
+    "name": "yt-kb",
+    "displayName": "YT Knowledge Base",
+    "description": "Videos, tags, notes, digests and transcripts, with MCP tools for agents."
+  }
+}
