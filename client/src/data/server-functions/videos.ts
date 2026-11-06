@@ -104,7 +104,7 @@ const FeedQuerySchema = z.object({
 });
 
 export const getFeed = createServerFn({ method: 'GET' })
-  .inputValidator((data: z.input<typeof FeedQuerySchema>) => FeedQuerySchema.parse(data))
+  .validator((data: z.input<typeof FeedQuerySchema>) => FeedQuerySchema.parse(data))
   .handler(async ({ data }): Promise<PaginatedVideos> => {
     return await fetchFeedService(data);
   });
@@ -129,7 +129,7 @@ const DocumentIdSchema = z.object({ documentId: z.string().min(1) });
 // directly. Internal callers (other server fns, services) keep using
 // the simpler nullable variants below.
 export const getVideoByDocumentId = createServerFn({ method: 'GET' })
-  .inputValidator((data: { documentId: string }) => DocumentIdSchema.parse(data))
+  .validator((data: { documentId: string }) => DocumentIdSchema.parse(data))
   .handler(
     async ({
       data,
@@ -139,7 +139,7 @@ export const getVideoByDocumentId = createServerFn({ method: 'GET' })
   );
 
 export const getVideoByVideoId = createServerFn({ method: 'GET' })
-  .inputValidator((data: { videoId: string }) => VideoIdSchema.parse(data))
+  .validator((data: { videoId: string }) => VideoIdSchema.parse(data))
   .handler(
     async ({
       data,
@@ -191,7 +191,7 @@ function kickoffSummaryGeneration(videoId: string, mode?: GenerationMode) {
 }
 
 export const shareVideo = createServerFn({ method: 'POST' })
-  .inputValidator((data: z.input<typeof ShareVideoInputSchema>) =>
+  .validator((data: z.input<typeof ShareVideoInputSchema>) =>
     ShareVideoInputSchema.parse(data),
   )
   .handler(async ({ data }): Promise<ShareVideoResult> => {
@@ -259,7 +259,7 @@ const TriggerInputSchema = VideoIdSchema.extend({
 });
 
 export const triggerSummaryGeneration = createServerFn({ method: 'POST' })
-  .inputValidator((data: z.input<typeof TriggerInputSchema>) =>
+  .validator((data: z.input<typeof TriggerInputSchema>) =>
     TriggerInputSchema.parse(data),
   )
   .handler(async ({ data }): Promise<TriggerResult> => {
@@ -293,7 +293,7 @@ const UpdateSectionTimecodeSchema = z.object({
 });
 
 export const updateSectionTimecode = createServerFn({ method: 'POST' })
-  .inputValidator((data: z.input<typeof UpdateSectionTimecodeSchema>) =>
+  .validator((data: z.input<typeof UpdateSectionTimecodeSchema>) =>
     UpdateSectionTimecodeSchema.parse(data),
   )
   .handler(async ({ data }): Promise<{ success: true } | { success: false; error: string }> => {
@@ -301,7 +301,7 @@ export const updateSectionTimecode = createServerFn({ method: 'POST' })
   });
 
 export const clearSummaryFailure = createServerFn({ method: 'POST' })
-  .inputValidator((data: { videoId: string }) => VideoIdSchema.parse(data))
+  .validator((data: { videoId: string }) => VideoIdSchema.parse(data))
   .handler(async ({ data }): Promise<{ ok: true }> => {
     clearRecentFailure(data.videoId);
     return { ok: true };
@@ -330,7 +330,7 @@ const RegenerateInputSchema = z.object({
 });
 
 export const regenerateSummary = createServerFn({ method: 'POST' })
-  .inputValidator((data: z.input<typeof RegenerateInputSchema>) =>
+  .validator((data: z.input<typeof RegenerateInputSchema>) =>
     RegenerateInputSchema.parse(data),
   )
   .handler(async ({ data }): Promise<RegenerateResult> => {
@@ -385,7 +385,7 @@ export type GenerationProgress = {
 // logs every read so we can spot-check "is the server returning fresh
 // state on each poll tick" against what the UI shows.
 export const getGenerationProgress = createServerFn({ method: 'POST' })
-  .inputValidator((data: { videoId: string }) => VideoIdSchema.parse(data))
+  .validator((data: { videoId: string }) => VideoIdSchema.parse(data))
   .handler(async ({ data }): Promise<GenerationProgress> => {
     const live = getLiveState(data.videoId);
     if (live.status !== 'running') {
@@ -427,7 +427,7 @@ export type AskAboutVideoResult =
   | { status: 'error'; error: string };
 
 export const askAboutVideo = createServerFn({ method: 'POST' })
-  .inputValidator((data: z.input<typeof AskAboutVideoSchema>) =>
+  .validator((data: z.input<typeof AskAboutVideoSchema>) =>
     AskAboutVideoSchema.parse(data),
   )
   .handler(async ({ data }): Promise<AskAboutVideoResult> => {
@@ -459,7 +459,7 @@ const ChatEvidenceSchema = z.object({
 });
 
 export const getChatResponseEvidence = createServerFn({ method: 'POST' })
-  .inputValidator((data: z.input<typeof ChatEvidenceSchema>) =>
+  .validator((data: z.input<typeof ChatEvidenceSchema>) =>
     ChatEvidenceSchema.parse(data),
   )
   .handler(async ({ data }): Promise<EvidenceCitation[]> => {
@@ -494,7 +494,7 @@ export type EmbeddingStatusResult =
   | { status: 'error'; error: string };
 
 export const getEmbeddingStatus = createServerFn({ method: 'GET' })
-  .inputValidator((data: z.input<typeof VideoIdOnlySchema>) =>
+  .validator((data: z.input<typeof VideoIdOnlySchema>) =>
     VideoIdOnlySchema.parse(data),
   )
   .handler(async ({ data }): Promise<EmbeddingStatusResult> => {
@@ -521,7 +521,7 @@ export type RegenerateEmbeddingResult =
   | { status: 'error'; error: string };
 
 export const regenerateVideoEmbedding = createServerFn({ method: 'POST' })
-  .inputValidator((data: z.input<typeof VideoIdOnlySchema>) =>
+  .validator((data: z.input<typeof VideoIdOnlySchema>) =>
     VideoIdOnlySchema.parse(data),
   )
   .handler(async ({ data }): Promise<RegenerateEmbeddingResult> => {
@@ -693,7 +693,7 @@ export type ReindexIndexesResult =
   | { status: 'error'; error: string };
 
 export const reindexAllTranscriptIndexes = createServerFn({ method: 'POST' })
-  .inputValidator((data: z.input<typeof ReindexIndexesSchema>) =>
+  .validator((data: z.input<typeof ReindexIndexesSchema>) =>
     ReindexIndexesSchema.parse(data),
   )
   .handler(async ({ data }): Promise<ReindexIndexesResult> => {
@@ -775,7 +775,7 @@ export type ReindexResult = {
 } | { status: 'error'; error: string };
 
 export const reindexAllEmbeddings = createServerFn({ method: 'POST' })
-  .inputValidator((data: z.input<typeof ReindexSchema>) =>
+  .validator((data: z.input<typeof ReindexSchema>) =>
     ReindexSchema.parse(data),
   )
   .handler(async ({ data }): Promise<ReindexResult> => {
@@ -884,7 +884,7 @@ export type RelatedVideosResult =
 // Other Strapi videos end up ranked below generic API/auth/tool videos.
 // BM25 catches the proper-noun overlap the dense path misses.
 export const relatedVideos = createServerFn({ method: 'GET' })
-  .inputValidator((data: z.input<typeof RelatedVideosSchema>) =>
+  .validator((data: z.input<typeof RelatedVideosSchema>) =>
     RelatedVideosSchema.parse(data),
   )
   .handler(async ({ data }): Promise<RelatedVideosResult> => {
@@ -990,7 +990,7 @@ export type SemanticSearchResult =
 // Without BM25, proper-noun queries ("MCP", "Strapi", "Qwen") rank
 // generic developer content above the videos actually about those tools.
 export const semanticSearchVideos = createServerFn({ method: 'GET' })
-  .inputValidator((data: z.input<typeof SemanticSearchSchema>) =>
+  .validator((data: z.input<typeof SemanticSearchSchema>) =>
     SemanticSearchSchema.parse(data),
   )
   .handler(async ({ data }): Promise<SemanticSearchResult> => {
@@ -1124,7 +1124,7 @@ export type ReindexPassagesResult = {
 } | { status: 'error'; error: string };
 
 export const reindexAllPassages = createServerFn({ method: 'POST' })
-  .inputValidator((data: z.input<typeof ReindexPassagesSchema>) =>
+  .validator((data: z.input<typeof ReindexPassagesSchema>) =>
     ReindexPassagesSchema.parse(data),
   )
   .handler(async ({ data }): Promise<ReindexPassagesResult> => {
@@ -1244,7 +1244,7 @@ export type SearchLibraryPassagesResult =
 // lib/services/retrieval.ts.
 
 export const searchLibraryPassages = createServerFn({ method: 'GET' })
-  .inputValidator((data: z.input<typeof SearchLibraryPassagesSchema>) =>
+  .validator((data: z.input<typeof SearchLibraryPassagesSchema>) =>
     SearchLibraryPassagesSchema.parse(data),
   )
   .handler(async ({ data }): Promise<SearchLibraryPassagesResult> => {
@@ -1346,7 +1346,7 @@ export type SuggestTagsResult =
   | { status: 'error'; error: string };
 
 export const suggestTagsForUrl = createServerFn({ method: 'GET' })
-  .inputValidator((data: z.input<typeof SuggestTagsSchema>) =>
+  .validator((data: z.input<typeof SuggestTagsSchema>) =>
     SuggestTagsSchema.parse(data),
   )
   .handler(async ({ data }): Promise<SuggestTagsResult> => {
@@ -1405,7 +1405,7 @@ export const suggestTagsForUrl = createServerFn({ method: 'GET' })
 const TagSearchSchema = z.object({ q: z.string().max(40).default('') });
 
 export const searchTags = createServerFn({ method: 'GET' })
-  .inputValidator((data: z.input<typeof TagSearchSchema>) => TagSearchSchema.parse(data))
+  .validator((data: z.input<typeof TagSearchSchema>) => TagSearchSchema.parse(data))
   .handler(async ({ data }): Promise<StrapiTag[]> => {
     return await searchTagsService(data.q);
   });
@@ -1509,7 +1509,7 @@ export type RegenerateVerdictResult =
 const RegenerateVerdictSchema = VideoIdSchema;
 
 export const regenerateVideoVerdict = createServerFn({ method: 'POST' })
-  .inputValidator((data: z.input<typeof RegenerateVerdictSchema>) =>
+  .validator((data: z.input<typeof RegenerateVerdictSchema>) =>
     RegenerateVerdictSchema.parse(data),
   )
   .handler(async ({ data }): Promise<RegenerateVerdictResult> => {
@@ -1637,7 +1637,7 @@ export type RegenerateSignalsResult =
   | { status: 'error'; error: string };
 
 export const regenerateVideoSignals = createServerFn({ method: 'POST' })
-  .inputValidator((data: z.input<typeof RegenerateSignalsSchema>) =>
+  .validator((data: z.input<typeof RegenerateSignalsSchema>) =>
     RegenerateSignalsSchema.parse(data),
   )
   .handler(async ({ data }): Promise<RegenerateSignalsResult> => {

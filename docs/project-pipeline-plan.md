@@ -356,7 +356,7 @@ Task 2 and Task 3 are independent after Task 1. Task 6 only needs the Strapi col
 |---|---|
 | Extraction service shape (adapter, Zod, withRetry, logPhase, clamp, sanitize, two-layer API) | `client/src/lib/services/digest.ts` |
 | Strapi CRUD service (headers, query params, ServiceResult, populate strategy) | `client/src/lib/services/digests.ts` |
-| Server function (createServerFn, inputValidator, kickoff pattern) | `client/src/data/server-functions/videos.ts`, `client/src/data/server-functions/digests.ts` |
+| Server function (createServerFn, validator, kickoff pattern) | `client/src/data/server-functions/videos.ts`, `client/src/data/server-functions/digests.ts` |
 | Detail + list route structure | `client/src/routes/digest.tsx`, `client/src/routes/digests.tsx` |
 | Regenerate button optimistic pattern | `client/src/components/VideoCard.tsx` (`RegenerateOnCard`) |
 | Strapi collection scaffold | `server/src/api/digest/` (all files) |
