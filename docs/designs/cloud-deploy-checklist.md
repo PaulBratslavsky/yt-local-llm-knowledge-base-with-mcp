@@ -74,6 +74,36 @@ branch). The migration script **refuses to run** without it, by design.
    directly, so no CORS change is needed and the empty-origin lockdown stays
    correct.
 
+## Verified against the Strapi docs (2026-11-05)
+
+Checked with the `strapi-docs` MCP rather than inferred. The EGM skill ships
+`strapi-product-egm:strapi-fact-checker` for exactly this and it was not used
+before the earlier claims in this file.
+
+- **`pg` must be a project dependency.** `packages/core/database/src/connection.ts`
+  maps `postgres -> pg`, and `create-strapi-app`'s `addDatabaseDependencies`
+  writes `pg` into the project's own `package.json` when Postgres is chosen.
+  Nothing in the Cloud docs says the platform supplies drivers.
+  **Correction to an earlier claim in this file:** "Strapi Cloud would fail at
+  boot with MODULE_NOT_FOUND" was stated as fact. It is a well-grounded
+  inference, not something the docs state. The locally verified part — the
+  boot failure changing from MODULE_NOT_FOUND to ECONNREFUSED once `pg` is
+  installed — stands.
+- **Minimum driver for Node 24 is `pg@8.x`.** 8.23.1 satisfies it.
+- **Do NOT set `DATABASE_*` variables in Strapi Cloud** when using the managed
+  database. From the Cloud docs: *"Any environment variable added to your
+  project that starts with `DATABASE_` will cause Strapi Cloud to assume that
+  you will be using an external database and all Strapi Cloud specific
+  database variables will not be injected."* Setting `DATABASE_CLIENT=postgres`
+  — the obvious move — would disable the managed database. `config/database.ts`
+  already reads whatever Cloud injects, so it needs no change.
+- **Node floor is 22**, not 20, for Strapi 5.48.1+. `server/package.json`
+  declared `>=20.0.0`; corrected to `>=22.0.0 <=24.x.x`.
+- **PostgreSQL 14.0 minimum, 17.0 recommended.**
+- **yarn is supported.** The Cloud CLI "works with both the `yarn` and `npm`
+  package managers", and Strapi 5 detects the package manager in use. Yarn
+  1.22 with the committed `yarn.lock` is not a deployment blocker.
+
 ## Known gaps not yet addressed
 
 - **Generation dedupe is single-node.** `inflight` is an in-process `Set`
