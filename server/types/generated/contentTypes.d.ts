@@ -1279,6 +1279,382 @@ export interface PluginUsersPermissionsUser
   };
 }
 
+export interface PluginYtKbDigest extends Struct.CollectionTypeSchema {
+  collectionName: 'yt_kb_digests';
+  info: {
+    description: 'Saved cross-video digest \u2014 structured synthesis across 2\u20135 videos. Renders with full interactivity from the decomposed components; `articleMarkdown` is the optional long-form prose variant for reading.';
+    displayName: 'Digest';
+    pluralName: 'digests';
+    singularName: 'digest';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  pluginOptions: {
+    'content-manager': {
+      visible: true;
+    };
+    'content-type-builder': {
+      visible: false;
+    };
+  };
+  attributes: {
+    articleMarkdown: Schema.Attribute.RichText;
+    bottomLine: Schema.Attribute.Text &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 800;
+      }>;
+    contradictions: Schema.Attribute.Component<
+      'ytkb.digest-contradiction',
+      true
+    >;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    description: Schema.Attribute.Text &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 400;
+      }>;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'plugin::yt-kb.digest'
+    > &
+      Schema.Attribute.Private;
+    model: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 100;
+      }>;
+    overallTheme: Schema.Attribute.RichText;
+    publishedAt: Schema.Attribute.DateTime;
+    sharedThemes: Schema.Attribute.Component<'ytkb.digest-shared-theme', true>;
+    title: Schema.Attribute.String &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 200;
+      }>;
+    uniqueInsights: Schema.Attribute.Component<
+      'ytkb.digest-unique-insight',
+      true
+    >;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    videos: Schema.Attribute.Relation<'manyToMany', 'plugin::yt-kb.video'>;
+    videoSetKey: Schema.Attribute.Text &
+      Schema.Attribute.Required &
+      Schema.Attribute.Unique &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 500;
+      }>;
+    viewingOrder: Schema.Attribute.Component<'ytkb.digest-viewing-order', true>;
+  };
+}
+
+export interface PluginYtKbNote extends Struct.CollectionTypeSchema {
+  collectionName: 'yt_kb_notes';
+  info: {
+    description: 'Freeform markdown note attached to one or more videos. Sources: `chat` (summarized from an in-app conversation), `digest-chat` (summarized from a /digest cross-video conversation), `mcp` (written by an external MCP client like Claude Desktop), `manual` (user-authored scratchpad). Many-to-many with Video so cross-video chat summaries show up under each source video.';
+    displayName: 'Note';
+    pluralName: 'notes';
+    singularName: 'note';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  pluginOptions: {
+    'content-manager': {
+      visible: true;
+    };
+    'content-type-builder': {
+      visible: false;
+    };
+  };
+  attributes: {
+    author: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 120;
+      }>;
+    body: Schema.Attribute.RichText & Schema.Attribute.Required;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'plugin::yt-kb.note'
+    > &
+      Schema.Attribute.Private;
+    publishedAt: Schema.Attribute.DateTime;
+    source: Schema.Attribute.Enumeration<
+      ['chat', 'digest-chat', 'mcp', 'manual']
+    > &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<'manual'>;
+    title: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 200;
+      }>;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    videos: Schema.Attribute.Relation<'manyToMany', 'plugin::yt-kb.video'>;
+  };
+}
+
+export interface PluginYtKbTag extends Struct.CollectionTypeSchema {
+  collectionName: 'yt_kb_tags';
+  info: {
+    description: 'Free-form tag on a Post. Created on the fly at post time. Server-side normalization keeps `name` lowercase-trimmed so dedupe works.';
+    displayName: 'Tag';
+    pluralName: 'tags';
+    singularName: 'tag';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  pluginOptions: {
+    'content-manager': {
+      visible: true;
+    };
+    'content-type-builder': {
+      visible: false;
+    };
+  };
+  attributes: {
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<'oneToMany', 'plugin::yt-kb.tag'> &
+      Schema.Attribute.Private;
+    name: Schema.Attribute.String &
+      Schema.Attribute.Required &
+      Schema.Attribute.Unique &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 40;
+        minLength: 1;
+      }>;
+    publishedAt: Schema.Attribute.DateTime;
+    slug: Schema.Attribute.UID<'name'> & Schema.Attribute.Required;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    videos: Schema.Attribute.Relation<'manyToMany', 'plugin::yt-kb.video'>;
+  };
+}
+
+export interface PluginYtKbTranscript extends Struct.CollectionTypeSchema {
+  collectionName: 'yt_kb_transcripts';
+  info: {
+    description: 'Cached YouTube caption data keyed by youtubeVideoId. One row per YouTube video \u2014 shared across all Video rows that reference it. Immutable source data (rawSegments, duration, title, author) from youtubei.js.';
+    displayName: 'Transcript';
+    pluralName: 'transcripts';
+    singularName: 'transcript';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  pluginOptions: {
+    'content-manager': {
+      visible: true;
+    };
+    'content-type-builder': {
+      visible: false;
+    };
+  };
+  attributes: {
+    author: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 200;
+      }>;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    durationSec: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    fetchedAt: Schema.Attribute.DateTime;
+    language: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 10;
+      }> &
+      Schema.Attribute.DefaultTo<'en'>;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'plugin::yt-kb.transcript'
+    > &
+      Schema.Attribute.Private;
+    publishedAt: Schema.Attribute.DateTime;
+    rawSegments: Schema.Attribute.JSON;
+    rawText: Schema.Attribute.RichText;
+    thumbnailUrl: Schema.Attribute.Text &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 2000;
+      }>;
+    title: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 300;
+      }>;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    youtubeVideoId: Schema.Attribute.String &
+      Schema.Attribute.Required &
+      Schema.Attribute.Unique &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 32;
+      }>;
+  };
+}
+
+export interface PluginYtKbVideo extends Struct.CollectionTypeSchema {
+  collectionName: 'yt_kb_videos';
+  info: {
+    description: "A YouTube video added to the knowledge base. Each row holds the source metadata, the user's own caption/tags, the cached transcript, and the AI-generated summary. Dedupe key: `youtubeVideoId` (unique).";
+    displayName: 'Video';
+    pluralName: 'videos';
+    singularName: 'video';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  pluginOptions: {
+    'content-manager': {
+      visible: true;
+    };
+    'content-type-builder': {
+      visible: false;
+    };
+  };
+  attributes: {
+    actionSteps: Schema.Attribute.Component<'ytkb.action-step', true>;
+    aiModel: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 100;
+      }>;
+    caption: Schema.Attribute.Text &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 500;
+      }>;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    digests: Schema.Attribute.Relation<'manyToMany', 'plugin::yt-kb.digest'>;
+    embeddingGeneratedAt: Schema.Attribute.DateTime;
+    embeddingModel: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 100;
+      }>;
+    embeddingVersion: Schema.Attribute.Integer;
+    finalScore: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          max: 100;
+          min: 0;
+        },
+        number
+      >;
+    keyTakeaways: Schema.Attribute.Component<'ytkb.takeaway', true>;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'plugin::yt-kb.video'
+    > &
+      Schema.Attribute.Private;
+    notes: Schema.Attribute.Relation<'manyToMany', 'plugin::yt-kb.note'>;
+    passageEmbeddings: Schema.Attribute.JSON;
+    publishedAt: Schema.Attribute.DateTime;
+    readableArticle: Schema.Attribute.RichText;
+    readableArticleGeneratedAt: Schema.Attribute.DateTime;
+    readableArticleModel: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 100;
+      }>;
+    sections: Schema.Attribute.Component<'ytkb.section', true>;
+    signalScore: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          max: 100;
+          min: 0;
+        },
+        number
+      >;
+    signalScores: Schema.Attribute.JSON;
+    summaryDescription: Schema.Attribute.Text &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 500;
+      }>;
+    summaryEmbedding: Schema.Attribute.JSON;
+    summaryGeneratedAt: Schema.Attribute.DateTime;
+    summaryOverview: Schema.Attribute.RichText;
+    summaryStatus: Schema.Attribute.Enumeration<
+      ['pending', 'generated', 'failed']
+    > &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<'pending'>;
+    summaryTitle: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 200;
+      }>;
+    tags: Schema.Attribute.Relation<'manyToMany', 'plugin::yt-kb.tag'>;
+    transcript: Schema.Attribute.Relation<
+      'oneToOne',
+      'plugin::yt-kb.transcript'
+    >;
+    transcriptSegments: Schema.Attribute.JSON;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    url: Schema.Attribute.Text &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 2000;
+      }>;
+    valueScore: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          max: 100;
+          min: 0;
+        },
+        number
+      >;
+    valueScoreSource: Schema.Attribute.Enumeration<['model', 'derived']>;
+    verdictReason: Schema.Attribute.Text &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 1000;
+      }>;
+    verdictSummary: Schema.Attribute.Text &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 280;
+      }>;
+    videoAuthor: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 200;
+      }>;
+    videoThumbnailUrl: Schema.Attribute.Text &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 2000;
+      }>;
+    videoTitle: Schema.Attribute.Text &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 300;
+      }>;
+    watchVerdict: Schema.Attribute.Enumeration<['skip', 'skim', 'worth_it']>;
+    youtubeVideoId: Schema.Attribute.String &
+      Schema.Attribute.Required &
+      Schema.Attribute.Unique &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 32;
+      }>;
+  };
+}
+
 declare module '@strapi/strapi' {
   export namespace Public {
     export interface ContentTypeSchemas {
@@ -1305,6 +1681,11 @@ declare module '@strapi/strapi' {
       'plugin::users-permissions.permission': PluginUsersPermissionsPermission;
       'plugin::users-permissions.role': PluginUsersPermissionsRole;
       'plugin::users-permissions.user': PluginUsersPermissionsUser;
+      'plugin::yt-kb.digest': PluginYtKbDigest;
+      'plugin::yt-kb.note': PluginYtKbNote;
+      'plugin::yt-kb.tag': PluginYtKbTag;
+      'plugin::yt-kb.transcript': PluginYtKbTranscript;
+      'plugin::yt-kb.video': PluginYtKbVideo;
     }
   }
 }

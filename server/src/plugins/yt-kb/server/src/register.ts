@@ -1,5 +1,6 @@
 import type { Core } from '@strapi/strapi';
 import components, { COMPONENT_CATEGORY } from './components';
+import { registerDocumentRules } from './document-rules';
 
 const pascal = (s: string) =>
   s.replace(/(^|-)([a-z0-9])/g, (_m, _d, c: string) => c.toUpperCase());
@@ -33,4 +34,6 @@ export default ({ strapi }: { strapi: Core.Strapi }) => {
   }
   (strapi.get('components') as { add: (c: Record<string, unknown>) => void }).add(toAdd);
   strapi.log.info(`[yt-kb] registered ${Object.keys(toAdd).length} components`);
+
+  registerDocumentRules(strapi);
 };
