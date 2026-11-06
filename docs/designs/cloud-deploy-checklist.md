@@ -6,25 +6,32 @@ which holds the *why*. This is the running state of the *how*. Updated 2026-11-0
 Target: Strapi hosted, exposing `/mcp` and `/api`; the TanStack app and
 Ollama stay on the laptop and keep every capability they have today.
 
-## Read this first: this branch alone is NOT deployable
+## Security fixes: merged and built (2026-11-05)
 
-`feat/cloud-readiness` was cut from `main`, and `main` does not contain the
-security fixes. They exist only on the unmerged `egm/security-hotfix`:
+`egm/security-hotfix` is merged into this branch (`60088c6`). Before the
+merge this branch still had the reflect-any-origin CORS default, `HOST`
+defaulting to `0.0.0.0`, and `@tanstack/react-start` 1.168.48 inside
+CVE-2026-102989's range. An earlier version of this file, and
+`cloud-split-architecture.md`, wrongly said the CORS lockdown had "already
+landed" when it was only committed on the unmerged branch.
 
-| Fix | `main` / this branch | `egm/security-hotfix` |
-|---|---|---|
-| CORS | bare `'strapi::cors'` — reflects any Origin **with credentials** | locked: `origin: []`, `credentials: false` |
-| `HOST` default | `0.0.0.0` | `127.0.0.1` |
-| `@tanstack/react-start` (CVE-2026-102989, CVSS 9.3) | 1.168.48 — **vulnerable** | 1.168.60 — patched |
+Verified after the merge, not assumed:
 
-An earlier version of this file, and `cloud-split-architecture.md`, said the
-CORS lockdown had "already landed". **It had not.** It is committed, not
-merged. Merge `egm/security-hotfix` before deploying anything.
+| Check | Result |
+|---|---|
+| `yarn install:all` (frozen lockfiles) | pass — the auto-merged `client/yarn.lock` is consistent |
+| Installed TanStack | react-start 1.168.60, start-server-core 1.169.39, router-core 1.171.34 |
+| client `tsc` + `vite build` | pass — browser, SSR and server bundles, no MISSING_EXPORT (the ADR 0009 failure mode) |
+| server `tsc` + `strapi build` | pass, admin panel included |
+| tests | client 318, site 105 |
+| `yarn site:build` | pass, output guard clean (209 files) |
+| CORS at runtime | `Origin: https://evil.example` gets no `Access-Control-Allow-*` headers |
+| M2 at runtime | anonymous write 403, anonymous read 200 |
+| app pages | `/feed`, `/learn/<id>`, `/settings`, `/search` all 200 |
 
-Checked 2026-11-05 with `git merge-tree`: `egm/security-hotfix` merges cleanly
-into current `main` and into this branch. A clean merge is not a clean build —
-the TanStack bump was tested against code before `main`'s #48
-(`inputValidator()` -> `validator()`); the combined tree has not been built.
+The merge also brought the EGM design docs and the site's visual video cards
+(`8ac5ae3`), which were already on that branch; the cards account for the
+site suite going from 102 to 105 tests.
 
 ## Done, on branch `feat/cloud-readiness`
 
@@ -100,11 +107,10 @@ branch). The migration script **refuses to run** without it, by design.
 
 ## Remaining work, in order
 
-1. **Merge `egm/security-hotfix`**, then build the combined tree — not just
-   typecheck it (ADR 0009: `tsc` passed while `vite build` failed on the
-   original TanStack bump).
-2. **Set the Content API token, then boot against `data.db`** so M2's
-   revocation runs with the app able to authenticate.
+1. ~~Merge `egm/security-hotfix` and build~~ — done, see above.
+2. ~~Set the Content API token and boot against `data.db`~~ — done.
+   `yt-kb-client` (full access) is in `client/.env`; the live Public role
+   now holds 10 reads and no writes.
 3. **A real Postgres run.** Everything above is verified against SQLite plus
    a driver-load probe. **Nothing has actually run on Postgres.** Docker is
    installed on this machine but its daemon is not running; starting it makes
