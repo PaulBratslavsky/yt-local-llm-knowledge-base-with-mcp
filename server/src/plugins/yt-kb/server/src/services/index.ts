@@ -1,4 +1,5 @@
 import { factories } from '@strapi/strapi';
+import importer from './importer';
 
 const s = (uid: string) => factories.createCoreService(uid as never);
 
@@ -8,4 +9,5 @@ export default {
   transcript: s('plugin::yt-kb.transcript'),
   note: s('plugin::yt-kb.note'),
   digest: s('plugin::yt-kb.digest'),
+  importer,
 };

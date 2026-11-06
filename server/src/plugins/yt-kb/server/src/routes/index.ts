@@ -23,6 +23,8 @@ export default {
       ...crud('transcript', 'transcripts'),
       ...crud('note', 'notes'),
       ...crud('digest', 'digests'),
+      // Bulk copy that keeps documentIds and dates — see services/importer.ts.
+      { method: 'POST' as const, path: '/import/:type', handler: 'importer.importRecords' },
     ],
   },
 };

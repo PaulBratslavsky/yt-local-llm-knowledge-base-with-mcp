@@ -4,7 +4,13 @@
   "description": "YouTube knowledge base for Strapi 5: videos, tags, notes, digests and transcripts, with MCP tools for agents. AI runs in your own client; Strapi stores and serves.",
   "license": "GPL-3.0-or-later",
   "type": "commonjs",
-  "keywords": ["strapi", "strapi-plugin", "youtube", "mcp", "knowledge-base"],
+  "keywords": [
+    "strapi",
+    "strapi-plugin",
+    "youtube",
+    "mcp",
+    "knowledge-base"
+  ],
   "exports": {
     "./package.json": "./package.json",
     "./strapi-server": {
@@ -15,7 +21,10 @@
       "default": "./dist/server/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist",
+    "scripts"
+  ],
   "scripts": {
     "build": "strapi-plugin build",
     "watch": "strapi-plugin watch",

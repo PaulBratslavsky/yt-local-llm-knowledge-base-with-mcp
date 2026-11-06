@@ -30,10 +30,38 @@ CORS, `HOST`, the Public role, users-permissions extensions, database config.
 
 ## Data
 
-`strapi transfer` can't map `api::` -> `plugin::`, so a copy script moves the
-data over REST and is idempotent. **Order matters:** removing a content type
-drops its table, so the old `api::` types stay in this app until the copy is
-verified, and only then are removed.
+`strapi transfer` can't map `api::` -> `plugin::`, and it replaces the whole
+destination database, so it can't be used on a host with content of its own.
+A copy script moves the data over HTTP instead:
+`scripts/copy-content.mjs` in the plugin (shipped in the npm package).
+
+- **Plain REST can't do the copy.** The REST API rejects `createdAt` on create
+  (`400 Invalid key createdAt`), and a copy that resets it scrambles the feed
+  (sorted by `createdAt`) and every "Added X ago". New documentIds would also
+  break saved `/video/<documentId>` links.
+- **So the plugin has an import route:** `POST /api/yt-kb/import/:type`,
+  scope `plugin::yt-kb.importer.importRecords`, granted to no role. It writes
+  through the Document Service (so the dedupe and tag rules still run),
+  keeps each record's documentId, and sets `created_at` / `updated_at` on
+  the row afterwards. It takes records in the shape REST returns them, so a
+  copy is GET from the source, POST to the destination.
+- **Idempotent:** upsert by documentId. It never deletes.
+- **Checked:** after copying, the script reads both sides back and compares
+  every record, field by field, with relations and components. It exits
+  non-zero on any difference. `--check` runs the comparison alone.
+- The same script does the later local -> Cloud copy
+  (`SOURCE_PREFIX=/api/yt-kb`, `DEST_URL=<cloud>`).
+
+**Order matters:** removing a content type drops its table, so the old
+`api::` types stay in this app until the copy is verified, and only then are
+removed.
+
+Step 5 result (2026-11-06, live `data.db`): 17 tags, 195 transcripts,
+195 videos, 11 notes and 6 digests copied, with no failures and no
+differences. An SQL cross-check, independent of the script, found every
+link table, component table, documentId and date equal. Tampering with
+one copied video (title plus a tag link) was flagged by `--check` and
+repaired by a re-run, with no duplicate rows.
 
 ## Steps
 
@@ -41,7 +69,7 @@ verified, and only then are removed.
 2. Content types, components, controllers, services, routes.
 3. Document Service rules (video dedupe, tag normalize + slug).
 4. MCP: the 21 tools, admin permissions, adapter.
-5. Copy script `api::` -> `plugin::`; verify counts and relations.
+5. Copy script `api::` -> `plugin::`; verify counts and relations. **Done.**
 6. Client and site: path prefix, site read-only token.
 7. End-to-end through the UI; then remove the `api::` types.
 8. Publish to npm; install in the host.
