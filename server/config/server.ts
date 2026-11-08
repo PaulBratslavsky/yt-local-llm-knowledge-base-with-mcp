@@ -16,8 +16,8 @@ const config = ({ env }: Core.Config.Shared.ConfigParams): Core.Config.Server =>
     keys: env.array('APP_KEYS'),
   },
   // Official Strapi MCP server (5.47+), served at /mcp over streamable-http,
-  // gated by admin API tokens. The domain tools register onto it from
-  // src/index.ts via src/mcp-official/. This replaced the hand-rolled
+  // gated by admin API tokens. yt-kb's tools are registered on it by
+  // strapi-plugin-yt-kb (config/plugins.ts, `mcp: true`). This replaced the hand-rolled
   // /api/mcp server (retired). Defaults: connect 5s, request 60s.
   mcp: { enabled: env.bool('MCP_ENABLED', true) },
 });

@@ -80,5 +80,15 @@ repaired by a re-run, with no duplicate rows.
    tag filter and video page in the app, a note created and deleted through
    the app landing in `yt_kb_notes`, site build of 208 pages from
    `/api/yt-kb` with no token in `site/dist`.
-7. End-to-end through the UI; then remove the `api::` types.
+7. End-to-end through the UI; then remove the `api::` types. **Done**
+   (2026-11-08). Removed from the host: `server/src/api/`,
+   `server/src/components/content/`, `server/src/mcp/`,
+   `server/src/mcp-official/`, `server/src/services/`, and everything in
+   `server/src/index.ts` (the `api::` Document Service rules and the Public
+   role grants). On restart Strapi dropped the 23 old tables and the Public
+   role's `api::` permissions; the plugin's rows were untouched (195 videos,
+   17 tags, 11 notes, 6 digests, 195 transcripts). Backup taken first:
+   `server/.tmp/data.db.pre-step7-1794163082`. Verified: 21/21 MCP tools
+   with a tag/untag round trip, the app's feed and tag filter, site build
+   of 208 pages, client 319/319.
 8. Publish to npm; install in the host.

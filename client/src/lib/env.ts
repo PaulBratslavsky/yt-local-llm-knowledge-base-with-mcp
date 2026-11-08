@@ -55,7 +55,7 @@ const OLLAMA_EMBEDDING_MODEL =
 //      similarity scores against query-side vectors (baseline ~0.5 for
 //      anything English).
 // Read from the environment, not hard-coded: the Strapi server reads the
-// same variable (server/src/mcp/utils/embeddings.ts) to decide whether a
+// same variable (server/src/plugins/yt-kb/server/src/mcp/utils/embeddings.ts) to decide whether a
 // stored vector is current. Only this app writes vectors; Strapi only reads
 // them. A literal here meant the documented "bump the
 // env-level EMBEDDING_VERSION" procedure moved the server to v3 while the

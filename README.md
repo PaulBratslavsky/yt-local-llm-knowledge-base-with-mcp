@@ -139,7 +139,7 @@ On any `/learn/$videoId` page, toggle the **Read** tab. Turns the transcript int
 1. On `/feed`, click **Create digest** and pick 2–5 videos (summaries required).
 2. Land on `/digest?videos=A,B,C` — the synthesis runs immediately (shared themes, unique insights, contradictions, viewing order, bottom line).
 3. Toggle **Article** for a long-form prose version (click-to-generate).
-4. Click **Save digest** — persists to the `api::digest.digest` collection with structured Strapi components.
+4. Click **Save digest** — persists to the `plugin::yt-kb.digest` collection with structured Strapi components.
 5. Revisits of the same URL hit the saved row instead of re-running the LLM. Regenerate resets in place.
 
 Saved digests live at `/digests` with full-text search (`title` + `description`) and pagination.
@@ -177,7 +177,7 @@ Claude Desktop ──▶ POST /mcp  (Streamable HTTP + admin Bearer token)
 
    ```bash
    printf '%s\n' \
-     "const u=(await strapi.db.query('admin::user').findMany({populate:['roles']}))[0]; const t=await strapi.service('admin::api-token-admin').create({name:'claude-'+Date.now(), description:'MCP', lifespan:null, adminUserOwner:u.id, adminPermissions:[{action:'api::yt-kb-mcp.read'},{action:'api::yt-kb-mcp.write'},{action:'api::yt-kb-mcp.maintenance'}]}, u); console.log('TOKEN='+t.accessKey);" \
+     "const u=(await strapi.db.query('admin::user').findMany({populate:['roles']}))[0]; const t=await strapi.service('admin::api-token-admin').create({name:'claude-'+Date.now(), description:'MCP', lifespan:null, adminUserOwner:u.id, adminPermissions:[{action:'plugin::yt-kb.read'},{action:'plugin::yt-kb.write'},{action:'plugin::yt-kb.maintenance'}]}, u); console.log('TOKEN='+t.accessKey);" \
      ".exit" | npx strapi console
    ```
 
@@ -204,7 +204,7 @@ For Claude Code: `claude mcp add yt-knowledge-base --transport http http://local
 
 Full walkthrough (Cursor, MCP Inspector, permission tiers, auth rotation) in [`docs/mcp.md`](./docs/mcp.md).
 
-**Design constraint: no tool duplication.** Tools are defined once in `server/src/mcp/tools/` and consumed via MCP. The in-app Ollama chat does not use MCP — it stays on its BM25 + `web_search` path so local inference doesn't pay the protocol overhead. The two worlds meet at the same Strapi data layer, not at the tool definitions.
+**Design constraint: no tool duplication.** Tools are defined once in `server/src/plugins/yt-kb/server/src/mcp/tools/` and consumed via MCP. The in-app Ollama chat does not use MCP — it stays on its BM25 + `web_search` path so local inference doesn't pay the protocol overhead. The two worlds meet at the same Strapi data layer, not at the tool definitions.
 
 ---
 

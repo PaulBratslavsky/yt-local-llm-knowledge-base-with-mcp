@@ -187,8 +187,9 @@ Content types, routes, Document Service rules and MCP tools live in
 - **UIDs** are `plugin::yt-kb.<type>`; **REST paths** are
   `/api/yt-kb/<plural>` (`/api/yt-kb/videos`, …). The client and site use
   only these; `strapi-paths.guard.test.ts` fails on an unprefixed path.
-  The old `api::` types in `server/src/api/` are still present but unused,
-  kept until removal (plan step 7).
+  The host app has no content types, components or MCP code of its own;
+  `server/src/index.ts` is empty. The old `api::` types were removed in
+  plan step 7, and Strapi dropped their tables.
 - **No Public grants.** The app reads and writes with `STRAPI_API_TOKEN`
   (`client/.env`); the Astro site reads with its own read-only
   `STRAPI_API_TOKEN` (`site/.env`). Anonymous calls get 403.
@@ -200,7 +201,7 @@ Content types, routes, Document Service rules and MCP tools live in
 
 ### MCP server lives in Strapi
 
-The **official Strapi MCP server** (built into Strapi 5.47+, enabled via `server.mcp.enabled` in `config/server.ts`) serves Streamable HTTP at `/mcp`, gated by **admin** API tokens. yt-kb's 21 domain tools are registered by the plugin (`server/src/plugins/yt-kb/server/src/mcp-official/`, plugin config `mcp: true`), reusing the tool bodies in the plugin's `mcp/tools/`. Three admin permissions tier the tools: `plugin::yt-kb.read` (15 read), `.write` (4 mutations), `.maintenance` (2 that hit YouTube). An admin token must be granted these to see the tools. Strapi computes no embeddings — the app does, next to Ollama. The in-app Ollama chat does not use MCP. The host's own copy in `server/src/mcp-official/` and `server/src/mcp/` is no longer registered and is removed in plan step 7. See `docs/mcp.md`.
+The **official Strapi MCP server** (built into Strapi 5.47+, enabled via `server.mcp.enabled` in `config/server.ts`) serves Streamable HTTP at `/mcp`, gated by **admin** API tokens. yt-kb's 21 domain tools are registered by the plugin (`server/src/plugins/yt-kb/server/src/mcp-official/`, plugin config `mcp: true`), reusing the tool bodies in the plugin's `mcp/tools/`. Three admin permissions tier the tools: `plugin::yt-kb.read` (15 read), `.write` (4 mutations), `.maintenance` (2 that hit YouTube). An admin token must be granted these to see the tools. Strapi computes no embeddings — the app does, next to Ollama. The in-app Ollama chat does not use MCP. `addVideo` and `fetchTranscript` fetch from YouTube inside Strapi (the plugin's `services/youtube-transcript.ts`, `youtubei.js`), through `TRANSCRIPT_PROXY_URL` when set — needed on cloud hosts, whose IPs YouTube tends to block. See `docs/mcp.md`.
 
 **Adding a tool:** author a `ToolDef` in the plugin's `mcp/tools/` — schema included, in zod 3 (`@strapi/utils`) — then add a one-line entry to the plugin's `mcp-official/tools.ts` giving the tool, a title and its `sideEffects` (`none` | `write` | `external`). The adapter derives the admin permission tier from `sideEffects`.
 

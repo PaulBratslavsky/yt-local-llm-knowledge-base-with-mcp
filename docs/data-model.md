@@ -1,6 +1,6 @@
 # Data model
 
-The Strapi schemas in `server/src/api/*/content-types/*/schema.json` are authoritative. This doc explains the **non-obvious fields** — what they mean, when they're set, what invalidates them, and which other fields they relate to. It's a reading guide, not a redefinition.
+The Strapi schemas in `server/src/plugins/yt-kb/server/src/content-types/*/schema.json` are authoritative. This doc explains the **non-obvious fields** — what they mean, when they're set, what invalidates them, and which other fields they relate to. It's a reading guide, not a redefinition.
 
 ## Entity overview
 
@@ -168,7 +168,7 @@ A saved cross-video synthesis. See ADR 0006 — identity is the source-video set
 | `videos` | Many-to-many. The actual source set for this digest. |
 | `model` | The Ollama model that produced this synthesis. |
 
-Digest components live in `server/src/components/content/digest-*.json`. Notable: `digest-contradiction` carries `digest-contradiction-position` repeatables (one per position in the disagreement); `digest-viewing-order` carries `digest-video-title` to give the position a label.
+Digest components live in `server/src/plugins/yt-kb/server/src/components/digest-*.json`. Notable: `digest-contradiction` carries `digest-contradiction-position` repeatables (one per position in the disagreement); `digest-viewing-order` carries `digest-video-title` to give the position a label.
 
 ## Tag
 

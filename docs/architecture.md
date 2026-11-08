@@ -567,7 +567,7 @@ Where to plug in new features without tearing out existing scaffolding.
 | Swap the LLM | Change `OLLAMA_MODEL` (or `OLLAMA_CHAT_MODEL`) — everything is routed through `@tanstack/ai-ollama` |
 | Use a non-Ollama adapter | Replace `createOllamaChat(...)` calls in `learning.ts` and `api.chat.tsx` with any [TanStack AI adapter](https://tanstack.com/ai/latest) |
 | Use embeddings instead of BM25 | `getChatEvidence` in `chat-retrieval.ts` is the single injection point; `buildBM25Index` and `StoredTranscriptIndex` would be the replacements |
-| Add a new tool | Follow `webSearchTool` — define with `toolDefinition`, export from `chat-tools.ts`, pass into `chat({ tools: [...] })` in `api.chat.tsx`. (For MCP-side tools, follow the pattern in `server/src/mcp/tools/`.) |
+| Add a new tool | Follow `webSearchTool` — define with `toolDefinition`, export from `chat-tools.ts`, pass into `chat({ tools: [...] })` in `api.chat.tsx`. (For MCP-side tools, follow the pattern in `server/src/plugins/yt-kb/server/src/mcp/tools/`.) |
 | Add a new chat surface | Read events with `streamChatSSE(response)` from `lib/services/chat-stream.ts`; control the player via `usePlayerControl()` from `components/player/`. |
 | Add a new generation pipeline | Wrap your async work in `ensureGenerationRunning(videoId, run, hooks?)` from `generation-state.ts`. Hooks let you inject persistence at start / terminal-throw boundaries. |
 | Postgres instead of SQLite | Set `DATABASE_CLIENT=postgres` + connection vars in `server/.env` — Strapi handles the rest |
@@ -710,7 +710,7 @@ Code in `client/src/lib/services/notes.ts`, `client/src/components/NotesPane.tsx
 
 ### 11.6 MCP server
 
-The **official Strapi MCP server** (built into Strapi 5.47+, enabled via `server.mcp.enabled`) serves Streamable HTTP at `/mcp` with **admin**-token auth. yt-kb's 22 domain tools (videos, transcripts, tags, notes) register onto it from `server/src/index.ts` via the adapter in `server/src/mcp-official/`, reusing the tool bodies in `server/src/mcp/tools/`; three custom admin permissions (`api::yt-kb-mcp.read` / `.write` / `.maintenance`) tier the tools so a token sees only what it's scoped to. Drives the knowledge base from Claude Desktop / Code / Cursor when you want a frontier model. **Tool bodies are defined once in Strapi** — the in-app Ollama chat does not use MCP. The previous hand-rolled `/api/mcp` server was retired. See [`./mcp.md`](./mcp.md), [ADR 0001](./adr/0001-local-first-no-cloud-ai.md), and [ADR 0008](./adr/0008-official-strapi-mcp-over-hand-rolled.md).
+The **official Strapi MCP server** (built into Strapi 5.47+, enabled via `server.mcp.enabled`) serves Streamable HTTP at `/mcp` with **admin**-token auth. yt-kb's 21 domain tools (videos, transcripts, tags, notes) are registered on it by strapi-plugin-yt-kb (`server/src/plugins/yt-kb/`, plugin config `mcp: true`) via the plugin's adapter in `mcp-official/`, reusing the tool bodies in its `mcp/tools/`; three admin permissions (`plugin::yt-kb.read` / `.write` / `.maintenance`) tier the tools so a token sees only what it's scoped to. Drives the knowledge base from Claude Desktop / Code / Cursor when you want a frontier model. **Tool bodies are defined once in Strapi** — the in-app Ollama chat does not use MCP. The previous hand-rolled `/api/mcp` server was retired. See [`./mcp.md`](./mcp.md), [ADR 0001](./adr/0001-local-first-no-cloud-ai.md), and [ADR 0008](./adr/0008-official-strapi-mcp-over-hand-rolled.md).
 
 ### 11.7 Boundary-layer error translation
 

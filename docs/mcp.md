@@ -7,9 +7,9 @@ path stays local-first (Ollama, BM25 grounding); MCP is the bridge for
 when you want more power than a local model can provide.
 
 Served by the **official Strapi MCP server** (built into Strapi 5.47+).
-Our 21 domain tools register onto it from `server/src/index.ts` via the
-adapter in `server/src/mcp-official/`; the tool bodies live in
-`server/src/mcp/tools/`. The previous hand-rolled server (which served
+Our 21 domain tools are registered by strapi-plugin-yt-kb (plugin config `mcp: true`) via its
+adapter in `server/src/plugins/yt-kb/server/src/mcp-official/`; the tool bodies live in
+`server/src/plugins/yt-kb/server/src/mcp/tools/`. The previous hand-rolled server (which served
 `/api/mcp`) was retired — **that endpoint no longer exists**.
 
 ## Endpoint
@@ -28,7 +28,7 @@ Strapi admin's bootstrap deletes every `admin::permission` row whose
 action is not registered — which is exactly where an API token's grants
 live. One boot with the flag off silently emptied every token's grants,
 and switching MCP back on did not restore them. The actions now register
-unconditionally in `src/mcp-official/index.ts`, before the flag is read;
+unconditionally in `server/src/plugins/yt-kb/server/src/mcp-official/index.ts`, before the flag is read;
 an action no tool references is inert. `mcp-permissions.guard.test.ts`
 fails if that ordering is ever reversed.
 
@@ -40,10 +40,10 @@ and carry the admin permissions that gate the tools it should see. We
 expose three custom actions (a token sees only the tools its permissions
 allow):
 
-- `api::yt-kb-mcp.read` — the 15 read tools.
-- `api::yt-kb-mcp.write` — ordinary data mutations: `saveSummary`,
+- `plugin::yt-kb.read` — the 15 read tools.
+- `plugin::yt-kb.write` — ordinary data mutations: `saveSummary`,
   `tagVideo`, `untagVideo`, `saveNote`.
-- `api::yt-kb-mcp.maintenance` — the external-side-effect tools:
+- `plugin::yt-kb.maintenance` — the external-side-effect tools:
   `addVideo` and `fetchTranscript`, which hit YouTube.
 
 Strapi exposes no embedding or inference tool. Embeddings are computed by the
@@ -68,7 +68,7 @@ The reliable, version-proof way is the admin-token service via
 ```bash
 cd server
 printf '%s\n' \
-  "const u=(await strapi.db.query('admin::user').findMany({populate:['roles']}))[0]; const t=await strapi.service('admin::api-token-admin').create({name:'claude-'+Date.now(), description:'MCP', lifespan:null, adminUserOwner:u.id, adminPermissions:[{action:'api::yt-kb-mcp.read'},{action:'api::yt-kb-mcp.write'},{action:'api::yt-kb-mcp.maintenance'}]}, u); console.log('TOKEN='+t.accessKey);" \
+  "const u=(await strapi.db.query('admin::user').findMany({populate:['roles']}))[0]; const t=await strapi.service('admin::api-token-admin').create({name:'claude-'+Date.now(), description:'MCP', lifespan:null, adminUserOwner:u.id, adminPermissions:[{action:'plugin::yt-kb.read'},{action:'plugin::yt-kb.write'},{action:'plugin::yt-kb.maintenance'}]}, u); console.log('TOKEN='+t.accessKey);" \
   ".exit" | npx strapi console
 ```
 
@@ -229,9 +229,9 @@ Claude reasons across it and writes a summary
 
 - **The official server owns transport, sessions, and auth.** We only
   register tools (`strapi.ai.mcp.registerTool`) during `register()`, before
-  the server starts and locks its tool set. Code: `server/src/mcp-official/`.
+  the server starts and locks its tool set. Code: `server/src/plugins/yt-kb/server/src/mcp-official/`.
 - **Tool bodies are reused, not rewritten.** Each tool's
-  `execute(args, { strapi })` body lives in `server/src/mcp/tools/` and is
+  `execute(args, { strapi })` body lives in `server/src/plugins/yt-kb/server/src/mcp/tools/` and is
   host-agnostic; the adapter (`mcp-official/adapter.ts`) wraps it for the
   official API and adds a ~900 KB result-size guard (MCP clients reject
   results over ~1 MB).
@@ -247,9 +247,9 @@ Claude reasons across it and writes a summary
   `sideEffects: 'none' | 'write' | 'external'` and the adapter maps that to
   the admin action (`read` / `write` / `maintenance`), so a mutating tool
   can't be labelled read-only by a typo.
-- **Adding a tool:** author a `ToolDef` in `server/src/mcp/tools/`, then add
+- **Adding a tool:** author a `ToolDef` in `server/src/plugins/yt-kb/server/src/mcp/tools/`, then add
   a one-line entry (tool, title, sideEffects) to
-  `server/src/mcp-official/tools.ts`. Registration is automatic.
+  `server/src/plugins/yt-kb/server/src/mcp-official/tools.ts`. Registration is automatic.
 - `saveSummary` writes the summary fields only. It does **not** set
   `valueScore` / `signalScore` / `finalScore`, and does not embed the video
   or build the BM25 retrieval index — those are Ollama-bound pipelines in

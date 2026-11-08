@@ -92,12 +92,13 @@ describe('videos service — smoke', () => {
     expect(res.status).toBe(403);
   });
 
-  it('public role CANNOT delete a note or a digest', async () => {
+  it('public role CANNOT create a note or a digest', async () => {
     if (!strapiUp) return;
-    // These two were the only deletes the Public role held. An anonymous
-    // caller could remove saved notes and digests with one request.
+    // Notes and digests were the only types whose delete the old Public role
+    // held. Before the plugin, this hit /api/notes and /api/digests; once the
+    // api:: types were removed those answered 405, not 403.
     for (const path of ['notes', 'digests']) {
-      const res = await fetch(`${STRAPI_URL}/api/${path}`, {
+      const res = await fetch(`${STRAPI_URL}/api/yt-kb/${path}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ data: { body: 'x', title: 'x' } }),
