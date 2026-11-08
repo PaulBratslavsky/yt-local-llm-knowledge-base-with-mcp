@@ -8,7 +8,7 @@ No accounts. No cloud AI. Runs entirely on your machine against a local [Ollama]
 
 ## Highlights
 
-- **Local-first by design** — [Ollama](https://ollama.com) for inference + embeddings, [Strapi](https://strapi.io) (SQLite) for storage, YouTube captions fetched in-process via [youtubei.js](https://github.com/LuanRT/YouTube.js). Zero cloud dependencies.
+- **Local-first by design** — [Ollama](https://ollama.com) for inference + embeddings, [Strapi](https://strapi.io) (SQLite) for storage, YouTube captions fetched by Strapi (strapi-plugin-yt-kb) via [youtubei.js](https://github.com/LuanRT/YouTube.js). Zero cloud dependencies.
 - **Grounded citations, not guesses** — section timecodes are recovered deterministically from the transcript via BM25, not invented by the model. Chat responses ship with an expandable "Sources" panel showing the transcript text behind each citation.
 - **Agentic chat** — streaming chat over [TanStack AI](https://tanstack.com/ai/latest) with a built-in `web_search` tool. Force-trigger with `/web <query>` when you want external context.
 - **Cross-video digests** — synthesize 2–5 videos into structured themes, contradictions, unique insights, and a long-form article. Saved digests are upserted by a deterministic `videoSetKey` so re-saving the same selection updates in place instead of duplicating.
@@ -30,7 +30,7 @@ No accounts. No cloud AI. Runs entirely on your machine against a local [Ollama]
 | Embedding model | [`nomic-embed-text`](https://ollama.com/library/nomic-embed-text) via Ollama (768-dim, ~137MB). One vector per video; cosine similarity in-memory |
 | Backend | [Strapi 5](https://strapi.io) (SQLite for dev, Postgres-ready) |
 | MCP server | Official Strapi MCP server (Strapi 5.47+) — Streamable HTTP at `/mcp`, auth via Strapi **admin** API tokens |
-| Transcripts | [youtubei.js](https://github.com/LuanRT/YouTube.js) directly against YouTube caption tracks |
+| Transcripts | [youtubei.js](https://github.com/LuanRT/YouTube.js) against YouTube caption tracks, run inside Strapi by strapi-plugin-yt-kb |
 
 ---
 
@@ -75,7 +75,7 @@ flowchart TD
     B --> B1["create Video row"]
     B --> B2["kick off background generation"]
     B2 --> C["generateVideoSummary"]
-    C --> C1["1. lookup or create Transcript (youtubei)"]
+    C --> C1["1. lookup Transcript, or ask Strapi to fetch it"]
     C1 --> C2["2. clean + chunk with real segment times"]
     C2 --> C3{"transcript tokens<br/>&le; 15K?"}
     C3 -->|yes| C4a["3a. single-pass summarize"]
@@ -222,7 +222,6 @@ Full walkthrough (Cursor, MCP Inspector, permission tiers, auth rotation) in [`d
 | `OLLAMA_EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model for related-videos + semantic search. Any Ollama embedding model works — swap + bump `EMBEDDING_VERSION` to force reindex. |
 | `EMBEDDING_VERSION` | `1` | Compound invalidation key alongside `OLLAMA_EMBEDDING_MODEL`. Bump when the text-builder in `client/src/lib/services/embeddings.ts` changes (different fields concatenated, different ordering). Any stored `embeddingVersion` that doesn't match is flagged stale. |
 | `MAP_CONCURRENCY` | `1` | Parallel map-step chunks on long videos. Bump to 2-4 if you have RAM headroom. Must match `OLLAMA_NUM_PARALLEL` on the server side. |
-| `TRANSCRIPT_PROXY_URL` | *(empty)* | Residential proxy for the YouTube caption fetch — only needed if your IP hits a bot wall |
 
 ### Ollama environment (via `launchctl setenv` on macOS)
 

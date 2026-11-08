@@ -45,7 +45,7 @@ flowchart TB
     end
 
     subgraph External["External"]
-      YT["youtubei.js → YouTube captions"]
+      YT["YouTube captions<br/>(fetched by Strapi, youtubei.js)"]
       Ollama["Local Ollama<br/>gemma4-kb:latest"]
       Strapi["Strapi 5 (SQLite)<br/>Video, Transcript, Tag"]
       DDG["DuckDuckGo HTML<br/>(web_search tool)"]
@@ -173,9 +173,11 @@ function kickoffSummaryGeneration(videoId: string, mode?: GenerationMode) {
 
 ### 4.1 Fetch
 
-`youtubei.js` talks to YouTube's Innertube API directly — the same API the web client uses. Caption tracks come with **millisecond-precise segment timings** that downstream chunking preserves.
+The app does not talk to YouTube. It asks Strapi — `POST /api/yt-kb/transcripts/fetch` (`requestTranscriptFetchService` in `lib/services/videos.ts`) — and strapi-plugin-yt-kb fetches, stores and returns the Transcript row (`server/src/plugins/yt-kb/server/src/services/fetcher.ts`). The MCP tools `fetchTranscript` and `addVideo` use the same service, so there is one fetcher. `youtube-fetch.guard.test.ts` fails if a YouTube client is imported into the app again.
 
-Optional residential proxy (`TRANSCRIPT_PROXY_URL`) is only needed if your IP hits YouTube's "confirm you're not a bot" wall — typically datacenter IPs. Localhost is fine.
+The plugin uses `youtubei.js` against YouTube's Innertube API — the same API the web client uses. Caption tracks come with **millisecond-precise segment timings** that downstream chunking preserves.
+
+The residential proxy, `TRANSCRIPT_PROXY_URL`, is set in Strapi's environment (`server/.env`), not the app's. It's needed only where YouTube shows its "confirm you're not a bot" wall — typically datacenter and cloud IPs. Localhost is fine.
 
 ### 4.2 Clean
 
@@ -571,7 +573,7 @@ Where to plug in new features without tearing out existing scaffolding.
 | Add a new chat surface | Read events with `streamChatSSE(response)` from `lib/services/chat-stream.ts`; control the player via `usePlayerControl()` from `components/player/`. |
 | Add a new generation pipeline | Wrap your async work in `ensureGenerationRunning(videoId, run, hooks?)` from `generation-state.ts`. Hooks let you inject persistence at start / terminal-throw boundaries. |
 | Postgres instead of SQLite | Set `DATABASE_CLIENT=postgres` + connection vars in `server/.env` — Strapi handles the rest |
-| Different transcript source | Replace `fetchYouTubeTranscript` in `lib/services/youtube-transcript.ts`; keep the `TimedTextSegment[]` return shape |
+| Different transcript source | Replace `fetchYouTubeTranscript` in the plugin's `services/youtube-transcript.ts`; keep its segment shape (`text`, `start`/`end` in ms) |
 | Custom cleaning rules | Edit `FILLER_PATTERNS` in `transcript.ts` |
 
 ---
@@ -616,8 +618,7 @@ client/src/
 │   ├── strapi-client.ts           — strapiFetch + StrapiQuery (auth, populate, filters)
 │   ├── transcript.ts              — clean, chunk, BM25, grounding
 │   ├── videos.ts                  — Strapi service + finalScore + WithStatus helpers
-│   ├── web-search.ts              — DDG HTML scraper
-│   └── youtube-transcript.ts      — youtubei.js wrapper
+│   └── web-search.ts              — DDG HTML scraper
 ├── lib/validations/
 │   └── post.ts                    — Zod schemas + extractYouTubeVideoId
 └── routes/

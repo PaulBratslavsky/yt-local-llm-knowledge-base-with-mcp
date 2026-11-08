@@ -26,8 +26,6 @@ function readVersion(name: string, fallback: number): number {
 const STRAPI_URL = readEnv('STRAPI_URL') ?? 'http://localhost:1340';
 const STRAPI_API_TOKEN = readEnv('STRAPI_API_TOKEN');
 
-const TRANSCRIPT_PROXY_URL = readEnv('TRANSCRIPT_PROXY_URL');
-
 const OLLAMA_BASE_URL = readEnv('OLLAMA_BASE_URL') ?? 'http://localhost:11434/v1';
 // Ollama's native HTTP API doesn't use the `/v1` OpenAI-compat suffix, but our
 // env var keeps it for backward compatibility with older `.env` files. Strip.
@@ -143,7 +141,6 @@ validateOnce();
 export {
   STRAPI_URL,
   STRAPI_API_TOKEN,
-  TRANSCRIPT_PROXY_URL,
   OLLAMA_BASE_URL,
   OLLAMA_HOST,
   OLLAMA_MODEL,

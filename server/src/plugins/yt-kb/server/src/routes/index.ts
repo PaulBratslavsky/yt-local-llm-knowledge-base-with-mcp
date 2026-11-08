@@ -23,6 +23,8 @@ export default {
       ...crud('transcript', 'transcripts'),
       ...crud('note', 'notes'),
       ...crud('digest', 'digests'),
+      // Fetch a transcript from YouTube and store it — see services/fetcher.ts.
+      { method: 'POST' as const, path: '/transcripts/fetch', handler: 'fetcher.fetchTranscript' },
       // Bulk copy that keeps documentIds and dates — see services/importer.ts.
       { method: 'POST' as const, path: '/import/:type', handler: 'importer.importRecords' },
     ],

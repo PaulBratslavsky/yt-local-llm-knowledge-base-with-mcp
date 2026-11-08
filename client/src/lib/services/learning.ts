@@ -3,12 +3,11 @@ import { createOllamaChat } from '@tanstack/ai-ollama';
 import { z } from 'zod';
 import {
   computeFinalScore,
-  createTranscriptService,
-  updateTranscriptService,
   fetchTranscriptByVideoIdService,
   fetchVideoByVideoIdService,
   linkVideoToTranscriptService,
   markSummaryFailedService,
+  requestTranscriptFetchService,
   updateVideoSummaryService,
   type StrapiTranscript,
   type StrapiVideo,
@@ -41,13 +40,11 @@ import {
   signalInputForTranscript,
 } from '#/lib/services/content-signals';
 import { withRetry } from '#/lib/retry';
-import { fetchYouTubeTranscript } from '#/lib/services/youtube-transcript';
 import {
   MAP_CONCURRENCY,
   OLLAMA_HOST,
   OLLAMA_MODEL as SUMMARY_MODEL,
   OLLAMA_CHAT_MODEL as CHAT_MODEL,
-  TRANSCRIPT_PROXY_URL,
 } from '#/lib/env';
 
 // TanStack AI Ollama adapters. Two separate adapters because SUMMARY_MODEL
@@ -77,8 +74,8 @@ function ms(start: number): string {
 }
 
 // -----------------------------------------------------------------------------
-// Transcript fetch (self-contained — uses youtubei.js directly against
-// YouTube's public caption tracks; no external service dependency).
+// Transcript — fetched and stored by Strapi (strapi-plugin-yt-kb). The app
+// never talks to YouTube; it works from the stored row.
 // -----------------------------------------------------------------------------
 
 type TranscriptData = {
@@ -100,16 +97,23 @@ type TranscriptData = {
   prepared?: PreparedTranscript | null;
 };
 
-async function fetchTranscript(videoId: string): Promise<ServiceResult<TranscriptData>> {
+// Ask Strapi to fetch the transcript from YouTube and store it, and return
+// the stored row. Retries only failures that look transient (a dropped
+// connection to YouTube); "no captions" and the like fail at once.
+async function fetchTranscriptThroughStrapi(
+  videoId: string,
+  force: boolean,
+): Promise<ServiceResult<StrapiTranscript>> {
   const started = performance.now();
-  logPhase(videoId, 'transcript → fetching', {
-    source: 'youtubei.js',
-    proxy: TRANSCRIPT_PROXY_URL ? 'on' : 'off',
-  });
+  logPhase(videoId, 'transcript → asking Strapi to fetch', { force });
 
   try {
     const result = await withRetry(
-      () => fetchYouTubeTranscript(videoId, { proxyUrl: TRANSCRIPT_PROXY_URL }),
+      async () => {
+        const r = await requestTranscriptFetchService(videoId, { force });
+        if (!r.success) throw new Error(r.error);
+        return r;
+      },
       {
         attempts: 3,
         onRetry: (err, attempt, delayMs) => {
@@ -120,36 +124,16 @@ async function fetchTranscript(videoId: string): Promise<ServiceResult<Transcrip
         },
       },
     );
-    logPhase(videoId, 'transcript ✓ fetched', {
-      chars: result.fullTranscript.length,
-      segments: result.segments.length,
-      durationSec: result.durationSec,
+    logPhase(videoId, `transcript ✓ ${result.action} by Strapi`, {
+      documentId: result.transcript.documentId,
+      segments: result.transcript.rawSegments?.length ?? 0,
       took: ms(started),
     });
-    return {
-      success: true,
-      data: {
-        transcript: result.fullTranscript,
-        upstreamTitle: result.title,
-        language: 'en',
-        videoId,
-        durationSec: result.durationSec,
-        // Map youtubei.js segment shape → our in-pipeline shape so
-        // transcript.ts doesn't import from the YouTube-specific module.
-        segments: result.segments.map((s) => ({
-          text: s.text,
-          startMs: s.start,
-          endMs: s.end,
-        })),
-      },
-    };
+    return { success: true, data: result.transcript };
   } catch (err) {
     const cause = err instanceof Error ? err.message : 'unknown error';
     logPhase(videoId, 'transcript ✗ failed', { cause, took: ms(started) });
-    return {
-      success: false,
-      error: `Couldn't fetch transcript: ${cause}`,
-    };
+    return { success: false, error: `Couldn't fetch transcript: ${cause}` };
   }
 }
 
@@ -843,10 +827,10 @@ export async function resolveGenerationInputs(
   //      (e.g. previous run created the transcript but AI crashed before
   //      linking): reuse it, link the Video to it, UI shows "using existing
   //      transcript (found by id)".
-  //   3. No Transcript anywhere: fetch from youtubei.js, CREATE the
-  //      Transcript row FIRST, then link the Video. UI shows "creating
-  //      transcript". This ordering matters: if AI generation later
-  //      crashes, the Transcript survives so retry #1 or #2 kicks in.
+  //   3. No Transcript anywhere (or one without caption segments): ask
+  //      Strapi to fetch and store it, then link the Video. UI shows
+  //      "creating transcript". Strapi stores the row before returning it,
+  //      so if AI generation later crashes, retry #1 or #2 kicks in.
   let transcriptRow: StrapiTranscript | null =
     !options.forceRefetch && video.transcript
       ? video.transcript
@@ -880,16 +864,25 @@ export async function resolveGenerationInputs(
     transcriptRow ? 'using existing transcript' : 'creating transcript',
   );
 
-  let transcriptResult: ServiceResult<TranscriptData>;
-  const [fetched, meta] = await Promise.all([
-    transcriptRow &&
-    transcriptRow.rawSegments &&
-    transcriptRow.rawSegments.length > 0
-      ? loadTranscriptFromStrapi(videoId, transcriptRow)
-      : fetchTranscript(videoId),
+  // A stored row without segments predates caption caching. Re-fetch it
+  // with force, or Strapi would return it unchanged as "already stored".
+  const hasSegments = (transcriptRow?.rawSegments?.length ?? 0) > 0;
+  const force = options.forceRefetch === true || transcriptRow !== null;
+
+  const loadTranscript = async (): Promise<ServiceResult<TranscriptData>> => {
+    if (transcriptRow && hasSegments) return loadTranscriptFromStrapi(videoId, transcriptRow);
+    const fetched = await fetchTranscriptThroughStrapi(videoId, force);
+    if (!fetched.success) return fetched;
+    if (video.transcript?.documentId !== fetched.data.documentId) {
+      await linkVideoToTranscriptService(video.documentId, fetched.data.documentId);
+    }
+    return loadTranscriptFromStrapi(videoId, fetched.data);
+  };
+
+  const [transcriptResult, meta] = await Promise.all([
+    loadTranscript(),
     fetchYouTubeMeta(videoId),
   ]);
-  transcriptResult = fetched;
 
   logPhase(videoId, 'meta ✓ oembed', {
     title: meta.title ?? null,
@@ -901,62 +894,6 @@ export async function resolveGenerationInputs(
       error: transcriptResult.error,
     });
     return { kind: 'error', error: transcriptResult.error, video };
-  }
-
-  // We just fetched from YouTube. Persist NOW — before AI generation — so a
-  // crash mid-summary leaves the captions safely cached for the next retry.
-  //
-  // Upsert, not insert: `Transcript.youtubeVideoId` is unique, so a
-  // forceRefetch run (which deliberately ignores the existing row) could
-  // only ever 400 on POST. The failure was swallowed as non-fatal, the run
-  // continued on in-memory captions, and the stored row kept the bad ones —
-  // so the next ordinary regeneration silently reverted. That made
-  // forceRefetch, the documented escape hatch for bad captions, a no-op.
-  if (!transcriptRow) {
-    const fields = {
-      title: transcriptResult.data.upstreamTitle ?? meta.title,
-      author: meta.author,
-      thumbnailUrl: meta.thumbnailUrl,
-      language: transcriptResult.data.language,
-      durationSec: transcriptResult.data.durationSec,
-      rawSegments: (transcriptResult.data.segments ?? []).map((s) => ({
-        text: s.text,
-        startMs: s.startMs,
-        endMs: s.endMs,
-      })),
-      rawText: transcriptResult.data.transcript,
-    };
-
-    const existing = options.forceRefetch
-      ? await fetchTranscriptByVideoIdService(videoId)
-      : null;
-
-    const saved = existing
-      ? await updateTranscriptService({ documentId: existing.documentId, ...fields })
-      : await createTranscriptService({ youtubeVideoId: videoId, ...fields });
-
-    if (saved.success) {
-      transcriptRow = saved.transcript;
-      await linkVideoToTranscriptService(video.documentId, saved.transcript.documentId);
-      logPhase(videoId, existing ? 'transcript ✓ replaced' : 'transcript ✓ created + linked', {
-        documentId: saved.transcript.documentId,
-      });
-    } else if (options.forceRefetch) {
-      // Fatal here, and only here. The whole point of the run was to replace
-      // the stored captions; finishing on in-memory ones would report
-      // success while leaving the bad transcript in place.
-      logPhase(videoId, '✗ refreshed transcript could not be saved', {
-        error: saved.error,
-      });
-      return { kind: 'error', error: saved.error, video };
-    } else {
-      // Non-fatal on an ordinary run: the in-memory transcript is as good as
-      // the stored one for this pass, and a summary is worth more than the
-      // cache write.
-      logPhase(videoId, 'transcript ✗ save failed (continuing with in-memory)', {
-        error: saved.error,
-      });
-    }
   }
 
   // Clean the transcript before any model sees it — strips fillers, stage

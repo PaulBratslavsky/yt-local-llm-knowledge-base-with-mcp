@@ -9,10 +9,9 @@ const services = vi.hoisted(() => ({
   fetchVideoByVideoIdService: vi.fn(),
   markSummaryFailedService: vi.fn(),
   updateVideoSummaryService: vi.fn(),
-  createTranscriptService: vi.fn(),
-  updateTranscriptService: vi.fn(),
   linkVideoToTranscriptService: vi.fn(),
   fetchTranscriptByVideoIdService: vi.fn(),
+  requestTranscriptFetchService: vi.fn(),
 }));
 
 vi.mock('./videos', () => ({
@@ -20,11 +19,6 @@ vi.mock('./videos', () => ({
   computeFinalScore: (v: number | null, s: number | null) =>
     v === null || s === null ? null : Math.round(0.6 * s + 0.4 * v),
 }));
-
-// learning.ts wraps `fetchYouTubeTranscript` in a local `fetchTranscript`,
-// so the module boundary to stub is the youtube-transcript service.
-const fetchYouTubeTranscript = vi.hoisted(() => vi.fn());
-vi.mock('#/lib/services/youtube-transcript', () => ({ fetchYouTubeTranscript }));
 
 import {
   persistSummaryDraft,
@@ -60,7 +54,6 @@ const draft = {
 
 beforeEach(() => {
   for (const fn of Object.values(services)) fn.mockReset();
-  fetchYouTubeTranscript.mockReset();
   services.markSummaryFailedService.mockResolvedValue({ success: true });
   services.linkVideoToTranscriptService.mockResolvedValue({ success: true });
 });
@@ -125,91 +118,87 @@ describe('persistSummaryDraft when the save fails', () => {
 // #7 — forceRefetch must actually replace the cached transcript
 // ---------------------------------------------------------------------------
 
-// The shape fetchYouTubeTranscript returns (learning.ts maps it into
-// TranscriptData).
-const freshCaptions = {
-  fullTranscript: 'fresh captions that replace the bad ones',
-  segments: [{ text: 'fresh captions that replace the bad ones', startMs: 0, endMs: 3000 }],
+// The app no longer talks to YouTube. It asks Strapi to fetch and store the
+// transcript (POST /api/yt-kb/transcripts/fetch) and works from the row that
+// comes back, so a refetch either replaces the stored captions or fails.
+const freshRow = {
+  documentId: 'transcript-1',
+  youtubeVideoId: 'abc123',
+  title: 'Title',
   durationSec: 3,
   language: 'en',
-  title: 'Title',
+  rawText: 'fresh captions that replace the bad ones',
+  rawSegments: [{ text: 'fresh captions that replace the bad ones', startMs: 0, endMs: 3000 }],
 };
 
-describe('resolveGenerationInputs with forceRefetch', () => {
+describe('resolveGenerationInputs and the transcript', () => {
   beforeEach(() => {
     services.fetchVideoByVideoIdService.mockResolvedValue(video);
-    fetchYouTubeTranscript.mockResolvedValue(freshCaptions);
-  });
-
-  it('updates the existing transcript row rather than trying to create a duplicate', async () => {
-    // Transcript.youtubeVideoId is unique, so the POST the old code issued
-    // could only ever 400 for a video that already had one — and the error
-    // was swallowed as "non-fatal", leaving the stale row in place.
-    services.fetchTranscriptByVideoIdService.mockResolvedValue({
-      documentId: 'transcript-1',
-      youtubeVideoId: 'abc123',
-    });
-    services.updateTranscriptService.mockResolvedValue({
-      success: true,
-      transcript: { documentId: 'transcript-1' },
-    });
-
-    const outcome = await resolveGenerationInputs('abc123', { forceRefetch: true });
-
-    expect(outcome.kind).toBe('ready');
-    expect(services.updateTranscriptService).toHaveBeenCalledWith(
-      expect.objectContaining({
-        documentId: 'transcript-1',
-        rawText: 'fresh captions that replace the bad ones',
-      }),
-    );
-    expect(services.createTranscriptService).not.toHaveBeenCalled();
-  });
-
-  it('creates a row when the video has no transcript yet', async () => {
     services.fetchTranscriptByVideoIdService.mockResolvedValue(null);
-    services.createTranscriptService.mockResolvedValue({
+    services.requestTranscriptFetchService.mockResolvedValue({
       success: true,
-      transcript: { documentId: 'transcript-new' },
+      action: 'created',
+      transcript: freshRow,
+    });
+  });
+
+  it('asks Strapi to re-fetch with force when forceRefetch is set', async () => {
+    services.requestTranscriptFetchService.mockResolvedValue({
+      success: true,
+      action: 'updated',
+      transcript: freshRow,
     });
 
     const outcome = await resolveGenerationInputs('abc123', { forceRefetch: true });
 
+    expect(services.requestTranscriptFetchService).toHaveBeenCalledWith('abc123', { force: true });
     expect(outcome.kind).toBe('ready');
-    expect(services.createTranscriptService).toHaveBeenCalled();
+    if (outcome.kind !== 'ready') return;
+    // The run works from what Strapi stored, not from a separate in-app fetch.
+    expect(outcome.inputs.raw.transcript).toBe('fresh captions that replace the bad ones');
+    expect(outcome.inputs.raw.segments).toEqual(freshRow.rawSegments);
   });
 
-  it('fails the run when the refreshed transcript cannot be saved', async () => {
-    // Continuing here is what made forceRefetch a no-op: the run would
-    // succeed on in-memory captions while the stored row kept the bad ones,
-    // and the next regeneration would silently revert.
-    services.fetchTranscriptByVideoIdService.mockResolvedValue({
-      documentId: 'transcript-1',
-      youtubeVideoId: 'abc123',
-    });
-    services.updateTranscriptService.mockResolvedValue({
+  it('asks Strapi to fetch, without force, when no transcript is stored', async () => {
+    const outcome = await resolveGenerationInputs('abc123', {});
+
+    expect(services.requestTranscriptFetchService).toHaveBeenCalledWith('abc123', { force: false });
+    expect(outcome.kind).toBe('ready');
+    expect(services.linkVideoToTranscriptService).toHaveBeenCalledWith('doc-1', 'transcript-1');
+  });
+
+  it('fails the run when Strapi cannot fetch the transcript', async () => {
+    services.requestTranscriptFetchService.mockResolvedValue({
       success: false,
-      error: 'Backend unreachable',
+      error: 'No captions available for this video',
     });
 
     const outcome = await resolveGenerationInputs('abc123', { forceRefetch: true });
 
     expect(outcome.kind).toBe('error');
     if (outcome.kind !== 'error') return;
-    expect(outcome.error).toMatch(/unreachable/i);
+    expect(outcome.error).toMatch(/no captions/i);
   });
 
-  it('still treats a save failure as non-fatal on a normal run', async () => {
-    // Without forceRefetch the in-memory transcript is as good as the
-    // stored one for this run, so a failed write shouldn't lose the summary.
-    services.fetchTranscriptByVideoIdService.mockResolvedValue(null);
-    services.createTranscriptService.mockResolvedValue({
-      success: false,
-      error: 'Backend unreachable',
-    });
+  it('does not ask Strapi to fetch when the stored transcript has segments', async () => {
+    services.fetchTranscriptByVideoIdService.mockResolvedValue(freshRow);
 
     const outcome = await resolveGenerationInputs('abc123', {});
 
     expect(outcome.kind).toBe('ready');
+    expect(services.requestTranscriptFetchService).not.toHaveBeenCalled();
+  });
+
+  it('re-fetches with force when the stored row has no segments', async () => {
+    // Rows from before segments were cached. Without force Strapi would skip
+    // them as "already stored" and the run would have no timings.
+    services.fetchTranscriptByVideoIdService.mockResolvedValue({
+      ...freshRow,
+      rawSegments: null,
+    });
+
+    await resolveGenerationInputs('abc123', {});
+
+    expect(services.requestTranscriptFetchService).toHaveBeenCalledWith('abc123', { force: true });
   });
 });

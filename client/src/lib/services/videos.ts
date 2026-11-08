@@ -884,9 +884,10 @@ export async function markSummaryPendingService(
 // Transcript (cached YouTube caption source)
 //
 // Transcripts live on their own collection keyed by youtubeVideoId. The
-// generation pipeline looks one up before hitting YouTube; if found, it
-// reuses the cached segments. If the AI generation crashes downstream,
-// the Transcript remains saved — next retry skips the YouTube fetch.
+// generation pipeline looks one up first; if found, it reuses the cached
+// segments. Otherwise it asks Strapi to fetch and store one. If the AI
+// generation crashes downstream, the Transcript remains saved — the next
+// retry skips the YouTube fetch.
 // =============================================================================
 
 export async function fetchTranscriptByVideoIdService(
@@ -901,51 +902,37 @@ export async function fetchTranscriptByVideoIdService(
   return result.ok ? (result.data?.[0] ?? null) : null;
 }
 
-export type CreateTranscriptServiceInput = {
-  youtubeVideoId: string;
-  title?: string;
-  author?: string;
-  thumbnailUrl?: string;
-  language?: string;
-  durationSec?: number | null;
-  rawSegments: StrapiTranscriptSegment[];
-  rawText: string;
-};
+export type TranscriptFetchAction = 'created' | 'updated' | 'skipped';
 
-export async function createTranscriptService(
-  input: CreateTranscriptServiceInput,
-): Promise<{ success: true; transcript: StrapiTranscript } | { success: false; error: string }> {
-  const result = await strapiFetch<StrapiTranscript>('POST', '/api/yt-kb/transcripts', {
-    body: { data: { ...input, fetchedAt: new Date().toISOString() } },
-  });
-  return result.ok
-    ? { success: true, transcript: result.data }
-    : { success: false, error: result.error };
-}
-
-/** Replace the stored captions on an existing Transcript row.
+/** Ask Strapi to fetch a transcript from YouTube and store it.
  *
- *  `Transcript.youtubeVideoId` is unique, so a refetch could never be saved
- *  with `createTranscriptService` — the POST 400s every time for a video
- *  that already has a row. Without this, `forceRefetch` fetched fresh
- *  captions, failed to store them, and silently continued on the old ones. */
-export async function updateTranscriptService(
-  input: Omit<CreateTranscriptServiceInput, 'youtubeVideoId'> & { documentId: string },
-): Promise<{ success: true; transcript: StrapiTranscript } | { success: false; error: string }> {
-  const { documentId, ...fields } = input;
-  const result = await strapiFetch<StrapiTranscript>(
-    'PUT',
-    `/api/yt-kb/transcripts/${documentId}`,
-    { body: { data: { ...fields, fetchedAt: new Date().toISOString() } } },
-  );
-  return result.ok && result.data
-    ? { success: true, transcript: result.data }
-    : {
-        success: false,
-        error: result.ok
-          ? 'Transcript update returned no row'
-          : friendlyBackendError(result.status, result.error),
-      };
+ *  The app never talks to YouTube itself: strapi-plugin-yt-kb does the fetch
+ *  (POST /api/yt-kb/transcripts/fetch), stores the row, and returns it. A
+ *  stored transcript comes back as `skipped` unless `force` is set, which
+ *  re-fetches and replaces it. One fetcher, one TRANSCRIPT_PROXY_URL, shared
+ *  with the MCP tools. */
+export async function requestTranscriptFetchService(
+  videoId: string,
+  { force }: { force: boolean },
+): Promise<
+  | { success: true; action: TranscriptFetchAction; transcript: StrapiTranscript }
+  | { success: false; error: string }
+> {
+  const result = await strapiFetch<StrapiTranscript>('POST', '/api/yt-kb/transcripts/fetch', {
+    body: { data: { videoId, force } },
+  });
+  if (result.ok && result.data) {
+    const action = (result.meta as { action?: TranscriptFetchAction } | undefined)?.action;
+    return { success: true, action: action ?? 'created', transcript: result.data };
+  }
+  if (result.ok) return { success: false, error: 'Transcript fetch returned no row' };
+  // 502 means Strapi reached YouTube and YouTube refused (no captions, bot
+  // wall); its message says which, so pass it through rather than the
+  // generic "Backend error".
+  return {
+    success: false,
+    error: result.status === 502 ? result.error : friendlyBackendError(result.status, result.error),
+  };
 }
 
 // Attach a Transcript to a Video via the 1:1 relation. Used after the

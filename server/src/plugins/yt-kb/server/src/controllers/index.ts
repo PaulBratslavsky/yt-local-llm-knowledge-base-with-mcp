@@ -1,5 +1,6 @@
 import { factories } from '@strapi/strapi';
 import importer from './importer';
+import fetcher from './fetcher';
 
 // Plain core controllers, exactly as the app's api:: types had them. The
 // UID isn't in Strapi's generated type union for a plugin, hence the casts.
@@ -12,4 +13,5 @@ export default {
   note: c('plugin::yt-kb.note'),
   digest: c('plugin::yt-kb.digest'),
   importer,
+  fetcher,
 };

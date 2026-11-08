@@ -1,8 +1,8 @@
 // Ingest a YouTube URL into the knowledge base. Creates a Video row +
-// fetches and stores the transcript (via the same fetchYouTubeTranscript
-// helper the in-app pipeline uses).
+// fetches and stores the transcript (services/fetcher.ts — the same
+// fetch-and-store the app's POST /api/yt-kb/transcripts/fetch uses).
 //
-// The Strapi middleware at server/src/index.ts already enforces dedupe on
+// The plugin's Document Service rules already enforce dedupe on
 // youtubeVideoId — this tool surfaces the resulting error cleanly instead
 // of crashing the MCP call.
 //
@@ -13,7 +13,6 @@
 
 import { z } from '@strapi/utils';
 import type { ToolDef } from '../registry';
-import { fetchYouTubeTranscript, fetchYouTubeMeta } from '../../services/youtube-transcript';
 import { slugifyTagName } from './tag-utils';
 
 const schema = z.object({
@@ -51,8 +50,6 @@ function extractVideoId(url: string): string | null {
   }
 }
 
-type Segment = { text: string; startMs: number; endMs: number };
-
 export const addVideoTool: ToolDef<z.infer<typeof schema>> = {
   name: 'addVideo',
   description:
@@ -76,42 +73,15 @@ export const addVideoTool: ToolDef<z.infer<typeof schema>> = {
       };
     }
 
-    const [transcript, meta] = await Promise.all([
-      fetchYouTubeTranscript(videoId, { proxyUrl: process.env.TRANSCRIPT_PROXY_URL }),
-      fetchYouTubeMeta(videoId),
-    ]);
+    // Transcript first, so a later failure doesn't orphan a Video without
+    // its cached captions. Reuses a stored transcript if there is one.
+    const { transcript: transcriptRow } = await strapi
+      .plugin('yt-kb')
+      .service('fetcher')
+      .fetchAndStore(videoId);
 
-    const segments: Segment[] = transcript.segments.map((s) => ({
-      text: s.text,
-      startMs: s.start,
-      endMs: s.end,
-    }));
-
-    // Create transcript row first so a later failure doesn't orphan a
-    // Video without its cached captions — matches the ordering in
-    // client/src/lib/services/learning.ts.
-    const existingTranscript = (await strapi.documents('plugin::yt-kb.transcript').findFirst({
-      filters: { youtubeVideoId: { $eq: videoId } },
-    })) as { documentId: string } | null;
-
-    const transcriptRow = existingTranscript
-      ? existingTranscript
-      : ((await strapi.documents('plugin::yt-kb.transcript').create({
-          data: {
-            youtubeVideoId: videoId,
-            title: transcript.title ?? meta.title ?? null,
-            author: meta.author ?? null,
-            thumbnailUrl: meta.thumbnailUrl ?? null,
-            language: 'en',
-            durationSec: transcript.durationSec,
-            rawSegments: segments,
-            rawText: transcript.fullTranscript,
-            fetchedAt: new Date().toISOString(),
-          },
-        })) as { documentId: string });
-
-    // Resolve tags: create any that don't exist yet (server/src/index.ts
-    // normalizes names lower-case on create).
+    // Resolve tags: create any that don't exist yet (the plugin's rules
+    // normalize names lower-case on create).
     const tagDocumentIds: string[] = [];
     for (const raw of tags ?? []) {
       const name = raw.trim().toLowerCase();
@@ -133,9 +103,9 @@ export const addVideoTool: ToolDef<z.infer<typeof schema>> = {
       data: {
         youtubeVideoId: videoId,
         url,
-        videoTitle: transcript.title ?? meta.title ?? null,
-        videoAuthor: meta.author ?? null,
-        videoThumbnailUrl: meta.thumbnailUrl ?? null,
+        videoTitle: transcriptRow.title ?? null,
+        videoAuthor: transcriptRow.author ?? null,
+        videoThumbnailUrl: transcriptRow.thumbnailUrl ?? null,
         caption: caption ?? null,
         summaryStatus: 'pending',
         transcript: transcriptRow.documentId,
@@ -148,8 +118,8 @@ export const addVideoTool: ToolDef<z.infer<typeof schema>> = {
       action: 'created',
       videoDocumentId: video.documentId,
       transcriptDocumentId: transcriptRow.documentId,
-      segmentCount: segments.length,
-      durationSec: transcript.durationSec,
+      segmentCount: transcriptRow.rawSegments?.length ?? 0,
+      durationSec: transcriptRow.durationSec,
       tags: tags ?? [],
     };
   },

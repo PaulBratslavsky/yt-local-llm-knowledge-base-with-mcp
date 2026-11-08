@@ -28,7 +28,7 @@ All run from the **repo root** unless noted.
 | `yarn client` | Client only (assumes Strapi is up). |
 | `yarn seed` | Imports `server/seed-data/seed.tar.gz`. **Run before starting Strapi** — needs exclusive write to SQLite. |
 | `yarn export` | Exports current Strapi DB to `server/seed-data/seed.tar.gz`. |
-| `yarn test` | Full vitest suite via `client/`, 319 tests (Strapi + Ollama down). Also runs as the sole step of CI's `Test` job. |
+| `yarn test` | Full vitest suite via `client/`, 321 tests (Strapi + Ollama down). Also runs as the sole step of CI's `Test` job. |
 | `yarn site` | Astro dev server on **4330** (not 4321 — another project on this machine holds it). Needs Strapi up. |
 | `yarn site:build` | Static build + output guard. Fails loudly if Strapi is unreachable or returns nothing. |
 | `yarn site:test` | The site's 107 vitest tests. **Not** covered by `yarn test`, which is the client's suite. |
@@ -46,7 +46,7 @@ the Strapi codemod. Do not rename it back.
 ### Tests
 
 ```bash
-yarn test                                      # from repo root — full vitest suite, 319 tests
+yarn test                                      # from repo root — full vitest suite, 321 tests
 yarn --cwd client test                         # same suite, run from client/
 yarn --cwd client test path/to/file.test.ts    # single file
 yarn --cwd client test -t "name fragment"      # filter by test name
@@ -72,7 +72,7 @@ exists as one obvious entry point and for CI symmetry with `yarn install:all`
 (also at the repo root, `yarn install --frozen-lockfile` for each of the
 three `package.json`s — root, `server/`, `client/`).
 
-**319 is measured with Strapi and Ollama both down — and is the same with
+**321 is measured with Strapi and Ollama both down — and is the same with
 them up.** `videos.smoke.test.ts` and `embeddings.ranking.test.ts` skip by
 returning early inside each `it` rather than failing, so their tests still
 count as passed and the total doesn't move with the environment. What moves
@@ -119,7 +119,7 @@ The README at the repo root has the overview and `docs/architecture.md` has the 
 
 ### Generation is background + dedup'd + cached
 
-`generateVideoSummary` in `client/src/lib/services/learning.ts` runs as fire-and-forget after a share/regenerate. A single in-process `Set` (`generationInflight` in `client/src/lib/services/generation-state.ts`) dedupes concurrent triggers. **The transcript is cached in Strapi** — once fetched from YouTube, regeneration only re-runs the AI step, never re-hits youtubei.js unless you pass `forceRefetch`. That assumption is single-node-only; horizontal scaling would need a shared inflight store.
+`generateVideoSummary` in `client/src/lib/services/learning.ts` runs as fire-and-forget after a share/regenerate. A single in-process `Set` (`generationInflight` in `client/src/lib/services/generation-state.ts`) dedupes concurrent triggers. **The transcript is cached in Strapi** — once fetched from YouTube, regeneration only re-runs the AI step, never re-hits YouTube unless you pass `forceRefetch`. **The app never talks to YouTube**: it asks Strapi (`POST /api/yt-kb/transcripts/fetch`), and the plugin fetches and stores the row (`services/fetcher.ts`, shared with the `fetchTranscript` and `addVideo` MCP tools). `youtube-fetch.guard.test.ts` fails if a YouTube client comes back into `client/`. That assumption is single-node-only; horizontal scaling would need a shared inflight store.
 
 ### Hybrid Content score (LLM + programmatic)
 
@@ -201,7 +201,7 @@ Content types, routes, Document Service rules and MCP tools live in
 
 ### MCP server lives in Strapi
 
-The **official Strapi MCP server** (built into Strapi 5.47+, enabled via `server.mcp.enabled` in `config/server.ts`) serves Streamable HTTP at `/mcp`, gated by **admin** API tokens. yt-kb's 21 domain tools are registered by the plugin (`server/src/plugins/yt-kb/server/src/mcp-official/`, plugin config `mcp: true`), reusing the tool bodies in the plugin's `mcp/tools/`. Three admin permissions tier the tools: `plugin::yt-kb.read` (15 read), `.write` (4 mutations), `.maintenance` (2 that hit YouTube). An admin token must be granted these to see the tools. Strapi computes no embeddings — the app does, next to Ollama. The in-app Ollama chat does not use MCP. `addVideo` and `fetchTranscript` fetch from YouTube inside Strapi (the plugin's `services/youtube-transcript.ts`, `youtubei.js`), through `TRANSCRIPT_PROXY_URL` when set — needed on cloud hosts, whose IPs YouTube tends to block. See `docs/mcp.md`.
+The **official Strapi MCP server** (built into Strapi 5.47+, enabled via `server.mcp.enabled` in `config/server.ts`) serves Streamable HTTP at `/mcp`, gated by **admin** API tokens. yt-kb's 21 domain tools are registered by the plugin (`server/src/plugins/yt-kb/server/src/mcp-official/`, plugin config `mcp: true`), reusing the tool bodies in the plugin's `mcp/tools/`. Three admin permissions tier the tools: `plugin::yt-kb.read` (15 read), `.write` (4 mutations), `.maintenance` (2 that hit YouTube). An admin token must be granted these to see the tools. Strapi computes no embeddings — the app does, next to Ollama. The in-app Ollama chat does not use MCP. Every YouTube fetch — the app's and the MCP tools' — runs inside Strapi (the plugin's `services/fetcher.ts` and `services/youtube-transcript.ts`, `youtubei.js`), through `TRANSCRIPT_PROXY_URL` in `server/.env` when set — needed on cloud hosts, whose IPs YouTube tends to block. See `docs/mcp.md`.
 
 **Adding a tool:** author a `ToolDef` in the plugin's `mcp/tools/` — schema included, in zod 3 (`@strapi/utils`) — then add a one-line entry to the plugin's `mcp-official/tools.ts` giving the tool, a title and its `sideEffects` (`none` | `write` | `external`). The adapter derives the admin permission tier from `sideEffects`.
 
