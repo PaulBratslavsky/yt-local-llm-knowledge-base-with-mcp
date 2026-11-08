@@ -14,7 +14,7 @@ import { friendlyBackendError } from './backend-errors';
 type ServiceResult<T> = { success: true; data: T } | { success: false; error: string };
 
 // =============================================================================
-// Strapi row types — shape of what /api/digests returns when fully populated.
+// Strapi row types — shape of what /api/yt-kb/digests returns when fully populated.
 // =============================================================================
 
 export type StrapiDigestVideo = {
@@ -179,7 +179,7 @@ export async function createDigestService(input: {
   model?: string | null;
 }): Promise<ServiceResult<StrapiDigest>> {
   const componentPayload = digestToComponentPayload(input.digest);
-  const result = await strapiFetch<StrapiDigest>('POST', '/api/digests', {
+  const result = await strapiFetch<StrapiDigest>('POST', '/api/yt-kb/digests', {
     query: digestQuery,
     body: {
       data: {
@@ -214,7 +214,7 @@ export async function listDigestsService(input?: {
   const page = input?.page ?? 1;
   const pageSize = input?.pageSize ?? 20;
   const q = input?.q?.trim();
-  const result = await strapiFetch<StrapiDigest[]>('GET', '/api/digests', {
+  const result = await strapiFetch<StrapiDigest[]>('GET', '/api/yt-kb/digests', {
     query: {
       ...digestQuery,
       sort: 'createdAt:desc',
@@ -249,7 +249,7 @@ export async function fetchDigestByDocumentIdService(
 ): Promise<StrapiDigest | null> {
   const result = await strapiFetch<StrapiDigest>(
     'GET',
-    `/api/digests/${documentId}`,
+    `/api/yt-kb/digests/${documentId}`,
     { query: digestQuery },
   );
   if (!result.ok) return null;
@@ -276,7 +276,7 @@ export async function updateDigestService(input: {
   if (input.model !== undefined) data.model = input.model;
   const result = await strapiFetch<StrapiDigest>(
     'PUT',
-    `/api/digests/${input.documentId}`,
+    `/api/yt-kb/digests/${input.documentId}`,
     { query: digestQuery, body: { data } },
   );
   return result.ok
@@ -287,7 +287,7 @@ export async function updateDigestService(input: {
 export async function findDigestByVideoSetKeyService(
   videoSetKey: string,
 ): Promise<ServiceResult<StrapiDigest | null>> {
-  const result = await strapiFetch<StrapiDigest[]>('GET', '/api/digests', {
+  const result = await strapiFetch<StrapiDigest[]>('GET', '/api/yt-kb/digests', {
     query: {
       ...digestQuery,
       filters: { videoSetKey: { $eq: videoSetKey } },
@@ -302,7 +302,7 @@ export async function findDigestByVideoSetKeyService(
 export async function deleteDigestService(
   documentId: string,
 ): Promise<ServiceResult<void>> {
-  const result = await strapiFetch<unknown>('DELETE', `/api/digests/${documentId}`);
+  const result = await strapiFetch<unknown>('DELETE', `/api/yt-kb/digests/${documentId}`);
   if (!result.ok && result.status !== 404) {
     return {
       success: false,

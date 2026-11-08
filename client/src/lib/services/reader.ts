@@ -357,7 +357,7 @@ async function persistArticle(
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (STRAPI_API_TOKEN) headers.Authorization = `Bearer ${STRAPI_API_TOKEN}`;
 
-  const res = await fetch(`${STRAPI_URL}/api/videos/${documentId}`, {
+  const res = await fetch(`${STRAPI_URL}/api/yt-kb/videos/${documentId}`, {
     method: 'PUT',
     headers,
     body: JSON.stringify({

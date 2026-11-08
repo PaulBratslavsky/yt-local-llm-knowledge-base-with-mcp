@@ -71,7 +71,7 @@ export async function createNoteService(input: {
   author?: string | null;
   videoDocumentIds: string[];
 }): Promise<ServiceResult<StrapiNote>> {
-  const result = await strapiFetch<StrapiNote>('POST', '/api/notes', {
+  const result = await strapiFetch<StrapiNote>('POST', '/api/yt-kb/notes', {
     query: noteQuery,
     body: {
       data: {
@@ -91,7 +91,7 @@ export async function createNoteService(input: {
 export async function listNotesForVideoService(
   videoDocumentId: string,
 ): Promise<ServiceResult<StrapiNote[]>> {
-  const result = await strapiFetch<StrapiNote[]>('GET', '/api/notes', {
+  const result = await strapiFetch<StrapiNote[]>('GET', '/api/yt-kb/notes', {
     query: {
       ...noteQuery,
       filters: { videos: { documentId: { $eq: videoDocumentId } } },
@@ -114,7 +114,7 @@ export async function updateNoteService(input: {
   if (input.body !== undefined) data.body = input.body;
   const result = await strapiFetch<StrapiNote>(
     'PUT',
-    `/api/notes/${input.documentId}`,
+    `/api/yt-kb/notes/${input.documentId}`,
     { query: noteQuery, body: { data } },
   );
   return result.ok
@@ -125,7 +125,7 @@ export async function updateNoteService(input: {
 export async function deleteNoteService(
   documentId: string,
 ): Promise<ServiceResult<void>> {
-  const result = await strapiFetch<unknown>('DELETE', `/api/notes/${documentId}`);
+  const result = await strapiFetch<unknown>('DELETE', `/api/yt-kb/notes/${documentId}`);
   if (!result.ok && result.status !== 404) {
     return { success: false, error: result.error };
   }

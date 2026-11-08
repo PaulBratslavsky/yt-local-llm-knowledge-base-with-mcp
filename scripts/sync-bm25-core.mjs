@@ -22,7 +22,7 @@ import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SOURCE = join(REPO_ROOT, 'client', 'src', 'lib', 'services', 'bm25-core.ts');
-const COPY = join(REPO_ROOT, 'server', 'src', 'services', 'bm25-core.ts');
+const COPY = join(REPO_ROOT, 'server', 'src', 'plugins', 'yt-kb', 'server', 'src', 'services', 'bm25-core.ts');
 
 const BANNER = `// GENERATED FILE — DO NOT EDIT.
 //
@@ -44,7 +44,7 @@ try {
 if (process.argv.includes('--check')) {
   if (current !== want) {
     console.error(
-      'server/src/services/bm25-core.ts is out of date. Run `yarn sync:bm25`.',
+      'server/src/plugins/yt-kb/server/src/services/bm25-core.ts is out of date. Run `yarn sync:bm25`.',
     );
     process.exit(1);
   }
@@ -53,5 +53,5 @@ if (process.argv.includes('--check')) {
   console.log('bm25-core copy already up to date.');
 } else {
   writeFileSync(COPY, want);
-  console.log('Wrote server/src/services/bm25-core.ts');
+  console.log('Wrote server/src/plugins/yt-kb/server/src/services/bm25-core.ts');
 }

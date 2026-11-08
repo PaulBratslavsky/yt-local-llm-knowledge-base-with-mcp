@@ -1,7 +1,13 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 
-// Smoke test: hits a running local Strapi at STRAPI_URL and verifies the
-// PUBLIC ROLE IS READ-ONLY. Auto-skips if Strapi isn't reachable.
+// Smoke test: hits a running local Strapi at STRAPI_URL and verifies that an
+// ANONYMOUS CALLER GETS NOTHING from yt-kb's routes (/api/yt-kb/*) — neither
+// reads nor writes. Auto-skips if Strapi isn't reachable.
+//
+// strapi-plugin-yt-kb grants the Public role nothing: the app reads and
+// writes with STRAPI_API_TOKEN, the Astro site reads with its own read-only
+// token. Before the plugin, the Public role could read, and the site relied
+// on it.
 //
 //   yarn --cwd server develop   # in one terminal
 //   yarn --cwd client test      # in another
@@ -19,8 +25,10 @@ const TEST_VIDEO_ID = 'test-smoke-001';
 
 async function isStrapiUp(): Promise<boolean> {
   try {
-    const res = await fetch(`${STRAPI_URL}/api/videos?pagination[pageSize]=1`);
-    return res.ok;
+    // /_health, not a content route: a 403 from a content route means
+    // "up and refusing", and reading it as "down" silently skipped every test.
+    const res = await fetch(`${STRAPI_URL}/_health`);
+    return res.status === 204;
   } catch {
     return false;
   }
@@ -39,17 +47,15 @@ describe('videos service — smoke', () => {
     }
   });
 
-  it('public role can list videos (find permission granted)', async () => {
+  it('public role CANNOT list videos', async () => {
     if (!strapiUp) return;
-    const res = await fetch(`${STRAPI_URL}/api/videos?pagination[pageSize]=1`);
-    expect(res.status).toBe(200);
-    const json = (await res.json()) as { data?: unknown[] };
-    expect(Array.isArray(json.data)).toBe(true);
+    const res = await fetch(`${STRAPI_URL}/api/yt-kb/videos?pagination[pageSize]=1`);
+    expect(res.status).toBe(403);
   });
 
   it('public role CANNOT create a video', async () => {
     if (!strapiUp) return;
-    const res = await fetch(`${STRAPI_URL}/api/videos`, {
+    const res = await fetch(`${STRAPI_URL}/api/yt-kb/videos`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -67,24 +73,18 @@ describe('videos service — smoke', () => {
     expect(res.status).toBe(403);
   });
 
-  it('a filtered feed query is served to an anonymous caller', async () => {
+  it('public role CANNOT run a filtered feed query', async () => {
     if (!strapiUp) return;
-    // Reads must keep working — the Astro site builds against them. This no
-    // longer asserts a specific row: the row it used to look for could only
-    // be created by the anonymous write this milestone removes, so requiring
-    // it would fail on any database where that write never happened.
     const params = new URLSearchParams();
     params.set('filters[youtubeVideoId][$eq]', TEST_VIDEO_ID);
     params.set('pagination[pageSize]', '1');
-    const res = await fetch(`${STRAPI_URL}/api/videos?${params.toString()}`);
-    expect(res.status).toBe(200);
-    const json = (await res.json()) as { data?: unknown[] };
-    expect(Array.isArray(json.data)).toBe(true);
+    const res = await fetch(`${STRAPI_URL}/api/yt-kb/videos?${params.toString()}`);
+    expect(res.status).toBe(403);
   });
 
   it('public role CANNOT create a tag', async () => {
     if (!strapiUp) return;
-    const res = await fetch(`${STRAPI_URL}/api/tags`, {
+    const res = await fetch(`${STRAPI_URL}/api/yt-kb/tags`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ data: { name: `smoke-${Date.now()}` } }),

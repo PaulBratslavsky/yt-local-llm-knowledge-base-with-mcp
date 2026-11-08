@@ -1429,7 +1429,7 @@ export type BackfillValueScoresResult = {
 
 export const countMissingValueScores = createServerFn({ method: 'GET' })
   .handler(async (): Promise<{ missing: number }> => {
-    const result = await strapiFetch<StrapiVideo[]>('GET', '/api/videos', {
+    const result = await strapiFetch<StrapiVideo[]>('GET', '/api/yt-kb/videos', {
       query: {
         filters: {
           watchVerdict: { $notNull: true },
@@ -1452,7 +1452,7 @@ export const backfillValueScores = createServerFn({ method: 'POST' })
     // videos as a safety belt against an unbounded loop.
     const PAGE_SIZE = 100;
     for (let page = 1; page <= 50; page += 1) {
-      const result = await strapiFetch<StrapiVideo[]>('GET', '/api/videos', {
+      const result = await strapiFetch<StrapiVideo[]>('GET', '/api/yt-kb/videos', {
         query: {
           filters: {
             watchVerdict: { $notNull: true },
@@ -1560,7 +1560,7 @@ export const listRegenerableVideos = createServerFn({ method: 'GET' })
     const out: RegenerableVideo[] = [];
     const PAGE_SIZE = 100;
     for (let page = 1; page <= 50; page += 1) {
-      const result = await strapiFetch<StrapiVideo[]>('GET', '/api/videos', {
+      const result = await strapiFetch<StrapiVideo[]>('GET', '/api/yt-kb/videos', {
         query: {
           filters: { summaryStatus: { $eq: 'generated' } },
           fields: ['youtubeVideoId', 'videoTitle'],
@@ -1606,7 +1606,7 @@ type StrapiVideoWithTranscript = StrapiVideo & {
 
 export const countMissingSignalScores = createServerFn({ method: 'GET' })
   .handler(async (): Promise<{ missing: number }> => {
-    const result = await strapiFetch<StrapiVideo[]>('GET', '/api/videos', {
+    const result = await strapiFetch<StrapiVideo[]>('GET', '/api/yt-kb/videos', {
       query: {
         filters: {
           summaryStatus: { $eq: 'generated' },
@@ -1645,7 +1645,7 @@ export const regenerateVideoSignals = createServerFn({ method: 'POST' })
     // get rawText + durationSec in one call.
     const fetched = await strapiFetch<StrapiVideoWithTranscript[]>(
       'GET',
-      '/api/videos',
+      '/api/yt-kb/videos',
       {
         query: {
           filters: { youtubeVideoId: { $eq: data.videoId } },
@@ -1699,7 +1699,7 @@ export const backfillSignalScores = createServerFn({ method: 'POST' })
     for (let page = 1; page <= 50; page += 1) {
       const result = await strapiFetch<StrapiVideoWithTranscript[]>(
         'GET',
-        '/api/videos',
+        '/api/yt-kb/videos',
         {
           query: {
             filters: {
@@ -1773,7 +1773,7 @@ export type BackfillFinalScoresResult = {
 
 export const countMissingFinalScores = createServerFn({ method: 'GET' })
   .handler(async (): Promise<{ missing: number }> => {
-    const result = await strapiFetch<StrapiVideo[]>('GET', '/api/videos', {
+    const result = await strapiFetch<StrapiVideo[]>('GET', '/api/yt-kb/videos', {
       query: {
         filters: {
           // Eligible: has at least one component score AND no finalScore.
@@ -1797,7 +1797,7 @@ export const backfillFinalScores = createServerFn({ method: 'POST' })
     let total = 0;
     const PAGE_SIZE = 100;
     for (let page = 1; page <= 50; page += 1) {
-      const result = await strapiFetch<StrapiVideo[]>('GET', '/api/videos', {
+      const result = await strapiFetch<StrapiVideo[]>('GET', '/api/yt-kb/videos', {
         query: {
           filters: {
             $or: [

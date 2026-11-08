@@ -4,11 +4,16 @@ import { fetchGeneratedVideos } from './lib/strapi';
 import { videoSchema } from './lib/video';
 
 /** Build-time only. No runtime call to Strapi, so no base URL and no
- *  credentials ever reach the published output. */
+ *  credentials ever reach the published output. The base includes the
+ *  plugin prefix: yt-kb's content is served under /api/yt-kb. */
 const STRAPI_BASE_URL =
   process.env.STRAPI_BASE_URL ??
   import.meta.env.STRAPI_BASE_URL ??
-  'http://localhost:1340/api';
+  'http://localhost:1340/api/yt-kb';
+
+/** A read-only API token: the plugin grants the Public role nothing. */
+const STRAPI_API_TOKEN =
+  process.env.STRAPI_API_TOKEN ?? import.meta.env.STRAPI_API_TOKEN ?? undefined;
 
 /** Reads the library straight from Strapi's REST API.
  *
@@ -34,7 +39,10 @@ const strapiVideoLoader: Loader = {
 
     logger.info(`Fetching videos from ${STRAPI_BASE_URL}`);
 
-    const rows = await fetchGeneratedVideos({ baseUrl: STRAPI_BASE_URL });
+    const rows = await fetchGeneratedVideos({
+      baseUrl: STRAPI_BASE_URL,
+      token: STRAPI_API_TOKEN,
+    });
 
     store.clear();
     for (const row of rows) {

@@ -15,7 +15,7 @@ import { join } from 'node:path';
 // Regenerate with: yarn sync:bm25
 const REPO_ROOT = join(__dirname, '..', '..', '..', '..');
 const SOURCE = join(REPO_ROOT, 'client', 'src', 'lib', 'services', 'bm25-core.ts');
-const COPY = join(REPO_ROOT, 'server', 'src', 'services', 'bm25-core.ts');
+const COPY = join(REPO_ROOT, 'server', 'src', 'plugins', 'yt-kb', 'server', 'src', 'services', 'bm25-core.ts');
 
 export const GENERATED_BANNER = `// GENERATED FILE — DO NOT EDIT.
 //

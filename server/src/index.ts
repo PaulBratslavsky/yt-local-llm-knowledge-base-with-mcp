@@ -1,6 +1,5 @@
 import type { Core } from '@strapi/strapi';
 import { errors } from '@strapi/utils';
-import { registerOfficialMcpTools } from './mcp-official';
 import { slugifyTagName } from './mcp/tools/tag-utils';
 
 type WithData = { data?: Record<string, unknown> };
@@ -86,25 +85,8 @@ export default {
       return next();
     });
 
-    // -------------------------------------------------------------------
-    // MCP (Model Context Protocol).
-    //
-    // Exposes the knowledge base (videos, transcripts, summaries, tags,
-    // notes) as MCP tools so Claude Desktop / Claude Code / Cursor can
-    // drive the app with a frontier model. The in-app chat path stays
-    // local (Ollama) — this is the "bring the KB to a bigger brain"
-    // surface.
-    //
-    // Served by the OFFICIAL Strapi MCP server (5.47+) at /mcp, gated by
-    // admin API tokens, enabled via `server.mcp.enabled` in
-    // config/server.ts. We register our domain tools here behind three
-    // custom admin permissions (read / write / maintenance), via the
-    // adapter in `src/mcp-official/` (which reuses the tool bodies in
-    // `src/mcp/tools/`). The hand-rolled server that used to serve
-    // /api/mcp was retired. Must run in register(), before the MCP
-    // server starts (it locks its tool set at start).
-    // -------------------------------------------------------------------
-    await registerOfficialMcpTools(strapi);
+
+    // MCP tools are served by strapi-plugin-yt-kb (config/plugins.ts).
   },
 
   async bootstrap({ strapi }: { strapi: Core.Strapi }) {

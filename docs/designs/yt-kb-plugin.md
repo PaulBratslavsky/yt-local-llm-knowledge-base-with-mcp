@@ -70,6 +70,15 @@ repaired by a re-run, with no duplicate rows.
 3. Document Service rules (video dedupe, tag normalize + slug).
 4. MCP: the 21 tools, admin permissions, adapter.
 5. Copy script `api::` -> `plugin::`; verify counts and relations. **Done.**
-6. Client and site: path prefix, site read-only token.
+6. Client and site: path prefix, site read-only token. **Done** (2026-11-07),
+   together with the MCP switch: plugin `mcp: true`, the host's
+   `registerOfficialMcpTools` call removed, admin token
+   `claude-mcp-1782487483515` granted `plugin::yt-kb.read/write/maintenance`
+   (its `api::yt-kb-mcp.*` grants were deleted by the first boot without
+   them), read-only token `yt-kb-site` minted for `site/`. Verified: 21/21
+   tools over `/mcp` (reads, BM25 search, a tag/untag round trip), feed,
+   tag filter and video page in the app, a note created and deleted through
+   the app landing in `yt_kb_notes`, site build of 208 pages from
+   `/api/yt-kb` with no token in `site/dist`.
 7. End-to-end through the UI; then remove the `api::` types.
 8. Publish to npm; install in the host.

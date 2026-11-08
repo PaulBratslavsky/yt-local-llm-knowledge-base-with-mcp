@@ -99,6 +99,41 @@ describe('fetchGeneratedVideos', () => {
     expect(calls[0]).toContain('/videos?');
   });
 
+  // The plugin's routes grant the Public role nothing, so the build reads
+  // with a read-only API token.
+  it('sends the API token as a Bearer header on every page', async () => {
+    const headers: (string | null)[] = [];
+    const { impl } = fakeFetch([
+      { data: [row('a')], pageCount: 2 },
+      { data: [row('b')], pageCount: 2 },
+    ]);
+    const spy = (async (url: string | URL, init?: RequestInit) => {
+      headers.push(new Headers(init?.headers).get('Authorization'));
+      return impl(url, init);
+    }) as typeof fetch;
+
+    await fetchGeneratedVideos({
+      baseUrl: 'http://localhost:1340/api/yt-kb',
+      fetchImpl: spy,
+      token: 'site-token',
+    });
+
+    expect(headers).toEqual(['Bearer site-token', 'Bearer site-token']);
+  });
+
+  it('sends no Authorization header without a token', async () => {
+    const headers: (string | null)[] = [];
+    const { impl } = fakeFetch([{ data: [row('a')], pageCount: 1 }]);
+    const spy = (async (url: string | URL, init?: RequestInit) => {
+      headers.push(new Headers(init?.headers).get('Authorization'));
+      return impl(url, init);
+    }) as typeof fetch;
+
+    await fetchGeneratedVideos({ baseUrl: 'http://localhost:1340/api/yt-kb', fetchImpl: spy });
+
+    expect(headers).toEqual([null]);
+  });
+
   // A build that silently shipped half the library is the worst outcome
   // available here, so every one of these must stop the build.
   it('throws when Strapi answers with an error status', async () => {

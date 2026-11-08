@@ -42,6 +42,8 @@ interface FetchOptions {
   baseUrl: string;
   fetchImpl?: typeof fetch;
   pageSize?: number;
+  /** Read-only API token. The plugin's routes grant the Public role nothing. */
+  token?: string;
 }
 
 /** Every video with a generated summary, newest first.
@@ -55,7 +57,9 @@ export async function fetchGeneratedVideos({
   baseUrl,
   fetchImpl = fetch,
   pageSize = DEFAULT_PAGE_SIZE,
+  token,
 }: FetchOptions): Promise<unknown[]> {
+  const init: RequestInit = token ? { headers: { Authorization: `Bearer ${token}` } } : {};
   const root = baseUrl.replace(/\/+$/, '');
   const rows: unknown[] = [];
   let page = 1;
@@ -67,7 +71,7 @@ export async function fetchGeneratedVideos({
 
     let response: Response;
     try {
-      response = await fetchImpl(url);
+      response = await fetchImpl(url, init);
     } catch (cause) {
       throw new Error(
         `Cannot reach Strapi at ${baseUrl} — is the stack running? ` +

@@ -7,7 +7,7 @@ import { join } from 'node:path';
 // Strapi admin's bootstrap runs cleanPermissionsInDatabase(), which deletes
 // every `admin::permission` row whose action is not registered in the
 // actionProvider. An admin API token's grants are exactly those rows. So if
-// the yt-kb-mcp actions register behind the MCP_ENABLED flag, one boot with
+// the plugin::yt-kb actions register behind an enabled check, one boot with
 // the flag off deletes the grants from every token — permanently, silently,
 // and turning MCP back on does not bring them back. Measured on a copy of
 // the real database: six grant rows went to zero on a single boot.
@@ -19,7 +19,8 @@ import { join } from 'node:path';
 // Same pattern as bm25-core.sync.test.ts: the client cannot import from the
 // server, so the guard reads the file.
 const REPO_ROOT = join(__dirname, '..', '..', '..', '..');
-const ENTRY = join(REPO_ROOT, 'server', 'src', 'mcp-official', 'index.ts');
+const PLUGIN = join(REPO_ROOT, 'server', 'src', 'plugins', 'yt-kb', 'server', 'src');
+const ENTRY = join(PLUGIN, 'mcp-official', 'index.ts');
 
 describe('MCP admin permission registration', () => {
   const source = readFileSync(ENTRY, 'utf8');
@@ -53,14 +54,17 @@ describe('MCP admin permission registration', () => {
   // match a registered action and the next boot deletes them.
   it('still registers the three action ids tokens are granted', () => {
     const permissions = readFileSync(
-      join(REPO_ROOT, 'server', 'src', 'mcp-official', 'permissions.ts'),
+      join(PLUGIN, 'mcp-official', 'permissions.ts'),
       'utf8',
     );
 
-    for (const uid of ['yt-kb-mcp.read', 'yt-kb-mcp.write', 'yt-kb-mcp.maintenance']) {
-      expect(permissions, `${uid} missing — existing grants for it would be deleted`).toContain(
-        uid,
-      );
+    // Registered as plugin::yt-kb.<uid>.
+    expect(permissions).toContain("pluginName: 'yt-kb'");
+    for (const uid of ['read', 'write', 'maintenance']) {
+      expect(
+        permissions,
+        `plugin::yt-kb.${uid} missing — existing grants for it would be deleted`,
+      ).toContain(`uid: '${uid}'`);
     }
   });
 });

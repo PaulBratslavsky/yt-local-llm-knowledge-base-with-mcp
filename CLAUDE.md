@@ -28,10 +28,10 @@ All run from the **repo root** unless noted.
 | `yarn client` | Client only (assumes Strapi is up). |
 | `yarn seed` | Imports `server/seed-data/seed.tar.gz`. **Run before starting Strapi** — needs exclusive write to SQLite. |
 | `yarn export` | Exports current Strapi DB to `server/seed-data/seed.tar.gz`. |
-| `yarn test` | Full vitest suite via `client/`, 318 tests (Strapi + Ollama down). Also runs as the sole step of CI's `Test` job. |
+| `yarn test` | Full vitest suite via `client/`, 319 tests (Strapi + Ollama down). Also runs as the sole step of CI's `Test` job. |
 | `yarn site` | Astro dev server on **4330** (not 4321 — another project on this machine holds it). Needs Strapi up. |
 | `yarn site:build` | Static build + output guard. Fails loudly if Strapi is unreachable or returns nothing. |
-| `yarn site:test` | The site's 105 vitest tests. **Not** covered by `yarn test`, which is the client's suite. |
+| `yarn site:test` | The site's 107 vitest tests. **Not** covered by `yarn test`, which is the client's suite. |
 | `yarn site:publish` | **The one to use for a content update.** Checks Strapi, rebuilds, sanity-checks the page count, deploys live. `yarn site:publish:draft` for a preview URL first. |
 | `yarn site:deploy` | `netlify deploy --prod` from `site/dist` — deploys whatever is already built, without rebuilding. |
 | `yarn install:all` | `yarn install --frozen-lockfile` for the root, `server/`, `client/` and `site/` package.json's. What CI runs to install everything. |
@@ -46,7 +46,7 @@ the Strapi codemod. Do not rename it back.
 ### Tests
 
 ```bash
-yarn test                                      # from repo root — full vitest suite, 318 tests
+yarn test                                      # from repo root — full vitest suite, 319 tests
 yarn --cwd client test                         # same suite, run from client/
 yarn --cwd client test path/to/file.test.ts    # single file
 yarn --cwd client test -t "name fragment"      # filter by test name
@@ -72,7 +72,7 @@ exists as one obvious entry point and for CI symmetry with `yarn install:all`
 (also at the repo root, `yarn install --frozen-lockfile` for each of the
 three `package.json`s — root, `server/`, `client/`).
 
-**318 is measured with Strapi and Ollama both down — and is the same with
+**319 is measured with Strapi and Ollama both down — and is the same with
 them up.** `videos.smoke.test.ts` and `embeddings.ranking.test.ts` skip by
 returning early inside each `it` rather than failing, so their tests still
 count as passed and the total doesn't move with the environment. What moves
@@ -167,7 +167,7 @@ being trusted. Rows with no cached `rawSegments` (pre-cache era) can't be
 backfilled and are reported separately — they need a full Regenerate.
 
 The scorer itself lives in `bm25-core.ts` and is copied verbatim into
-`server/src/services/bm25-core.ts` by `yarn sync:bm25`; the two halves stay
+`server/src/plugins/yt-kb/server/src/services/bm25-core.ts` by `yarn sync:bm25`; the two halves stay
 identical because `bm25-core.sync.test.ts` fails if they drift. Edit the
 client copy, never the server one.
 
@@ -177,11 +177,32 @@ Single-pass for short transcripts; long ones split into 2500-word windows (50-wo
 
 **Nothing enforces that pairing.** The app never reads `OLLAMA_NUM_PARALLEL` — it appears only in `start.sh`, the README and comments — so a mismatch is undetectable. The cap is also per generation job: `ensureGenerationRunning` dedupes by `videoId`, so sharing N videos at once spawns N jobs each running `MAP_CONCURRENCY` calls, and `embedBatch` hardcodes its own concurrency of 2 besides. Issue #20 proposes one process-wide Ollama budget read from a single value.
 
+### yt-kb's Strapi code is a plugin: strapi-plugin-yt-kb
+
+Content types, routes, Document Service rules and MCP tools live in
+`server/src/plugins/yt-kb/` (npm `strapi-plugin-yt-kb`), loaded via
+`resolve` in `server/config/plugins.ts`. Plan and status:
+`docs/designs/yt-kb-plugin.md`.
+
+- **UIDs** are `plugin::yt-kb.<type>`; **REST paths** are
+  `/api/yt-kb/<plural>` (`/api/yt-kb/videos`, …). The client and site use
+  only these; `strapi-paths.guard.test.ts` fails on an unprefixed path.
+  The old `api::` types in `server/src/api/` are still present but unused,
+  kept until removal (plan step 7).
+- **No Public grants.** The app reads and writes with `STRAPI_API_TOKEN`
+  (`client/.env`); the Astro site reads with its own read-only
+  `STRAPI_API_TOKEN` (`site/.env`). Anonymous calls get 403.
+- **The plugin rebuilds separately.** After editing plugin source, run
+  `yarn --cwd server/src/plugins/yt-kb build` and restart Strapi —
+  `strapi develop` does not reload on a rebuilt plugin `dist/`.
+- **Copying content** between Strapis (keeps documentIds and dates):
+  `server/src/plugins/yt-kb/scripts/copy-content.mjs`.
+
 ### MCP server lives in Strapi
 
-The **official Strapi MCP server** (built into Strapi 5.47+, enabled via `server.mcp.enabled` in `config/server.ts`) serves Streamable HTTP at `/mcp`, gated by **admin** API tokens. yt-kb's 21 domain tools (videos, transcripts, tags, notes) register onto it from `src/index.ts` `register()` via the adapter in `server/src/mcp-official/` (permissions, adapter, tools list) — which **reuses the tool bodies** in `server/src/mcp/tools/`. Three custom admin permissions tier the tools: `api::yt-kb-mcp.read` (15 read), `.write` (4 mutations), `.maintenance` (2 that hit YouTube). Strapi computes no embeddings — the app does, next to Ollama. A token sees only the tools its permissions allow. **Tool bodies are defined once** in `src/mcp/tools/` — the in-app Ollama chat does not use MCP, keeping local inference protocol-free. The previous hand-rolled `/api/mcp` server was retired. See `docs/mcp.md`.
+The **official Strapi MCP server** (built into Strapi 5.47+, enabled via `server.mcp.enabled` in `config/server.ts`) serves Streamable HTTP at `/mcp`, gated by **admin** API tokens. yt-kb's 21 domain tools are registered by the plugin (`server/src/plugins/yt-kb/server/src/mcp-official/`, plugin config `mcp: true`), reusing the tool bodies in the plugin's `mcp/tools/`. Three admin permissions tier the tools: `plugin::yt-kb.read` (15 read), `.write` (4 mutations), `.maintenance` (2 that hit YouTube). An admin token must be granted these to see the tools. Strapi computes no embeddings — the app does, next to Ollama. The in-app Ollama chat does not use MCP. The host's own copy in `server/src/mcp-official/` and `server/src/mcp/` is no longer registered and is removed in plan step 7. See `docs/mcp.md`.
 
-**Adding a tool:** author a `ToolDef` in `src/mcp/tools/` — schema included, in zod 3 (`@strapi/utils`, the zod the MCP SDK's schema conversion needs) — then add a one-line entry to `src/mcp-official/tools.ts` giving the tool, a title and its `sideEffects` (`none` | `write` | `external`). The adapter registers `tool.schema` and derives the admin permission tier from `sideEffects`, so there is one schema per tool and the tier follows from what the body does. See `docs/mcp.md`.
+**Adding a tool:** author a `ToolDef` in the plugin's `mcp/tools/` — schema included, in zod 3 (`@strapi/utils`) — then add a one-line entry to the plugin's `mcp-official/tools.ts` giving the tool, a title and its `sideEffects` (`none` | `write` | `external`). The adapter derives the admin permission tier from `sideEffects`.
 
 ## Routing and aliases
 

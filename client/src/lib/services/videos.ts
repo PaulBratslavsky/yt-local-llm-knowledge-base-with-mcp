@@ -282,7 +282,7 @@ function feedQuery({
 }
 
 export async function fetchFeedService(query: FeedQuery): Promise<PaginatedVideos> {
-  const result = await strapiFetch<StrapiVideo[]>('GET', '/api/videos', {
+  const result = await strapiFetch<StrapiVideo[]>('GET', '/api/yt-kb/videos', {
     query: feedQuery(query),
   });
   if (!result.ok) {
@@ -380,7 +380,7 @@ export async function listAllVideosForEmbeddingService(
   const all: StrapiVideo[] = [];
   const fields = [...CORPUS_BASE_FIELDS, ...include];
   for (let page = 1; page <= 50; page += 1) {
-    const result = await strapiFetch<StrapiVideo[]>('GET', '/api/videos', {
+    const result = await strapiFetch<StrapiVideo[]>('GET', '/api/yt-kb/videos', {
       query: {
         fields,
         populate: ['tags', 'keyTakeaways', 'sections'],
@@ -418,7 +418,7 @@ export async function forEachVideoWithIndex(
   const pageSize = 25;
   let visited = 0;
   for (let page = 1; page <= 200; page += 1) {
-    const result = await strapiFetch<StrapiVideo[]>('GET', '/api/videos', {
+    const result = await strapiFetch<StrapiVideo[]>('GET', '/api/yt-kb/videos', {
       query: {
         populate: ['sections'],
         filters: { summaryStatus: { $eq: 'generated' } },
@@ -445,7 +445,7 @@ export async function updateVideoIndexService(
   documentId: string,
   transcriptSegments: StoredTranscriptIndex,
 ): Promise<{ success: true } | { success: false; error: string }> {
-  const result = await strapiFetch<StrapiVideo>('PUT', `/api/videos/${documentId}`, {
+  const result = await strapiFetch<StrapiVideo>('PUT', `/api/yt-kb/videos/${documentId}`, {
     body: { data: { transcriptSegments } },
   });
   if (!result.ok) {
@@ -465,7 +465,7 @@ export async function fetchVideoByDocumentIdService(
 ): Promise<StrapiVideo | null> {
   const result = await strapiFetch<StrapiVideo>(
     'GET',
-    `/api/videos/${documentId}`,
+    `/api/yt-kb/videos/${documentId}`,
     { query: detailQuery },
   );
   return result.ok ? (result.data ?? null) : null;
@@ -474,7 +474,7 @@ export async function fetchVideoByDocumentIdService(
 export async function fetchVideoByVideoIdService(
   videoId: string,
 ): Promise<StrapiVideo | null> {
-  const result = await strapiFetch<StrapiVideo[]>('GET', '/api/videos', {
+  const result = await strapiFetch<StrapiVideo[]>('GET', '/api/yt-kb/videos', {
     query: {
       ...detailQuery,
       filters: { youtubeVideoId: { $eq: videoId } },
@@ -519,7 +519,7 @@ export async function fetchVideoByDocumentIdWithStatusService(
 ): Promise<VideoLookup> {
   const result = await strapiFetch<StrapiVideo>(
     'GET',
-    `/api/videos/${documentId}`,
+    `/api/yt-kb/videos/${documentId}`,
     { query: detailQuery },
   );
   if (result.ok) {
@@ -532,7 +532,7 @@ export async function fetchVideoByDocumentIdWithStatusService(
 export async function fetchVideoByVideoIdWithStatusService(
   videoId: string,
 ): Promise<VideoLookup> {
-  const result = await strapiFetch<StrapiVideo[]>('GET', '/api/videos', {
+  const result = await strapiFetch<StrapiVideo[]>('GET', '/api/yt-kb/videos', {
     query: {
       ...detailQuery,
       filters: { youtubeVideoId: { $eq: videoId } },
@@ -599,7 +599,7 @@ export async function createVideoService(
     },
   };
 
-  const result = await strapiFetch<StrapiVideo>('POST', '/api/videos', { body });
+  const result = await strapiFetch<StrapiVideo>('POST', '/api/yt-kb/videos', { body });
   if (!result.ok) {
     return { success: false, kind: 'error', error: result.error };
   }
@@ -650,7 +650,7 @@ export async function updateVideoSummaryService(
   const { documentId, ...rest } = input;
   const result = await strapiFetch<StrapiVideo>(
     'PUT',
-    `/api/videos/${documentId}`,
+    `/api/yt-kb/videos/${documentId}`,
     {
       body: {
         data: {
@@ -678,7 +678,7 @@ export async function updateVideoEmbeddingService(input: {
 }): Promise<{ success: true } | { success: false; error: string }> {
   const result = await strapiFetch<StrapiVideo>(
     'PUT',
-    `/api/videos/${input.documentId}`,
+    `/api/yt-kb/videos/${input.documentId}`,
     {
       body: {
         data: {
@@ -700,7 +700,7 @@ export async function updateVideoPassagesService(input: {
 }): Promise<{ success: true } | { success: false; error: string }> {
   const result = await strapiFetch<StrapiVideo>(
     'PUT',
-    `/api/videos/${input.documentId}`,
+    `/api/yt-kb/videos/${input.documentId}`,
     { body: { data: { passageEmbeddings: input.passageEmbeddings } } },
   );
   return result.ok ? { success: true } : { success: false, error: result.error };
@@ -714,7 +714,7 @@ export async function updateVideoPassagesService(input: {
 export async function markSummaryFailedService(
   documentId: string,
 ): Promise<{ success: true } | { success: false; error: string }> {
-  const result = await strapiFetch('PUT', `/api/videos/${documentId}`, {
+  const result = await strapiFetch('PUT', `/api/yt-kb/videos/${documentId}`, {
     body: { data: { summaryStatus: 'failed' } },
   });
   if (!result.ok) {
@@ -741,7 +741,7 @@ export async function updateVideoVerdictService(input: {
 }): Promise<{ success: true } | { success: false; error: string }> {
   const result = await strapiFetch<StrapiVideo>(
     'PUT',
-    `/api/videos/${input.documentId}`,
+    `/api/yt-kb/videos/${input.documentId}`,
     {
       body: {
         data: {
@@ -773,7 +773,7 @@ export async function updateVideoSignalScoresService(input: {
 }): Promise<{ success: true } | { success: false; error: string }> {
   const result = await strapiFetch<StrapiVideo>(
     'PUT',
-    `/api/videos/${input.documentId}`,
+    `/api/yt-kb/videos/${input.documentId}`,
     {
       body: {
         data: {
@@ -804,7 +804,7 @@ export async function updateVideoValueScoreService(input: {
 }): Promise<{ success: true } | { success: false; error: string }> {
   const result = await strapiFetch<StrapiVideo>(
     'PUT',
-    `/api/videos/${input.documentId}`,
+    `/api/yt-kb/videos/${input.documentId}`,
     {
       body: {
         data: {
@@ -826,7 +826,7 @@ export async function updateVideoFinalScoreService(input: {
 }): Promise<{ success: true } | { success: false; error: string }> {
   const result = await strapiFetch<StrapiVideo>(
     'PUT',
-    `/api/videos/${input.documentId}`,
+    `/api/yt-kb/videos/${input.documentId}`,
     { body: { data: { finalScore: input.finalScore } } },
   );
   return result.ok ? { success: true } : { success: false, error: result.error };
@@ -843,7 +843,7 @@ export async function updateSectionTimecodeService(input: {
   // Fetch current sections so we can resend the array with one edit.
   const read = await strapiFetch<StrapiVideo>(
     'GET',
-    `/api/videos/${input.documentId}`,
+    `/api/yt-kb/videos/${input.documentId}`,
     { query: detailQuery },
   );
   if (!read.ok) return { success: false, error: read.error };
@@ -861,7 +861,7 @@ export async function updateSectionTimecodeService(input: {
 
   const write = await strapiFetch<StrapiVideo>(
     'PUT',
-    `/api/videos/${input.documentId}`,
+    `/api/yt-kb/videos/${input.documentId}`,
     { body: { data: { sections: nextSections } } },
   );
   return write.ok ? { success: true } : { success: false, error: write.error };
@@ -874,7 +874,7 @@ export async function updateSectionTimecodeService(input: {
 export async function markSummaryPendingService(
   documentId: string,
 ): Promise<{ success: true } | { success: false; error: string }> {
-  const result = await strapiFetch<StrapiVideo>('PUT', `/api/videos/${documentId}`, {
+  const result = await strapiFetch<StrapiVideo>('PUT', `/api/yt-kb/videos/${documentId}`, {
     body: { data: { summaryStatus: 'pending' } },
   });
   return result.ok ? { success: true } : { success: false, error: result.error };
@@ -892,7 +892,7 @@ export async function markSummaryPendingService(
 export async function fetchTranscriptByVideoIdService(
   videoId: string,
 ): Promise<StrapiTranscript | null> {
-  const result = await strapiFetch<StrapiTranscript[]>('GET', '/api/transcripts', {
+  const result = await strapiFetch<StrapiTranscript[]>('GET', '/api/yt-kb/transcripts', {
     query: {
       filters: { youtubeVideoId: { $eq: videoId } },
       pagination: { pageSize: 1 },
@@ -915,7 +915,7 @@ export type CreateTranscriptServiceInput = {
 export async function createTranscriptService(
   input: CreateTranscriptServiceInput,
 ): Promise<{ success: true; transcript: StrapiTranscript } | { success: false; error: string }> {
-  const result = await strapiFetch<StrapiTranscript>('POST', '/api/transcripts', {
+  const result = await strapiFetch<StrapiTranscript>('POST', '/api/yt-kb/transcripts', {
     body: { data: { ...input, fetchedAt: new Date().toISOString() } },
   });
   return result.ok
@@ -935,7 +935,7 @@ export async function updateTranscriptService(
   const { documentId, ...fields } = input;
   const result = await strapiFetch<StrapiTranscript>(
     'PUT',
-    `/api/transcripts/${documentId}`,
+    `/api/yt-kb/transcripts/${documentId}`,
     { body: { data: { ...fields, fetchedAt: new Date().toISOString() } } },
   );
   return result.ok && result.data
@@ -956,7 +956,7 @@ export async function linkVideoToTranscriptService(
 ): Promise<{ success: true } | { success: false; error: string }> {
   const result = await strapiFetch<StrapiVideo>(
     'PUT',
-    `/api/videos/${videoDocumentId}`,
+    `/api/yt-kb/videos/${videoDocumentId}`,
     { body: { data: { transcript: transcriptDocumentId } } },
   );
   return result.ok ? { success: true } : { success: false, error: result.error };
@@ -969,7 +969,7 @@ export async function linkVideoToTranscriptService(
 export async function findTagByNameService(rawName: string): Promise<StrapiTag | null> {
   const name = rawName.trim().toLowerCase().replace(/\s+/g, ' ');
   if (!name) return null;
-  const result = await strapiFetch<StrapiTag[]>('GET', '/api/tags', {
+  const result = await strapiFetch<StrapiTag[]>('GET', '/api/yt-kb/tags', {
     query: {
       filters: { name: { $eq: name } },
       pagination: { pageSize: 1 },
@@ -980,7 +980,7 @@ export async function findTagByNameService(rawName: string): Promise<StrapiTag |
 
 export async function searchTagsService(query: string, limit = 8): Promise<StrapiTag[]> {
   const q = query.trim().toLowerCase();
-  const result = await strapiFetch<StrapiTag[]>('GET', '/api/tags', {
+  const result = await strapiFetch<StrapiTag[]>('GET', '/api/yt-kb/tags', {
     query: {
       ...(q ? { filters: { name: { $containsi: q } } } : {}),
       sort: 'name:asc',
@@ -991,7 +991,7 @@ export async function searchTagsService(query: string, limit = 8): Promise<Strap
 }
 
 async function createTagService(name: string): Promise<StrapiTag | null> {
-  const result = await strapiFetch<StrapiTag>('POST', '/api/tags', {
+  const result = await strapiFetch<StrapiTag>('POST', '/api/yt-kb/tags', {
     body: { data: { name } },
   });
   return result.ok ? result.data : null;
