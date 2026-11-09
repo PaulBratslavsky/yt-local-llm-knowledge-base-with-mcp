@@ -1,20 +1,10 @@
-// The yt-knowledge-base domain tools registered on the official MCP server.
+// The yt-knowledge-base domain tools, registered on the official MCP server
+// (adapter.ts) and offered to strapi-plugin-tanstack-ai (services/ai-tools.ts).
 //
-// Each entry is metadata only: which body, a human title, and what that body
-// does to the world. The input schema comes from the tool itself.
-//
-// It used to carry a second, hand-written copy of every tool's input schema
-// (@strapi/utils' zod here, the app's own zod on the body) because the two weren't
-// interchangeable. Only this copy was enforced at runtime, `ToolDef<any,
-// any>` erased the body's type, and `strict: false` meant tsc couldn't see
-// the difference — so adding a field to a body and forgetting the copy left
-// the body destructuring `undefined`, silently. The bodies now declare their
-// schemas with the zod 4 API from @strapi/utils, the one the SDK needs, and the adapter passes
-// `tool.schema` straight through. One declaration, no drift possible.
-//
-// `sideEffects` replaces the old hand-typed `access` tier: the admin action
-// that gates a tool is derived from what its body does (see adapter.ts), so
-// a mutating tool can't be labelled read-only by a typo.
+// Each entry is metadata only: which body, and what that body does to the
+// world. Name, title and admin action are derived from tool.name
+// (names.ts); the input schema comes from the tool itself. `sideEffects`
+// only feeds the legacy tier-grant migration (see adapter.ts SideEffects).
 import type { DomainTool } from './adapter';
 
 import { libraryStatsTool } from '../mcp/tools/library-stats';
@@ -38,34 +28,31 @@ import { fetchTranscriptTool } from '../mcp/tools/fetch-transcript';
 import { generateDigestTool } from '../mcp/tools/generate-digest';
 
 export const domainTools: DomainTool[] = [
-  // ---- Queries (gated by plugin::yt-kb.read) ----
-  { tool: libraryStatsTool, title: 'Library stats overview', sideEffects: 'none' },
-  { tool: listVideosTool, title: 'List videos', sideEffects: 'none' },
-  { tool: searchVideosTool, title: 'Search videos', sideEffects: 'none' },
-  { tool: getVideoTool, title: 'Get a video', sideEffects: 'none' },
-  { tool: getTranscriptTool, title: 'Get a transcript', sideEffects: 'none' },
-  { tool: searchTranscriptTool, title: 'Search within a transcript', sideEffects: 'none' },
-  { tool: findTranscriptsTool, title: 'Find transcripts', sideEffects: 'none' },
-  { tool: crossSearchTranscriptsTool, title: 'Search across transcripts', sideEffects: 'none' },
-  { tool: listTranscriptsTool, title: 'List transcripts', sideEffects: 'none' },
-  { tool: aggregateByTagTool, title: 'Aggregate videos by tag', sideEffects: 'none' },
-  { tool: listUntaggedTool, title: 'List untagged videos', sideEffects: 'none' },
-  { tool: listTagsTool, title: 'List tags', sideEffects: 'none' },
-  { tool: relatedVideosTool, title: 'Related videos', sideEffects: 'none' },
-  { tool: getReadableArticleTool, title: 'Get the readable article', sideEffects: 'none' },
-  // Reads the compiled summaries and hands them back for the CALLER to
-  // synthesize — no LLM, no network, no writes. It was tiered `maintenance`
-  // on an "LLM cost" premise its own header disclaims, which kept the
-  // documented browse-and-annotate token from calling a read-only tool.
-  { tool: generateDigestTool, title: 'Generate a digest', sideEffects: 'none' },
+  // ---- Queries (legacy tier plugin::yt-kb.read) ----
+  { tool: libraryStatsTool, sideEffects: 'none' },
+  { tool: listVideosTool, sideEffects: 'none' },
+  { tool: searchVideosTool, sideEffects: 'none' },
+  { tool: getVideoTool, sideEffects: 'none' },
+  { tool: getTranscriptTool, sideEffects: 'none' },
+  { tool: searchTranscriptTool, sideEffects: 'none' },
+  { tool: findTranscriptsTool, sideEffects: 'none' },
+  { tool: crossSearchTranscriptsTool, sideEffects: 'none' },
+  { tool: listTranscriptsTool, sideEffects: 'none' },
+  { tool: aggregateByTagTool, sideEffects: 'none' },
+  { tool: listUntaggedTool, sideEffects: 'none' },
+  { tool: listTagsTool, sideEffects: 'none' },
+  { tool: relatedVideosTool, sideEffects: 'none' },
+  { tool: getReadableArticleTool, sideEffects: 'none' },
+  // Reads compiled summaries for the CALLER to synthesize — no LLM, no writes.
+  { tool: generateDigestTool, sideEffects: 'none' },
 
-  // ---- Mutations (gated by plugin::yt-kb.write) ----
-  { tool: saveSummaryTool, title: 'Save a video summary', sideEffects: 'write' },
-  { tool: tagVideoTool, title: 'Tag a video', sideEffects: 'write' },
-  { tool: untagVideoTool, title: 'Untag a video', sideEffects: 'write' },
-  { tool: saveNoteTool, title: 'Save a note', sideEffects: 'write' },
+  // ---- Mutations (legacy tier plugin::yt-kb.write) ----
+  { tool: saveSummaryTool, sideEffects: 'write' },
+  { tool: tagVideoTool, sideEffects: 'write' },
+  { tool: untagVideoTool, sideEffects: 'write' },
+  { tool: saveNoteTool, sideEffects: 'write' },
 
-  // ---- Leaves the box (gated by plugin::yt-kb.maintenance) ----
-  { tool: addVideoTool, title: 'Add a video', sideEffects: 'external' },
-  { tool: fetchTranscriptTool, title: 'Fetch a transcript from YouTube', sideEffects: 'external' },
+  // ---- Leaves the box (legacy tier plugin::yt-kb.maintenance) ----
+  { tool: addVideoTool, sideEffects: 'external' },
+  { tool: fetchTranscriptTool, sideEffects: 'external' },
 ];

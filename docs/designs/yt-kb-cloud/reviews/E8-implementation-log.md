@@ -311,3 +311,100 @@ Kit outputs are in `server/.tmp/e8/m3-*` (not committed). The kit's pre-M3 copy 
 - **13d:** the existing success case's exact `toEqual` must take `searchIndex` out before it can assert on it.
 - **Commit message:** the spec's **Commit** bullet says `M4: Search ownership and grounding`. As instructed, the first line is the `### M4 — …` title. The bullet does not list this log; it is included as instructed.
 - **Tool note:** in this agent's zsh, `rm -f server/.tmp/e8-m4.db*` aborts when the glob matches nothing (`no matches found`). The DB was then removed with `find … -delete`.
+
+## M5
+
+**Milestone:** M5 — MCP tools, permissions, ai-tools, import gate, permission seeding, token script. Started from HEAD `5a208c3` (M4), clean working tree. Ports 1340, 1341 and 3005 were free before the checks and after them. As with M1–M4, the commit hash is reported in the hand-off, not written here.
+
+### Facts on 5.61.0
+
+I re-opened the files behind Facts 1–6 in the installed 5.61.0, and all of them hold:
+
+- `Permission.js` has the `role` and `apiToken` manyToOne relations.
+- `Strapi.js`: `runPluginsLifecycles(BOOTSTRAP)` (line 412) runs before the providers' `bootstrap` (line 414).
+- Admin's `bootstrap.js` runs `resetSuperAdminPermissions` (line 168), then `cleanPermissionsInDatabase` (line 170).
+- MCP authentication uses `authenticateAdminToken`.
+- A duplicate name throws in `McpCapabilityDefinitionRegistry.js:21`. So does a registration after start, in `services/mcp/index.js:48`.
+- `tool-registry.js` wraps a throwing handler as `Tool "<name>" execution failed`.
+- The `admin-token` strategy is registered (`register.js:22`).
+- `api-token-content-api` exists (`services/index.js:42`). Its `create` validates action ids against the content-API action provider, and it exposes `revoke(id)` (`api-token.js:861`, used at `:1180`). That `revoke` deletes the linked admin permissions and then the token row.
+- `$startsWith` is supported (`where.js:259`), and SQLite sets `pragma foreign_keys = on`.
+
+Fact 7 (tanstack-ai 1.7.0) is in another repo, and M1 did not change it. Its zod part is covered by `ai-tools.test.ts` and by Verify 4's `aiUsable`. Fact 9 holds on the scratch copy: 6 legacy rows, 3 on `strapi-super-admin` and 3 on `claude-mcp-1782487483515`. There are no `plugin::yt-kb.tool.*` rows. The read-only `yt-kb-site` is there and `yt-kb-app` is not. No STOP condition applied.
+
+### Steps
+
+- **Whole-file blocks:** a script copied every block verbatim from the spec. It took each fenced block from a given line number to its closing fence and dedented it. The files are:
+  - `names.ts`, `adapter.ts`, `tools.ts`, `permissions.ts`
+  - `services/ai-tools.ts`
+  - `permission-seeding/{legacy-grants,users-permissions,index}.ts`
+  - `controllers/importer.ts`
+  - `scripts/create-tokens.cjs`
+  - the 7 test files
+- **Edits:** each splice asserted its anchor first. They are:
+  - `mcp-official/index.ts`: the loop and its log only. The order `registerMcpAdminPermissions(strapi)` → `toolsEnabled` → `isEnabled()` is unchanged.
+  - `mcp/registry.ts`: the `name` doc comment.
+  - `services/index.ts`: `'ai-tools': aiTools` after `fetcher`.
+  - `bootstrap.ts`: the import, plus `await seedPermissions(strapi)` first.
+  - `copy-content.mjs`: the header pair, `postImport` above the batching comment, and `flush` calling `postImport`.
+  - `bootstrap.test.ts`: the third `vi.mock`, its import, `mockClear` in `beforeEach`, and one new `it` for the spec's table row. The row checks that `seedPermissions` is called once, with the fake `strapi`, and before the first `log.warn` (by `invocationCallOrder`).
+- **Unchanged, as the spec says:** all 21 tool bodies and descriptions, `fetch-transcript.ts`, `PSRC/index.ts`, `register.ts`, `routes/index.ts` (it imports `FETCH_TRANSCRIPT_ACTION`, which is now derived) and `server/config/plugins.ts`. The `mcp/tools/` files and their R-E8-3 root-level `searchIndex` loads were not touched.
+- **R-E8-1:** not needed. `test:ts:back` passed on the first run. The `registerTool({...})` literal also typechecks under 5.61's types.
+- **R-E8-2, applied in 3 places:**
+  - The adapter's two warn lines, `skipped MCP tool …` and `MCP tool failed …`, have the meta `{ name }`, not `{ name, message }`.
+  - `seedPermissions`' two warn lines, `legacy MCP grant migration failed` and `could not check Users & Permissions roles`, are called with the text only (their meta was `{ message }` alone).
+  - `adapter.test.ts`'s two `toHaveBeenCalledWith` expectations were changed to `{ name: … }` to match.
+  - The two info lines keep their meta objects, the migration result `r` and `{ count }`. Neither has a `message` key, and the boot log showed no duplicated text.
+- **R-E8-3:** no M5 code names `searchIndex` in a populate. No tool file changed.
+- **Generated types:** no schema change, and `server/types/generated/` is unchanged.
+
+### Verify results
+
+| # | Check | Result | What it proved / did not prove |
+|---|---|---|---|
+| 0 | Ports | 1340, 1341 and 3005 all `"busy":false` | — |
+| 1 | Static gates | Plugin `{"passed":114,"failed":0,"floor":83,"missing":[]}` (19 files; the M5 files are names 6, adapter 4, ai-tools 6, legacy-grants 6, users-permissions 3, importer 5, guard 3, and bootstrap 5, one of them new). `test:ts:back` 0, plugin build 0, server `tsc --noEmit` 0. `yarn test` 0: client `{"total":335,"passed":333,"failed":0,"pending":2}`, the same as M4. **Extra:** a mutation that registers `tool.fetch-transcript` twice fails `adapter.test.ts` (25 ≠ 24); the file was restored and the test passes again. `server/.tmp/e8/plugin-passed-m5.txt` = 114 (scratch, for M6, which the spec does not require). | Proves the new code typechecks, builds and passes its unit tests. The tests use hand-written fakes (see "Stubs and mocks"). |
+| 2 | Kit | `exec` was spliced in verbatim from the spec, and `node --check` passes. `exec server/.tmp/data.db 'SELECT 1'` → `refusing to write … not a scratch DB`, exit 1. `m5-inspect.cjs` was written verbatim. | Proves the kit cannot write the owner's DB. |
+| 3 | Scratch set-up | Script exit 0. Backup `integrity: ok`. Plugin build and `yarn --cwd server build` 0. The token has 3 legacy rows and 0 tool rows. One Public `plugin::yt-kb.video.find` grant was inserted, and the open-role count is 1. `OLDSITE` was recorded, and there are 0 `yt-kb-app` rows. | The owner's `data.db` was read once, by the kit's online backup. Nothing else touched it. |
+| 4 | First boots, migration, inspect | The script's checks all pass, but see "Spec discrepancies" for the `jq` parse of `m5-inspect.json`. Inspect: `{"db":"e8-m5.db","toolActions":21,"legacyDisplayNames":[3 × "… (legacy — migrated at boot)"],"aiTools":21,"aiUsable":true,"aiMeta":"YT Knowledge Base"}`. The token has 21 distinct tool actions in 21 rows and 0 legacy rows. Super-admin has 21 tool rows. Public/Authenticated have 0 yt-kb rows. **Migration counts on the copy:** the first load (`admin:create-user`) logged `6 legacy row(s), 3 migrated, 21 per-tool grant(s) added, 3 super-admin and 0 orphan row(s) left to Strapi` and `removed 1 yt-kb permission(s) from Public/Authenticated roles`. Every later load (inspect, both token-script runs, `yarn develop`) logged `3 legacy row(s), 0 migrated, 0 … added, 3 super-admin` and `removed 0`. | Proves the migration on real grant rows: token 3 → 21. It is idempotent across boots. The super-admin role is left to Strapi's reset, which gives it the 21 tool actions and re-creates the 3 legacy ones each boot, as the legacy-grants header says. The U&P cleanup works on a real `up_permissions` row. **The ai-tools contract check** is `aiUsable: true`. It ran inside the real Strapi: `getTools()` returns an array synchronously, and every tool has `name`, an `execute` function and a `schema`. Every `action` is a registered admin action, and every schema converts with `~standard.jsonSchema.input({ target: 'draft-07' })` on zod 4.4.3. These are tanstack-ai 1.7.0's checks as the spec transcribes them. tanstack-ai itself was not installed or run. |
+| 5 | Token script | Script exit 0. Both key files are mode 0600 (`{"bad":[]}`). `yt-kb-app` is type `custom` with 24 permissions. The old read-only `yt-kb-site` (id 7) was revoked, and one custom `yt-kb-site` (id 9) with 2 permissions replaces it. The log check passed (`{"ok":true}`). The second run, without `--rotate` and with `MCP_ENABLED=false`, left both tokens alone ("already exists … not written"). It wrote no file, and the token still has 21 tool rows. An existing output file → exit 2. `--rotate yt-kb-client` → exit 2, and no file is written. | Proves create, rotate, idempotence, the file guards, and that a boot with MCP off keeps the per-tool grants. The rotate rollback when a create fails was not exercised. |
+| 6 | Scratch server, check tokens | Script exit 0. `/_health` 204. While Strapi ran on SQLite, the token script refused (exit 2, "something is listening on port 1341"), and no file was written. The token still has 21 tool rows. `admin-tokens` with the 21 actions: ok, `grantedActions` 21. Tokens `one` and `import` are ok. | — |
+| 7 | MCP | Script exit 0, all 8 checks. **The 21 names in tools/list** (`mcp` token): `yt_kb__library_stats`, `yt_kb__list_videos`, `yt_kb__search_videos`, `yt_kb__get_video`, `yt_kb__get_transcript`, `yt_kb__search_transcript`, `yt_kb__find_transcripts`, `yt_kb__cross_search_transcripts`, `yt_kb__list_transcripts`, `yt_kb__aggregate_by_tag`, `yt_kb__list_untagged`, `yt_kb__list_tags`, `yt_kb__related_videos`, `yt_kb__get_readable_article`, `yt_kb__generate_digest`, `yt_kb__save_summary`, `yt_kb__tag_video`, `yt_kb__untag_video`, `yt_kb__save_note`, `yt_kb__add_video`, `yt_kb__fetch_transcript`. The list also has core's `log`. No bare names appear. Title example: `YT Knowledge Base: Get Video`. `yt_kb__fetch_transcript` takes `["force","videoId"]`. The `one` token lists `log` and `yt_kb__get_video`. Its `get_video` call works. Its `library_stats` call gets rpcError `-32602 Tool yt_kb__library_stats disabled`. `fetch_transcript` with `not-an-id` → `isError`, "videoId must be an 11-character YouTube video id". The `yt-kb-app` key on `/mcp` → initStatus 401. | Proves per-tool gating and the prefixed names through the real `/mcp`. It also proves the M-9 check: a yt-kb-only token sees no Content Manager tool. Only `get_video` and the refused calls were executed. The other tools were listed, not called. |
+| 8 | REST | Script exit 0, all 14 checks. `yt-kb-app` can read videos and transcripts and use the content-API `yt-transcript` route. It gets 403 on a transcript POST, on `/api/users` and on the import route. `yt-kb-site` can read videos and tags, and gets 403 on notes and `/api/users`. Public gets 403. The `import` token gets 403 with the exact gate message. The admin route returns 200 for `mcp` and 403 for `one`. | Proves the scopes the token script grants, the import gate under the default config, and that M3's admin route is gated by the derived `FETCH_TRANSCRIPT_ACTION`. 207 is covered only by `importer.test.ts`. The Strapi log had no 5xx (status tally 200 ×33, 201 ×4, 204, 401, 403 ×8). Its only `error` lines are the expected dead-proxy check. |
+| 9 | Clean up | Killed the 1341 listener (PID 64587, started in step 6). Ran `rm -f server/.tmp/e8-m5.db* server/.tmp/e8/m5-* server/.tmp/e8/m5.env` (in bash). 1340, 1341 and 3005 are free, and no `strapi develop` or `vite dev` is left. | The two key files went with `m5-*`. `tokens.json` still holds scratch keys for the deleted DB, and the next milestone rewrites it. The kit's pre-M5 copy is `server/.tmp/e8/e8.mjs.pre-m5`. |
+| 10 | Owner's DB | Not booted. The kit's online backup read it once (step 3). | Deployment step 2 runs its migration; the expected result is the token's 3 → 21. |
+
+### Stubs and mocks
+
+- **Plugin tests:** hand-written fakes.
+  - `adapter.test.ts`: a fake `strapi` with `registerTool` and `actionProvider.registerMany` stubs.
+  - `legacy-grants.test.ts`: an in-memory fake `db.query`/`transaction`.
+  - `users-permissions.test.ts`: a fake query over a row fixture.
+  - `importer.test.ts`: a fake plugin config and service.
+  - `ai-tools.test.ts`: `vi.spyOn(listTagsTool, 'execute')` in one case. The other cases use the real tool list and the real zod 4.4.3 schemas.
+  - `bootstrap.test.ts`: mocks `./permission-seeding` as well as M3's mocks.
+- **Verify 3–8:** a real Strapi 5.61.0 on an online-backup copy of the owner's data. Every load and start had `PROXY_URL=http://127.0.0.1:9`. Nothing reached YouTube: the only YouTube-bound call, `fetch_transcript` with a bad id, failed input validation before any fetch.
+
+### Pre-existing problems found (not fixed)
+
+- Admin token `claude-mcp-1782487483515` has `kind = 'admin'` and also a legacy `type = 'read-only'` in `strapi_api_tokens`. It is harmless, but 5.61's `assertAdminKindFields` would refuse that combination on create.
+- `docs/mcp.md`, `CLAUDE.md`, `README.md` and `docs/architecture.md` still give the bare tool names and the three tiers. M8 updates them, as the spec plans.
+- `add-video.ts`'s stale duplicate-key text, as noted in M2 and M3.
+
+### Spec discrepancies
+
+- **Verify 4 (spec error, as in M4 Verify 2):** `m5-inspect.cjs`'s stdout also carries Strapi's logs from `createStrapi().load()`, so `jq -e … server/.tmp/e8/m5-inspect.json` exited 5 (parse error). The script stopped after the inspect had run. `admin:create-user` had already succeeded, and running it again would fail on the existing user. So I extracted the result line with `jq -R -c 'fromjson? | select(type=="object" and has("toolActions"))'` into `m5-inspect.obj.json`. Then I ran the rest of step 4's script verbatim against that file: both `jq -e` checks and all seven SQL tests. Exit 0.
+- **R-E8-2 test change:** the spec's `adapter.test.ts` expects `{ name, message }` as the meta. That is changed to `{ name }`, as above.
+- **`bootstrap.test.ts`:** the spec gives the new case as a table row. It is written as one `it` with exactly the row's assertions, plus `expect(log.warn).toHaveBeenCalled()` so the call-order comparison has a value to compare.
+- **Verify 9:** the spec gives the cleanup as a zsh-unsafe glob (see M4's tool note). I ran it in `bash -c`.
+- **Commit message:** as instructed, the first line is the `### M5 — …` title. The spec has no **Commit** bullet for M5. This log is included.
+
+### Owner actions (Deployment, not done here)
+
+These are Deployment steps 2–3; the agent did not run them:
+
+1. Back up `server/.tmp/data.db` (`data.db.pre-m5-<TS>`).
+2. Boot once. Expect `legacy MCP grant migration: 6 legacy row(s), 3 migrated, 21 per-tool grant(s) added …`.
+3. Reconnect MCP clients, so they pick up the `yt_kb__*` names.
+4. With Strapi stopped, run `create-tokens.cjs --out-app … --out-site … --rotate yt-kb-site`.
+5. Put the two keys into `client/.env` and `site/.env`.

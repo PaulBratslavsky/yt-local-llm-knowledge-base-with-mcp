@@ -44,10 +44,11 @@ export async function registerOfficialMcpTools(
     return;
   }
 
+  let registered = 0;
   for (const def of domainTools) {
-    registerDomainTool(mcp.registerTool, strapi, def);
+    if (registerDomainTool(mcp.registerTool, strapi, def)) registered += 1;
   }
   strapi.log.info(
-    `[yt-kb] registered ${domainTools.length} MCP tool(s) on the official MCP server`,
+    `[yt-kb] registered ${registered} of ${domainTools.length} MCP tool(s) on the official MCP server`,
   );
 }

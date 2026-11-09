@@ -1,6 +1,7 @@
 import { factories } from '@strapi/strapi';
 import importer from './importer';
 import fetcher from './fetcher';
+import aiTools from './ai-tools';
 
 const s = (uid: string) => factories.createCoreService(uid as never);
 
@@ -12,4 +13,5 @@ export default {
   digest: s('plugin::yt-kb.digest'),
   importer,
   fetcher,
+  'ai-tools': aiTools,
 };

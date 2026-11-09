@@ -1,68 +1,75 @@
-// Admin permissions for this plugin's MCP tools.
+// Admin permissions for this plugin's tools.
 //
-// The official MCP server gates each custom tool behind an `auth.policies`
-// action; that action must exist in the admin permission registry before a
-// token can be granted it, and a tool appears in `tools/list` only when the
-// connecting token holds its action.
+// One action per tool, plugin::yt-kb.tool.<kebab> (section 'plugins',
+// subCategory 'AI tools', youtube-transcripts' shape). The official MCP
+// server lists a tool only to a token holding its action; tanstack-ai offers
+// a tool only to an admin whose role holds it.
 //
-// Registered under the plugin namespace (section 'plugins', pluginName
-// 'yt-kb'), so the action ids are plugin::yt-kb.read / .write / .maintenance
-// and can never collide with a host app's own permissions.
+// The three tier actions of earlier versions stay registered for one release
+// so the boot-time migration (permission-seeding/legacy-grants.ts) can still
+// read their rows: Strapi deletes rows of unregistered actions at boot.
+//
+// registerMany is NOT wrapped in try/catch on purpose: if it failed and boot
+// went on, admin's cleanPermissionsInDatabase would delete every yt-kb grant.
+//
+// M3 registered plugin::yt-kb.tool.fetch-transcript by hand ahead of the
+// others; this file replaces that entry with the generated list, which
+// contains it exactly once (the action provider throws on a duplicate).
 import type { Core } from '@strapi/strapi';
+import { domainTools } from './tools';
+import { PLUGIN_ID, toolActionId, toolActionUid, toolDisplayName } from './names';
 
-export const MCP_ACTIONS = {
+/** Gates the admin route GET /yt-kb/yt-transcript/:videoId (routes/index.ts,
+ *  M3) — the same action as the fetchTranscript tool. */
+export const FETCH_TRANSCRIPT_ACTION = toolActionId('fetchTranscript');
+
+export const LEGACY_ACTIONS = {
   READ: 'plugin::yt-kb.read',
   WRITE: 'plugin::yt-kb.write',
   MAINTENANCE: 'plugin::yt-kb.maintenance',
 } as const;
 
-/** Gates GET /yt-kb/yt-transcript/:videoId (admin route) — the action
- *  youtube-transcripts uses for its route, and the per-tool action M5 gives
- *  the fetchTranscript tool. Registered here ahead of M5 so the route works
- *  now; M5 keeps this uid (it must not register it a second time). */
-export const FETCH_TRANSCRIPT_ACTION = 'plugin::yt-kb.tool.fetch-transcript';
+const LEGACY_SUFFIX = ' (legacy — migrated at boot)';
 
-const ACTION_DEFS = [
+export const LEGACY_ACTION_DEFS = [
   {
     section: 'plugins',
-    pluginName: 'yt-kb',
+    pluginName: PLUGIN_ID,
     subCategory: 'MCP tools',
-    displayName: 'Use read-only MCP tools',
+    displayName: `Use read-only MCP tools${LEGACY_SUFFIX}`,
     uid: 'read',
   },
   {
     section: 'plugins',
-    pluginName: 'yt-kb',
+    pluginName: PLUGIN_ID,
     subCategory: 'MCP tools',
-    displayName: 'Use mutating MCP tools',
+    displayName: `Use mutating MCP tools${LEGACY_SUFFIX}`,
     uid: 'write',
   },
   {
-    // The external-side-effect tools: fetchTranscript + addVideo, which hit
-    // YouTube. Split out so a browse-and-annotate token (read + write) can't
-    // trigger them. There is no embedding tool: inference runs in the client.
     section: 'plugins',
-    pluginName: 'yt-kb',
+    pluginName: PLUGIN_ID,
     subCategory: 'MCP tools',
-    displayName: 'Use maintenance MCP tools (hit YouTube)',
+    displayName: `Use maintenance MCP tools (hit YouTube)${LEGACY_SUFFIX}`,
     uid: 'maintenance',
-  },
-  {
-    section: 'plugins',
-    pluginName: 'yt-kb',
-    subCategory: 'AI tools',
-    displayName: 'Fetch transcript',
-    uid: 'tool.fetch-transcript',
   },
 ];
 
-export async function registerMcpAdminPermissions(
-  strapi: Core.Strapi,
-): Promise<void> {
+export const buildToolActionDefs = () =>
+  domainTools.map(({ tool }) => ({
+    section: 'plugins',
+    pluginName: PLUGIN_ID,
+    subCategory: 'AI tools',
+    displayName: toolDisplayName(tool.name),
+    uid: toolActionUid(tool.name),
+  }));
+
+export async function registerMcpAdminPermissions(strapi: Core.Strapi): Promise<void> {
+  const toolDefs = buildToolActionDefs();
   await strapi
     .service('admin::permission')
-    .actionProvider.registerMany(ACTION_DEFS);
+    .actionProvider.registerMany([...toolDefs, ...LEGACY_ACTION_DEFS]);
   strapi.log.info(
-    `[yt-kb] registered ${ACTION_DEFS.length} MCP admin permission(s)`,
+    `[yt-kb] registered ${toolDefs.length} tool permission(s) and ${LEGACY_ACTION_DEFS.length} legacy tier permission(s)`,
   );
 }

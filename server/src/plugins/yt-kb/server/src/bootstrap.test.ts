@@ -7,9 +7,11 @@ vi.mock('undici', () => ({
 vi.mock('./services/metadata-backfill', () => ({
   backfillTranscriptMetadata: vi.fn(async () => ({ scanned: 0, updated: 0, skipped: 0, failed: [] })),
 }));
+vi.mock('./permission-seeding', () => ({ seedPermissions: vi.fn(async () => {}) }));
 
 import { fetch as undiciFetch } from 'undici';
 import { backfillTranscriptMetadata } from './services/metadata-backfill';
+import { seedPermissions } from './permission-seeding';
 import bootstrap from './bootstrap';
 
 function fakeStrapi(cfg: Record<string, unknown>) {
@@ -21,6 +23,7 @@ function fakeStrapi(cfg: Record<string, unknown>) {
 beforeEach(() => {
   vi.mocked(undiciFetch).mockClear();
   vi.mocked(backfillTranscriptMetadata).mockClear();
+  vi.mocked(seedPermissions).mockClear();
 });
 
 describe('bootstrap', () => {
@@ -61,5 +64,16 @@ describe('bootstrap', () => {
     await bootstrap({ strapi: strapi as never });
 
     expect(backfillTranscriptMetadata).not.toHaveBeenCalled();
+  });
+
+  it('seeds permissions once, with the strapi instance, before the first warning', async () => {
+    const { strapi, log } = fakeStrapi({ proxyUrl: '' });
+
+    await bootstrap({ strapi: strapi as never });
+
+    expect(seedPermissions).toHaveBeenCalledTimes(1);
+    expect(seedPermissions).toHaveBeenCalledWith(strapi);
+    expect(log.warn).toHaveBeenCalled();
+    expect(vi.mocked(seedPermissions).mock.invocationCallOrder[0]).toBeLessThan(log.warn.mock.invocationCallOrder[0]);
   });
 });

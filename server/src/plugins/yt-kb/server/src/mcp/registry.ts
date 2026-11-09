@@ -22,7 +22,8 @@ export type ToolContext = {
 };
 
 export type ToolDef<Input = unknown, Output = unknown> = {
-  /** camelCase identifier — what Claude Desktop / Claude Code will call. */
+  /** camelCase base name. MCP registers it as yt_kb__<snake_case>
+   *  (mcp-official/names.ts); ai-tools offers it as-is. */
   name: string;
   /** User-facing description. Include when to use vs. not use. */
   description: string;

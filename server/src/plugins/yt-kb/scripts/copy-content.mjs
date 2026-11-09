@@ -8,7 +8,8 @@
 //   SOURCE_TOKEN   API token that can read the source types
 //   DEST_URL       default http://localhost:1340
 //   DEST_TOKEN     API token with plugin::yt-kb.importer.importRecords
-//                  (and read access, for the check)
+//                  (and read access, for the check). The destination must
+//                  set the yt-kb plugin config `import: true` while copying.
 //
 //   node copy-content.mjs            copy, then check
 //   node copy-content.mjs --check    check only, write nothing
@@ -97,6 +98,31 @@ async function readAll(base, prefix, token, t) {
   }
 }
 
+// POST one batch. 200 = every record written; 207 = some failed (listed in
+// `failed`, counted below); 403 with the plugin's "Import is disabled"
+// message = the destination's yt-kb config does not set `import: true`.
+async function postImport(type, batch) {
+  const url = `${DEST_URL}/api/yt-kb/import/${type}`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${DEST_TOKEN}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ data: batch }),
+  });
+  const text = await res.text();
+  let body = null;
+  try { body = JSON.parse(text); } catch { /* not JSON */ }
+  if (res.status === 403 && body?.error?.message?.startsWith('Import is disabled')) {
+    console.error(
+      `Import is disabled on ${DEST_URL}. Set the yt-kb plugin config \`import: true\` there, restart it, run this again, then set it back to false.`,
+    );
+    process.exit(2);
+  }
+  if ((res.status !== 200 && res.status !== 207) || body === null) {
+    throw new Error(`POST ${url} → ${res.status}: ${text.slice(0, 300)}`);
+  }
+  return body;
+}
+
 // POST in batches that stay well under Strapi's JSON body limit.
 const MAX_BATCH_BYTES = 8 * 1024 * 1024;
 async function importAll(t, records) {
@@ -105,10 +131,7 @@ async function importAll(t, records) {
   let bytes = 0;
   const flush = async () => {
     if (batch.length === 0) return;
-    const r = await request(`${DEST_URL}/api/yt-kb/import/${t.type}`, DEST_TOKEN, {
-      method: 'POST',
-      body: JSON.stringify({ data: batch }),
-    });
+    const r = await postImport(t.type, batch);
     totals.created += r.created;
     totals.updated += r.updated;
     totals.failed.push(...r.failed);

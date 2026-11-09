@@ -1,10 +1,14 @@
 import type { Core } from '@strapi/strapi';
+import { seedPermissions } from './permission-seeding';
 import { backfillTranscriptMetadata } from './services/metadata-backfill';
 import { maskProxyUrl, testProxyConnection } from './services/youtube-transcript';
 
 // Plugin bootstrap. The proxy check and the optional metadata backfill work as
 // in strapi-plugin-youtube-transcripts (YT L1123-1153); neither blocks boot.
 export default async ({ strapi }: { strapi: Core.Strapi }) => {
+  // Permission work in code (standard §5). Awaited: it must finish before
+  // admin's bootstrap runs its cleanup (Facts 2). Never throws.
+  await seedPermissions(strapi);
   const plugin = strapi.plugin('yt-kb');
   const proxyUrl = (plugin.config('proxyUrl') as string | undefined) || '';
 
