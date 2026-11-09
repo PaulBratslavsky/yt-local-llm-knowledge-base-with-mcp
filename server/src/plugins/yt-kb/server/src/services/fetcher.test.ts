@@ -152,6 +152,7 @@ describe('fetchAndStore', () => {
       expect.stringMatching(/^\[yt-kb\] transcript fetch failed: dQw4w9WgXcQ \(rate_limited\): /),
       expect.objectContaining({ videoId: ID, reason: 'rate_limited' }),
     );
+    expect(log.warn.mock.calls[0][1]).not.toHaveProperty('message');
     expect(transcripts.create).not.toHaveBeenCalled();
   });
 

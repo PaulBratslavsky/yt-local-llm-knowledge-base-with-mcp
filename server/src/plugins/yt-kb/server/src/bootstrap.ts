@@ -29,7 +29,7 @@ export default async ({ strapi }: { strapi: Core.Strapi }) => {
     strapi.log.info('[yt-kb] backfillMetadata is on: refetching metadata for stored transcripts in the background');
     void backfillTranscriptMetadata(strapi, { proxyUrl: proxyUrl || undefined }).catch((error) => {
       const message = error instanceof Error ? error.message : String(error);
-      strapi.log.warn(`[yt-kb] metadata backfill did not complete: ${message}`, { message });
+      strapi.log.warn(`[yt-kb] metadata backfill did not complete: ${message}`);
     });
   }
 };

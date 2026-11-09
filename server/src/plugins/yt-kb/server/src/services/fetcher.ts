@@ -81,9 +81,9 @@ export default ({ strapi }: { strapi: Core.Strapi }) => {
 
   // The single log line for a failed fetch, whichever path asked
   // (REST, MCP, ai-tools). Callers must not log it again. The fields go
-  // in the message too: Strapi's default console format prints only the
-  // message (@strapi/logger pretty-print), the meta object is for JSON
-  // log transports.
+  // in the message too; the meta object is for JSON log transports and
+  // never has a `message` key (Strapi 5.61's console format appends it to
+  // the line, which would print the message twice).
   const fail = (videoId: string, err: unknown): never => {
     const error =
       err instanceof TranscriptFetchError
@@ -93,7 +93,6 @@ export default ({ strapi }: { strapi: Core.Strapi }) => {
     strapi.log.warn(`[yt-kb] transcript fetch failed: ${id} (${error.reason}): ${error.message}`, {
       videoId: id,
       reason: error.reason,
-      message: error.message,
     });
     throw error;
   };
