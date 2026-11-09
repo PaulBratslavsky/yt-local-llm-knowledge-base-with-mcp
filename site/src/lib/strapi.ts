@@ -42,7 +42,7 @@ interface FetchOptions {
   baseUrl: string;
   fetchImpl?: typeof fetch;
   pageSize?: number;
-  /** Read-only API token. The plugin's routes grant the Public role nothing. */
+  /** The `yt-kb-site` custom token (video.find, tag.find). The plugin's routes grant the Public role nothing. */
   token?: string;
 }
 

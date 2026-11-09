@@ -6,8 +6,8 @@ import { FETCH_TRANSCRIPT_ACTION } from '../mcp-official/permissions';
 //
 // String handlers get an auto-generated scope (plugin::yt-kb.<type>.<action>),
 // which is what API tokens and roles are granted. Nothing is granted to the
-// Public role: the app writes with a Content API token, the site reads with a
-// read-only one.
+// Public role: the app writes with the `yt-kb-app` custom token, the site reads
+// with `yt-kb-site` (video.find, tag.find), both made by scripts/create-tokens.cjs.
 const crud = (singular: string, plural: string) => [
   { method: 'GET' as const, path: `/${plural}`, handler: `${singular}.find` },
   { method: 'GET' as const, path: `/${plural}/:id`, handler: `${singular}.findOne` },

@@ -35,6 +35,8 @@
 //     dropped the signal);
 //   - the oEmbed fallback goes through the proxy and has a 5 s timeout;
 //   - a metadata-only fetch (no caption download) for the boot backfill;
+//   - every Innertube request (session, getInfo, getBasicInfo) has a 20 s
+//     timeout, so a hung call fails as a network error instead of stalling;
 //   - log lines go to a logger the caller passes (Strapi's), not console.
 
 import { Innertube } from 'youtubei.js';
@@ -80,6 +82,7 @@ export const MAX_RETRY_AFTER_MS = 15000;
 export const TIMEDTEXT_TIMEOUT_MS = 25000;
 export const OEMBED_TIMEOUT_MS = 5000;
 export const PROXY_TEST_TIMEOUT_MS = 10000;
+export const INNERTUBE_TIMEOUT_MS = 20000;
 
 const BROWSER_HEADERS = {
   'Accept-Language': 'en-US,en;q=0.9',
@@ -396,13 +399,24 @@ async function fetchTimedTextXml(
 // Session, video info and track pick (YT L19-28, 247-306)
 // ---------------------------------------------------------------------------
 
+/** Wraps a fetch so each request aborts after `ms`, alongside any signal the
+ *  caller passed. youtubei.js sets no timeout of its own. */
+export function withRequestTimeout(fetchImpl: typeof fetch, ms: number): typeof fetch {
+  return ((input: string | URL | Request, init?: RequestInit) => {
+    const signals = [AbortSignal.timeout(ms)];
+    if (init?.signal) signals.push(init.signal);
+    else if (isRequestLike(input) && input.signal) signals.push(input.signal);
+    return fetchImpl(input, { ...init, signal: AbortSignal.any(signals) });
+  }) as typeof fetch;
+}
+
 function createClient(proxyFetch?: typeof fetch) {
   return Innertube.create({
     generate_session_locally: true,
     lang: 'en',
     location: 'US',
     retrieve_player: true, // required to get caption tracks
-    fetch: proxyFetch,
+    fetch: withRequestTimeout(proxyFetch ?? ((...args) => fetch(...args)), INNERTUBE_TIMEOUT_MS),
   });
 }
 

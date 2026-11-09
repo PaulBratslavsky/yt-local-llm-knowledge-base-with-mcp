@@ -11,7 +11,7 @@ const STRAPI_BASE_URL =
   import.meta.env.STRAPI_BASE_URL ??
   'http://localhost:1340/api/yt-kb';
 
-/** A read-only API token: the plugin grants the Public role nothing. */
+/** The `yt-kb-site` custom token (video.find, tag.find): the plugin grants the Public role nothing. */
 const STRAPI_API_TOKEN =
   process.env.STRAPI_API_TOKEN ?? import.meta.env.STRAPI_API_TOKEN ?? undefined;
 
