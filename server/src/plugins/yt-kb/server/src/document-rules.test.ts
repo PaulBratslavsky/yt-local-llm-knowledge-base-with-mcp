@@ -48,6 +48,31 @@ describe('tag create rule', () => {
   });
 });
 
+describe('tag update rule', () => {
+  it('normalizes a string name and never regenerates the slug', async () => {
+    const { mw, slugQuery } = rules({ slugs: ['c'] });
+    const ctx: Ctx = { uid: 'plugin::yt-kb.tag', action: 'update', params: { data: { name: '  Machine   Learning ' } } };
+    await mw(ctx, async () => 'ok');
+    expect(ctx.params.data).toEqual({ name: 'machine learning' });
+    expect(slugQuery()).toBeUndefined();
+  });
+  it('leaves an update without a string name alone', async () => {
+    const { mw } = rules();
+    const a: Ctx = { uid: 'plugin::yt-kb.tag', action: 'update', params: { data: { slug: 'kept' } } };
+    const b = { uid: 'plugin::yt-kb.tag', action: 'update', params: {} as { data?: Record<string, unknown> } };
+    await mw(a, async () => 'ok');
+    await mw(b, async () => 'ok');
+    expect(a.params.data).toEqual({ slug: 'kept' });
+    expect(b.params).toEqual({});
+  });
+  it('does not touch a name on another type', async () => {
+    const { mw } = rules();
+    const ctx: Ctx = { uid: 'plugin::yt-kb.note', action: 'update', params: { data: { name: '  Mixed Case ' } } };
+    await mw(ctx, async () => 'ok');
+    expect(ctx.params.data.name).toBe('  Mixed Case ');
+  });
+});
+
 describe('duplicates', () => {
   it('rethrows a raw database duplicate on a yt-kb type as the validator 400', async () => {
     const { mw } = rules();

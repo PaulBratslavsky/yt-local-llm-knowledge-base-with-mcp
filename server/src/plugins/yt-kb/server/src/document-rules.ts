@@ -80,6 +80,15 @@ async function applyCreateRules(strapi: Core.Strapi, uid: string, params: WithDa
   }
 }
 
+function applyUpdateRules(uid: string, params: WithData) {
+  // Tag: a renamed tag is normalized like a created one, so lookups by the
+  // normalized name keep finding it. The slug is left as it is: changing it
+  // would break links to the tag.
+  if (uid === TAG && typeof params.data?.name === 'string') {
+    params.data.name = normalizeTagName(params.data.name);
+  }
+}
+
 /**
  * Document Service rules for this plugin's own types. Each rule checks the
  * UID first, so in a host app they never touch anything but yt-kb data.
@@ -103,6 +112,7 @@ export function registerDocumentRules(strapi: Core.Strapi) {
     if (!YT_KB_UIDS.has(uid) || !WRITE_ACTIONS.has(context.action)) return next();
 
     if (context.action === 'create') await applyCreateRules(strapi, uid, context.params as WithData);
+    if (context.action === 'update') applyUpdateRules(uid, context.params as WithData);
 
     try {
       return await next();

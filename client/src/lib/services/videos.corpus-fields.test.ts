@@ -76,3 +76,26 @@ describe('listAllVideosForEmbeddingService — field selection', () => {
     expect(url).toContain('sections');
   });
 });
+
+describe('listAllVideosForEmbeddingService — remote-host page cost', () => {
+  // Over a network, a 100-row page of passageEmbeddings is ~40 MB and does
+  // not arrive inside the default timeout. Passage reads page smaller, and
+  // every corpus page gets a 120 s budget.
+  it('pages a passage read at 20 rows with a 120 s timeout', async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+    const url = await urlFor(['passageEmbeddings']);
+    expect(url).toContain('pagination[pageSize]=20');
+    expect(timeoutSpy).toHaveBeenCalledWith(120_000);
+  });
+
+  it('keeps 100-row pages, with the 120 s timeout, when passages are not asked for', async () => {
+    for (const inc of [[], ['summaryEmbedding']] as const) {
+      const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+      const url = await urlFor([...inc]);
+      expect(url).toContain('pagination[pageSize]=100');
+      expect(timeoutSpy).toHaveBeenCalledWith(120_000);
+      timeoutSpy.mockRestore();
+      fetchMock.mockReset();
+    }
+  });
+});

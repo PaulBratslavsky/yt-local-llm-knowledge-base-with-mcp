@@ -703,3 +703,40 @@ The README's admin-panel steps were not clicked through: Settings → API Tokens
   - "Two route loaders (`/feed`, `/learn/$videoId`, `/video/$documentId`)" lists three.
 - **`add-video.ts` description:** it still says a duplicate "throws a duplicate-key error" (noted in M2, M3 and M5). The docs don't repeat it; OQ-4 keeps descriptions unchanged.
 - **Old tier names:** `docs/adr/0008-…` and `docs/superpowers/plans/2026-08-22-…` still use them. They are historical records and were left as they are.
+
+## Final review fixes
+
+**Scope:** the final code review's findings F1–F8, as ruled. Started from HEAD `0998738` (M8), clean working tree. Each code fix was test-first: the test below failed for the reported reason, then passed after the fix. Strapi was not booted; no `.env` file and no database was opened. As with M1–M8, the commit hash is reported in the hand-off.
+
+| # | Finding | Test (RED → GREEN) | Result |
+|---|---|---|---|
+| F1 | Whole-library corpus reads time out on a remote host | `videos.corpus-fields.test.ts` › "pages a passage read at 20 rows with a 120 s timeout" and "keeps 100-row pages, with the 120 s timeout, when passages are not asked for". RED: `pagination[pageSize]=100` and `AbortSignal.timeout(30000)`. | `listAllVideosForEmbeddingService` passes `timeoutMs: 120_000` (`CORPUS_PAGE_TIMEOUT_MS`) on every page; `pageSize` is 20 when `include` has `passageEmbeddings`, else 100. |
+| F2 | Tag names not normalised on update | `document-rules.test.ts` › "tag update rule › normalizes a string name and never regenerates the slug". RED: the name stayed `'  Machine   Learning '`. Two guards added (no string name; another type). | `applyUpdateRules`: on `update` of `plugin::yt-kb.tag` with a string `data.name`, `normalizeTagName` it. The slug is never touched on update (no slug query is made). |
+| F3 | `maskProxyUrl` leaks part of a password containing `:` | `fetcher.test.ts` › "masks the whole of a password that contains a colon". RED: `http://user:pa:****@host:8080`. Also "masks the credentials of a proxy URL that does not parse". | Parsed with `new URL()`; a password becomes `****`; returns `url.toString()`. Unparseable: `scheme://****@` + the part after the last `@`, or `'<invalid proxy URL>'` without `//…@`. `toString()` adds the root `/`, so the existing exact-match tests in `fetcher.test.ts` and `bootstrap.test.ts` now expect `http://user:****@proxy.test:8080/` (changed deliberately). |
+| F4 | `copy-content.mjs` defaults both URLs to localhost | new `tests/copy-content.test.mjs` (spawns `node scripts/copy-content.mjs` with only `PATH` and dummy tokens): "requires SOURCE_URL…", "requires DEST_URL…", "refuses to copy a Strapi onto itself, after normalising slash and host case". RED: exit 1 (the script went on to make requests). | Both URLs required (exit 2, `<NAME> is required: …`); an invalid URL exits 2; equal after normalising (scheme, host case, default port, trailing slash) exits 2 with `SOURCE_URL and DEST_URL are the same Strapi; …`. All before the first request; values never printed. Header comment, plugin README (table, exit codes) and a new `docs/operations.md` "Maintenance: copying content between Strapis" show both URLs. |
+| F5 | No `LICENSE` in the package | — (file) | `server/src/plugins/yt-kb/LICENSE` copied from `roughcut-ai-local-first-editor/LICENSE`: 674 lines, `shasum -a 256` `3972dc97…6986` for both. The plugin README's License section links `./LICENSE`. No root LICENSE added. |
+| F6 | No warning for the renamed `TRANSCRIPT_PROXY_URL` | `bootstrap.test.ts` › "warns once that the old TRANSCRIPT_PROXY_URL is not read, without logging its value". RED: 0 matching warns. Guard: "does not warn about TRANSCRIPT_PROXY_URL when a proxy is configured". | In the no-proxy branch, `process.env.TRANSCRIPT_PROXY_URL` set → one `strapi.log.warn` with the ruled text only (R-E8-2: no meta). Its value is never read into a log line. Tests stub the variable so the shell cannot decide them. |
+| F7 | Old full-access token left live | — (docs) | Two sentences in the plugin README's Tokens section and in `docs/operations.md` ("Maintenance: switching the app to the `yt-kb-app` token"). |
+| F8 | `addVideo` says a duplicate "throws a duplicate-key error" | `writes.test.ts` › "returns exists for a stored video without fetching or writing, and its description says so". RED: description contains `duplicate-key error`. | Description: "…already exists returns `action: 'exists'` without writing; …"; the rest is unchanged. Header comment rewritten to match. No names/description snapshot test exists; `names.test.ts` and the adapter tests pass unchanged. |
+
+### Suite totals
+
+| Suite | Result |
+|---|---|
+| `yarn --cwd server/src/plugins/yt-kb test` | 132/132, 21 files (M8: 121, 20 files; +11) |
+| `yarn --cwd server/src/plugins/yt-kb test:ts:back` | exit 0 |
+| `yarn --cwd server/src/plugins/yt-kb build` | exit 0 |
+| `yarn --cwd server/src/plugins/yt-kb verify` | exit 0 |
+| `yarn --cwd client test` | 430 passed, 2 skipped (432), 52 files (M8: 428 + 2; +2) |
+| `cd client && npx tsc --noEmit` | exit 0 |
+| `yarn site:test` | 107/107 |
+| `npm pack --dry-run` (plugin) | 76 files (M8: 75); lists `LICENSE` (35.1 kB) and `README.md` (19.2 kB). No tarball written. |
+
+### Notes
+
+- M8's Verify 1 (`git grep -n TRANSCRIPT_PROXY_URL -- . ':!docs/designs'` → no output) no longer holds by design: F6 names the old variable in `bootstrap.ts` and `bootstrap.test.ts`.
+- The repo-root `README.md` still links `./LICENSE`, which does not exist at the root (not added, as ruled).
+
+### Deferred
+
+- The opt-in `backfillMetadata` re-tries, on every boot, the rows YouTube cannot fill (their `thumbnails` stay empty). Not changed.

@@ -27,6 +27,13 @@ export default async ({ strapi }: { strapi: Core.Strapi }) => {
     strapi.log.warn(
       '[yt-kb] No proxy configured; YouTube may block datacenter IPs. Set PROXY_URL, or proxyUrl in the yt-kb plugin config (config/plugins.ts).',
     );
+    // The variable's old name. Only its presence is checked: the value is a
+    // proxy URL with credentials and is never logged.
+    if (process.env.TRANSCRIPT_PROXY_URL) {
+      strapi.log.warn(
+        '[yt-kb] TRANSCRIPT_PROXY_URL is set but no longer read; rename it to PROXY_URL (or set the plugin config proxyUrl).',
+      );
+    }
   }
 
   if (plugin.config('backfillMetadata') === true) {

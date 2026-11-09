@@ -223,6 +223,22 @@ describe('fetchAndStore', () => {
 describe('maskProxyUrl', () => {
   it('masks the proxy password', async () => {
     const { maskProxyUrl } = await import('./youtube-transcript');
-    expect(maskProxyUrl('http://user:secret@proxy.test:8080')).toBe('http://user:****@proxy.test:8080');
+    // URL serialization adds the root path's slash.
+    expect(maskProxyUrl('http://user:secret@proxy.test:8080')).toBe('http://user:****@proxy.test:8080/');
+  });
+  it('masks the whole of a password that contains a colon', async () => {
+    const { maskProxyUrl } = await import('./youtube-transcript');
+    const masked = maskProxyUrl('http://user:pa:ss@host:8080');
+    expect(masked).toContain('user:****@host:8080');
+    const afterColon = masked.slice(masked.indexOf('user:') + 'user:'.length);
+    expect(afterColon).not.toContain('pa');
+    expect(afterColon).not.toContain('ss');
+  });
+  it('masks the credentials of a proxy URL that does not parse', async () => {
+    const { maskProxyUrl } = await import('./youtube-transcript');
+    const masked = maskProxyUrl('http://us er:s3cr3t@ho st:8080');
+    expect(masked).not.toContain('s3cr3t');
+    expect(masked).toBe('http://****@ho st:8080');
+    expect(maskProxyUrl('not a url')).toBe('<invalid proxy URL>');
   });
 });

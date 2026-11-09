@@ -89,9 +89,20 @@ const BROWSER_HEADERS = {
 
 const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
-/** `http://user:secret@host:8080` → `http://user:****@host:8080`, for logs. */
+/** `http://user:secret@host:8080` → `http://user:****@host:8080/`, for logs.
+ *  Parsed rather than pattern-matched, so a password with `:` or `@` in it is
+ *  masked whole. A URL that does not parse keeps only its scheme and host. */
 export function maskProxyUrl(proxyUrl: string): string {
-  return proxyUrl.replace(/:([^@:]+)@/, ':****@');
+  try {
+    const url = new URL(proxyUrl);
+    if (url.password) url.password = '****';
+    return url.toString();
+  } catch {
+    const at = proxyUrl.lastIndexOf('@');
+    const slashes = proxyUrl.indexOf('//');
+    if (slashes === -1 || at < slashes) return '<invalid proxy URL>';
+    return `${proxyUrl.slice(0, slashes + 2)}****@${proxyUrl.slice(at + 1)}`;
+  }
 }
 
 // ---------------------------------------------------------------------------

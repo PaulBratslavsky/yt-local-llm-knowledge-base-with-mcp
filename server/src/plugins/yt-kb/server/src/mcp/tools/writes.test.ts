@@ -62,6 +62,15 @@ describe('addVideo', () => {
     expect(log.filter((l) => l === 'tx:start')).toHaveLength(2);
     expect(log.filter((l) => l.startsWith('fetch'))).toHaveLength(1);
   });
+
+  it('returns exists for a stored video without fetching or writing, and its description says so', async () => {
+    const { strapi, log } = fake({ videoFinds: [{ documentId: 'v-stored' }] });
+    const out = await addVideoTool.execute(args, { strapi });
+    expect(out).toMatchObject({ action: 'exists', videoDocumentId: 'v-stored' });
+    expect(log).toEqual(['video:find']);
+    expect(addVideoTool.description).not.toContain('duplicate-key error');
+    expect(addVideoTool.description).toContain("returns `action: 'exists'` without writing");
+  });
 });
 
 describe('tagVideo', () => {

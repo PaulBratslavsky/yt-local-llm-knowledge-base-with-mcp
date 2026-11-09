@@ -93,6 +93,10 @@ anything outside yt-kb. Don't use a **Full access** token for a client
 without its own sign-in, and don't use **Read-only** for the site: on a host
 with Users & Permissions it can also read `/api/users`.
 
+After switching the app to the `yt-kb-app` token, revoke any older
+full-access token the app used (**Settings → API Tokens**). The token script
+below never revokes it.
+
 ### With the script (self-hosted or local)
 
 For a host whose database you can reach, the plugin ships a script that
@@ -260,15 +264,17 @@ notes and digests, in that order.
 
    | Variable | Default | Meaning |
    |---|---|---|
-   | `SOURCE_URL` | `http://localhost:1340` | Source Strapi |
+   | `SOURCE_URL` | — (required) | Source Strapi |
    | `SOURCE_PREFIX` | `/api/yt-kb` | REST prefix of the source types; `/api` for an app that still has its own `api::` types |
    | `SOURCE_TOKEN` | — (required) | Reads the source |
-   | `DEST_URL` | `http://localhost:1340` | Destination Strapi |
+   | `DEST_URL` | — (required) | Destination Strapi; must differ from `SOURCE_URL` |
    | `DEST_TOKEN` | — (required) | Imports into and reads the destination |
 
    `--check` compares the two sides and writes nothing. The script exits 0
-   (`ALL OK`), 1 (`PROBLEMS FOUND`) or 2 (a token missing, or import
-   disabled on the destination).
+   (`ALL OK`), 1 (`PROBLEMS FOUND`) or 2 (a URL or token missing, the two
+   URLs naming the same Strapi, or import disabled on the destination).
+   There is no default URL: both must be set, and a trailing slash or the
+   host's case does not make two URLs different.
 4. Set `import: false` again, restart the destination, and revoke the
    import token.
 
@@ -319,7 +325,7 @@ and 3 s between attempts, or 2 s and 6 s (honouring `Retry-After` up to
 
 ## License
 
-GPL-3.0-or-later.
+GPL-3.0-or-later. The full text is in [LICENSE](./LICENSE).
 
 The transcript fetcher (`server/src/services/youtube-transcript.ts`: metadata
 extraction, the proxy fetch, the caption parsers, the caption download and

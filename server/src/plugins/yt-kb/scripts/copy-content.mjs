@@ -2,11 +2,13 @@
 // Copy yt-kb content from one Strapi to another over HTTP, keeping every
 // record's documentId, createdAt and updatedAt, then check the copy.
 //
-//   SOURCE_URL     default http://localhost:1340
+//   SOURCE_URL     required: the Strapi to copy from
 //   SOURCE_PREFIX  REST prefix of the source types: /api/yt-kb (the plugin,
 //                  default) or /api (an app that still has the api:: types)
 //   SOURCE_TOKEN   API token that can read the source types
-//   DEST_URL       default http://localhost:1340
+//   DEST_URL       required: the Strapi to copy into; must differ from
+//                  SOURCE_URL (compared without a trailing slash, host
+//                  case-insensitive)
 //   DEST_TOKEN     API token with plugin::yt-kb.importer.importRecords
 //                  (and read access, for the check). The destination must
 //                  set the yt-kb plugin config `import: true` while copying.
@@ -26,9 +28,38 @@
 
 import { importInBatches } from './import-batches.mjs';
 
-const SOURCE_URL = (process.env.SOURCE_URL ?? 'http://localhost:1340').replace(/\/$/, '');
+// Both URLs are required: a default would let a forgotten variable copy a
+// Strapi onto itself, or onto whatever happens to listen on localhost.
+// Exits 2 (usage) without a request. The values are never printed.
+function requiredUrl(name) {
+  const raw = process.env[name];
+  if (!raw) {
+    console.error(`${name} is required: set SOURCE_URL and DEST_URL to the two Strapi base URLs.`);
+    process.exit(2);
+  }
+  try {
+    new URL(raw);
+  } catch {
+    console.error(`${name} is not a valid URL.`);
+    process.exit(2);
+  }
+  return raw.replace(/\/+$/, '');
+}
+
+// Scheme, host and path, without a trailing slash. URL lower-cases the
+// scheme and host and drops a default port.
+const normalUrl = (raw) => {
+  const u = new URL(raw);
+  return `${u.protocol}//${u.host}${u.pathname.replace(/\/+$/, '')}`;
+};
+
+const SOURCE_URL = requiredUrl('SOURCE_URL');
+const DEST_URL = requiredUrl('DEST_URL');
+if (normalUrl(SOURCE_URL) === normalUrl(DEST_URL)) {
+  console.error('SOURCE_URL and DEST_URL are the same Strapi; refusing to copy a Strapi onto itself.');
+  process.exit(2);
+}
 const SOURCE_PREFIX = (process.env.SOURCE_PREFIX ?? '/api/yt-kb').replace(/\/$/, '');
-const DEST_URL = (process.env.DEST_URL ?? 'http://localhost:1340').replace(/\/$/, '');
 const { SOURCE_TOKEN, DEST_TOKEN } = process.env;
 const CHECK_ONLY = process.argv.includes('--check');
 

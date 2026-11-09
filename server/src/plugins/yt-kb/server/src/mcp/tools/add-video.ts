@@ -2,9 +2,10 @@
 // fetches and stores the transcript (services/fetcher.ts — the same
 // fetch-and-store the app's POST /api/yt-kb/transcripts/fetch uses).
 //
-// The plugin's Document Service rules already enforce dedupe on
-// youtubeVideoId — this tool surfaces the resulting error cleanly instead
-// of crashing the MCP call.
+// A video that is already stored (or that another caller adds while this
+// one fetches) returns `action: 'exists'` with its documentId, and nothing
+// is written. The plugin's Document Service rules and the unique index on
+// youtubeVideoId remain the real dedupe gate.
 //
 // Summary generation is NOT triggered here — that's an Ollama-bound task
 // and belongs in the in-app pipeline. After adding, the user can generate
@@ -38,7 +39,7 @@ const schema = z.object({
 export const addVideoTool: ToolDef<z.infer<typeof schema>> = {
   name: 'addVideo',
   description:
-    'WRITE OPERATION — ingest a NEW YouTube URL into the knowledge base. DO NOT call this for "find", "summarize", "look up", "tell me about", or "get info on" a video — those are READ requests and must go through `searchVideos`/`findTranscripts` FIRST. Only call `addVideo` when (a) the user used an explicit write verb like "add", "ingest", "import", "save", or "ingest this video", AND (b) `searchVideos` has already returned zero matches for that URL/title/videoId. If both conditions aren\'t met, call `searchVideos` instead. Ingesting a video that already exists throws a duplicate-key error; ingesting when the user didn\'t ask to ingest wastes a YouTube fetch and surprises the user.',
+    'WRITE OPERATION — ingest a NEW YouTube URL into the knowledge base. DO NOT call this for "find", "summarize", "look up", "tell me about", or "get info on" a video — those are READ requests and must go through `searchVideos`/`findTranscripts` FIRST. Only call `addVideo` when (a) the user used an explicit write verb like "add", "ingest", "import", "save", or "ingest this video", AND (b) `searchVideos` has already returned zero matches for that URL/title/videoId. If both conditions aren\'t met, call `searchVideos` instead. Ingesting a video that already exists returns `action: \'exists\'` without writing; ingesting when the user didn\'t ask to ingest wastes a YouTube fetch and surprises the user.',
   schema,
   execute: async ({ url, caption, tags }, { strapi }) => {
     const videoId = extractYouTubeId(url);

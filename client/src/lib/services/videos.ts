@@ -397,6 +397,9 @@ const internalDetailQuery: StrapiQuery = {
   populate: ['tags', 'keyTakeaways', 'sections', 'actionSteps', 'transcript'],
 };
 
+/** Per-page timeout for whole-library corpus reads. */
+const CORPUS_PAGE_TIMEOUT_MS = 120_000;
+
 /**
  * Walks every generated video.
  *
@@ -409,7 +412,10 @@ const internalDetailQuery: StrapiQuery = {
 export async function listAllVideosForEmbeddingService(
   include: CorpusField[],
 ): Promise<EmbeddingCorpus> {
-  const pageSize = 100;
+  // passageEmbeddings dominates the row (~0.4 MB each): 100 of them per page
+  // is ~40 MB, which a remote host does not deliver inside the default
+  // timeout. Every corpus page gets a 120 s budget.
+  const pageSize = include.includes('passageEmbeddings') ? 20 : 100;
   const all: StrapiVideo[] = [];
   const fields = [...CORPUS_BASE_FIELDS, ...include];
   for (let page = 1; page <= 50; page += 1) {
@@ -421,6 +427,7 @@ export async function listAllVideosForEmbeddingService(
         sort: 'createdAt:desc',
         pagination: { page, pageSize, withCount: true },
       },
+      timeoutMs: CORPUS_PAGE_TIMEOUT_MS,
     });
     if (!result.ok) {
       return {

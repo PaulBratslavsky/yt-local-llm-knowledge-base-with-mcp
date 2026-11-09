@@ -163,6 +163,22 @@ openssl rand -base64 16                       # one value
 
 For `APP_KEYS`, generate four and comma-separate. After rotating: existing API tokens remain valid (they're hashed with the salt at issue time), but admin sessions are invalidated. Stored field-encrypted data becomes unreadable if you change `ENCRYPTION_KEY` after data was written (probably no impact for this app — Strapi's field encryption isn't used by our schemas).
 
+## Maintenance: switching the app to the `yt-kb-app` token
+
+After switching the app to the `yt-kb-app` token, revoke any older full-access token the app used (Strapi admin → **Settings → API Tokens**). The token script (`create-tokens.cjs`) never revokes it.
+
+## Maintenance: copying content between Strapis
+
+`server/src/plugins/yt-kb/scripts/copy-content.mjs` copies yt-kb content over HTTP, keeping documentIds and dates. Both URLs are required — there is no localhost default — and the script exits 2 if either is missing or both name the same Strapi:
+
+```bash
+SOURCE_URL=https://source.example SOURCE_TOKEN=… \
+DEST_URL=https://dest.example DEST_TOKEN=… \
+  node server/src/plugins/yt-kb/scripts/copy-content.mjs
+```
+
+Token scopes, the destination's `import: true` switch and `--check` are in the plugin README's "Copying content in".
+
 ## Maintenance: capturing your library as a seed
 
 ```bash
