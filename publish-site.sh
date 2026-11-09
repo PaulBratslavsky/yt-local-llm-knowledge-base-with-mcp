@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# Rebuild the static site from the live library and publish it.
+# Rebuild the static site from the library and publish it.
 #
 #   yarn site:publish            build + deploy to the live URL
 #   yarn site:publish --draft    build + deploy to a preview URL instead
 #
-# The build reads Strapi directly, so the stack has to be running. It refuses
-# to publish a library it cannot verify is complete — see site/src/lib/strapi.ts.
+# The build reads Strapi with STRAPI_BASE_URL and the yt-kb-site token from
+# site/.env, so the Strapi host has to be running. The loader in
+# site/src/lib/strapi.ts fails the build when Strapi is unreachable, answers
+# with an error, returns fewer videos than it reports, or has no generated
+# summary, so this script does not check Strapi itself.
 
 set -euo pipefail
 
@@ -28,7 +31,6 @@ Usage: publish-site.sh [--draft]
 esac
 [[ $# -le 1 ]] || die "Too many arguments. Usage: publish-site.sh [--draft]"
 
-STRAPI_URL="${STRAPI_BASE_URL:-http://localhost:1340/api}"
 LIVE_URL="https://boisterous-lamington-cc0eed.netlify.app"
 
 [[ "${SITE_SKIP_STRAPI_FETCH:-}" == "1" ]] && {
@@ -38,25 +40,9 @@ Unset it and run this again." >&2
   exit 1
 }
 
-# ── 1. Is there anything to build from? ──────────────────────────────────────
-say "Checking Strapi at ${STRAPI_URL}"
-
-if ! curl -sf --max-time 5 -o /dev/null "${STRAPI_URL}/videos?pagination%5BpageSize%5D=1"; then
-  die "Strapi is not answering at ${STRAPI_URL}.
-Start the stack first:  yarn start
-Then run this again. (Publishing without it would ship an empty site, so the
-build refuses rather than guessing.)"
-fi
-
-GENERATED=$(curl -s --max-time 10 \
-  "${STRAPI_URL}/videos?filters%5BsummaryStatus%5D%5B%24eq%5D=generated&pagination%5BpageSize%5D=1" \
-  | python3 -c 'import json,sys; print(json.load(sys.stdin)["meta"]["pagination"]["total"])')
-
-echo "  ${GENERATED} videos with a generated summary"
-[[ "${GENERATED}" -gt 0 ]] || die "Nothing to publish: no video has a generated summary yet."
-
-# ── 2. Build. The output guard runs as part of this and fails the build if
-#       any retrieval state reached the output. ────────────────────────────────
+# ── 1. Build. The loader fails the build on an unreachable Strapi, a short
+#       read or an empty library; the output guard fails it if any retrieval
+#       state reached the output. ────────────────────────────────────────────
 say "Building"
 yarn --cwd ./site build
 
@@ -65,15 +51,7 @@ VIDEO_PAGES=$(find site/dist/v -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc 
 INDEX_KB=$(( $(wc -c < site/dist/search-index.json) / 1024 ))
 echo "  ${PAGES} pages (${VIDEO_PAGES} videos) · search index ${INDEX_KB} KB"
 
-# Compare video pages only. Counting every index.html lets the home, topic
-# and article pages pad the total, so a build that dropped most of the
-# library could still clear the bar.
-if [[ "${VIDEO_PAGES}" -lt "${GENERATED}" ]]; then
-  die "Built ${VIDEO_PAGES} video pages from ${GENERATED} generated summaries.
-Refusing to publish a partial library. Check the build output above."
-fi
-
-# ── 3. Publish. ──────────────────────────────────────────────────────────────
+# ── 2. Publish. ──────────────────────────────────────────────────────────────
 #
 # The Netlify CLI reads the linked project from its WORKING DIRECTORY, not
 # from --prefix or --dir. Run from the repo root it finds no link and quietly

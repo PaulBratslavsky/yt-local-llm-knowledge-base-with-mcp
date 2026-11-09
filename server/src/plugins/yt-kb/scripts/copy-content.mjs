@@ -17,6 +17,14 @@
 // Safe to re-run: records are upserted by documentId. It never deletes —
 // a record removed from the source stays in the destination, and the check
 // reports it as "only in destination".
+//
+// Records are POSTed in batches of at most 900 KB of JSON (import-batches.mjs),
+// under a stock Strapi's 1 MB body limit; a record bigger than that is sent on
+// its own. A 413 marks that batch's records as failed — raise strapi::body
+// jsonLimit on the destination (config/middlewares) and re-run; re-running is
+// safe.
+
+import { importInBatches } from './import-batches.mjs';
 
 const SOURCE_URL = (process.env.SOURCE_URL ?? 'http://localhost:1340').replace(/\/$/, '');
 const SOURCE_PREFIX = (process.env.SOURCE_PREFIX ?? '/api/yt-kb').replace(/\/$/, '');
@@ -101,6 +109,7 @@ async function readAll(base, prefix, token, t) {
 // POST one batch. 200 = every record written; 207 = some failed (listed in
 // `failed`, counted below); 403 with the plugin's "Import is disabled"
 // message = the destination's yt-kb config does not set `import: true`.
+// 413 = the body was too large for the destination; importInBatches records it.
 async function postImport(type, batch) {
   const url = `${DEST_URL}/api/yt-kb/import/${type}`;
   const res = await fetch(url, {
@@ -109,6 +118,7 @@ async function postImport(type, batch) {
     body: JSON.stringify({ data: batch }),
   });
   const text = await res.text();
+  if (res.status === 413) return { tooLarge: true };
   let body = null;
   try { body = JSON.parse(text); } catch { /* not JSON */ }
   if (res.status === 403 && body?.error?.message?.startsWith('Import is disabled')) {
@@ -123,30 +133,9 @@ async function postImport(type, batch) {
   return body;
 }
 
-// POST in batches that stay well under Strapi's JSON body limit.
-const MAX_BATCH_BYTES = 8 * 1024 * 1024;
-async function importAll(t, records) {
-  const totals = { created: 0, updated: 0, failed: [] };
-  let batch = [];
-  let bytes = 0;
-  const flush = async () => {
-    if (batch.length === 0) return;
-    const r = await postImport(t.type, batch);
-    totals.created += r.created;
-    totals.updated += r.updated;
-    totals.failed.push(...r.failed);
-    batch = [];
-    bytes = 0;
-  };
-  for (const record of records) {
-    const size = Buffer.byteLength(JSON.stringify(record));
-    if (bytes + size > MAX_BATCH_BYTES) await flush();
-    batch.push(record);
-    bytes += size;
-  }
-  await flush();
-  return totals;
-}
+// POST in planned batches under a stock Strapi's 1 MB body limit
+// (import-batches.mjs); a 413'd batch is recorded as failed and the copy goes on.
+const importAll = (t, records) => importInBatches(records, (batch) => postImport(t.type, batch));
 
 // What a record must look like on both sides. Row ids differ by design;
 // publishedAt is stamped at write time and nothing reads it.

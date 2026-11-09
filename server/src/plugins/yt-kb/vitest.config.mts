@@ -5,7 +5,7 @@ import { defineConfig } from 'vitest/config';
 // nothing here reaches dist/.
 export default defineConfig({
   test: {
-    include: ['server/src/**/*.test.ts'],
+    include: ['server/src/**/*.test.ts', 'tests/**/*.test.mjs'],
     environment: 'node',
   },
 });

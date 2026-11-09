@@ -5,10 +5,11 @@ A static, searchable build of the knowledge base summary layer.
 ## What it publishes
 
 Per video: title, author, verdict, content score and the reason behind it,
-overview, key
-takeaways, sections with timecoded links into the video, action steps, tags,
-and the readable article when one exists. No thumbnails — the allowlist
-carries only fields the pages actually render.
+overview, key takeaways, sections with timecoded links into the video,
+action steps, tags, and the readable article when one exists. Thumbnails
+come straight from YouTube (`i.ytimg.com/vi/<id>/hqdefault.jpg`, built from
+the video id in `src/lib/player.ts`), so the allowlist does not fetch
+`videoThumbnailUrl`.
 
 It does **not** publish raw transcripts, embeddings, or the BM25 index. The
 `fields[]` allowlist in `src/lib/video.ts` is the mechanism, applied by the
@@ -18,15 +19,34 @@ anything slips through.
 ## Build
 
 The build reads Strapi at `STRAPI_BASE_URL` (default
-`http://localhost:1340/api`), so the stack must be running:
+`http://localhost:1340/api/yt-kb`, the plugin's REST prefix) with the token
+in `STRAPI_API_TOKEN`, both from `site/.env`, so the Strapi host must be
+running:
 
 ```bash
 yarn start        # from the repo root, in another terminal
 yarn site:build   # from the repo root
 ```
 
-The build fails if Strapi is unreachable, returns an error, or returns no
-videos, rather than publishing an empty site.
+`STRAPI_API_TOKEN` is the `yt-kb-site` custom token — find on videos and
+tags, nothing else. Create it once with the plugin's token script, from the
+Strapi app root (`server/` here):
+
+```bash
+node src/plugins/yt-kb/scripts/create-tokens.cjs --out-app <file> --out-site <file>
+```
+
+(`node node_modules/strapi-plugin-yt-kb/scripts/create-tokens.cjs …` in an
+app that installed the plugin from npm), then paste the contents of the
+`--out-site` file into `site/.env`. If a `yt-kb-site` token already exists,
+add `--rotate yt-kb-site`: the script revokes it and creates it fresh
+(without that flag it skips an existing name). Don't use a Read-only
+token: on a host with Users & Permissions it can also read `/api/users`.
+
+The build fails if Strapi is unreachable, answers with an error (a missing
+or wrong token is a 403), returns fewer videos than it reports, or has no
+video with a generated summary — rather than publishing an empty or partial
+site.
 
 ## Publishing a content update
 
@@ -35,15 +55,16 @@ summaries need a republish. One command, from the repo root, with the stack
 running:
 
 ```bash
-yarn site:publish         # check Strapi, rebuild, deploy live
+yarn site:publish         # rebuild, deploy live
 yarn site:publish:draft   # same, but to a preview URL
 ```
 
-It refuses to publish rather than ship something wrong: no Strapi, no videos,
-or fewer pages built than the library has all stop it before the deploy.
+It refuses to publish rather than ship something wrong: the build stops on
+an unreachable Strapi, a short read or an empty library, and the script
+stops if `site/` is not linked to Netlify.
 
-`yarn site:deploy` is the lower-level step — it ships whatever is already in
-`dist/` without rebuilding.
+`yarn site:deploy` also rebuilds and deploys live, without the draft option
+or the link check — prefer `yarn site:publish`.
 
 **Run the Netlify CLI from `site/`, never the repo root.** It reads the linked
 project from its working directory, not from `--dir`: at the root it finds no
@@ -91,7 +112,7 @@ dropped.
 ## Checks
 
 ```bash
-yarn site:test              # 96 unit tests, no stack needed
+yarn site:test              # 107 unit tests, no stack needed
 cd site && npx astro sync && npx tsc --noEmit  # typecheck
 yarn site:build             # build + output guard
 ```
