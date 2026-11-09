@@ -1,22 +1,22 @@
-// BM25 search across many transcripts in a single call. Reuses the
-// already-stored per-video index on `Video.transcriptSegments`, iterates
-// over the matching video set, and returns the top-k chunks per video.
+// BM25 search across many transcripts in one call: the top-k chunks per
+// video, videos ordered by their best hit. Each video is searched with the
+// app's contextual index (Video.transcriptSegments) when current, else its
+// transcript's model-free index (built and saved on first use). Every video
+// with a stored transcript is searched, summarized or not — a video added
+// over MCP is still `pending` and must not be invisible here. There is no
+// substring fallback: it needs the segments, and segments always yield an
+// index.
 //
-// Optional tag filter so the search scope matches the user's framing
-// ("what do my rag videos say about chunking?" → tags: ['rag'], query:
-// 'chunking'). Falls back to a full KB scan when no tag is given.
-//
-// Capped per-video to keep the response size manageable — the agent can
-// always call `searchTranscript` on a specific video for deeper detail.
+// Optional tag filter so the scope matches the user's framing ("what do my
+// rag videos say about chunking?" → tags: ['rag'], query: 'chunking').
+// Capped per video to keep the response small — call `searchTranscript`
+// on one video for more.
 
 import { z } from '@strapi/utils';
 import type { ToolDef } from '../registry';
 import { normalizeTagName } from '../../document-rules';
-import {
-  formatTimecode,
-  isStoredIndex,
-  searchBM25,
-} from '../../services/bm25-search';
+import { formatTimecode, loadStoredIndex, searchBM25, type StoredTranscriptIndex } from '../../services/bm25-search';
+import { ensureTranscriptSearchIndex, loadTranscriptSearchIndexes } from '../../services/search-index';
 
 const schema = z.object({
   query: z.string().min(2).max(300),
@@ -25,21 +25,24 @@ const schema = z.object({
     .max(10)
     .optional()
     .describe('Optional tag filter — limit the search to videos with any of these tags.'),
-  perVideo: z
-    .number()
-    .int()
-    .min(1)
-    .max(10)
-    .default(3)
-    .describe('Max chunks to return per video.'),
+  perVideo: z.number().int().min(1).max(10).default(3).describe('Max chunks to return per video.'),
   maxVideos: z
     .number()
     .int()
     .min(1)
     .max(100)
     .default(25)
-    .describe('Max videos to scan. Videos without a BM25 index (missing summary) are skipped silently.'),
+    .describe('Max videos to scan, newest first. Videos with no stored transcript are skipped.'),
 });
+
+type VideoRow = {
+  youtubeVideoId: string;
+  videoTitle?: string | null;
+  summaryTitle?: string | null;
+  transcriptSegments?: unknown;
+  tags?: Array<{ name: string }>;
+  transcript?: { documentId: string } | null;
+};
 
 export const crossSearchTranscriptsTool: ToolDef<z.infer<typeof schema>> = {
   name: 'crossSearchTranscripts',
@@ -47,7 +50,7 @@ export const crossSearchTranscriptsTool: ToolDef<z.infer<typeof schema>> = {
     'BM25 search across multiple transcripts in a single call. Returns top-k passages per matching video with timecodes — ideal for "what do my `rag` videos say about chunking?" style questions. Optional tag filter scopes the search. Use `searchTranscript` instead when you already know the specific videoId.',
   schema,
   execute: async ({ query, tags, perVideo, maxVideos }, { strapi }) => {
-    const filters: Record<string, unknown> = { summaryStatus: { $eq: 'generated' } };
+    const filters: Record<string, unknown> = {};
     if (tags && tags.length > 0) {
       filters.tags = { name: { $in: tags.map(normalizeTagName) } };
     }
@@ -57,36 +60,59 @@ export const crossSearchTranscriptsTool: ToolDef<z.infer<typeof schema>> = {
       limit: maxVideos,
       sort: 'createdAt:desc',
       fields: ['youtubeVideoId', 'videoTitle', 'summaryTitle', 'transcriptSegments'],
-      populate: { tags: { fields: ['name'] } },
-    })) as unknown as Array<{
-      youtubeVideoId: string;
-      videoTitle?: string | null;
-      summaryTitle?: string | null;
-      transcriptSegments?: unknown;
-      tags?: Array<{ name: string }>;
-    }>;
+      populate: {
+        tags: { fields: ['name'] },
+        // Only the id: searchIndex is private, and Strapi 5.61 rejects it inside a
+        // populate's `fields`. The indexes are read below in one root-level query
+        // (rawSegments only for rows that need a build).
+        transcript: { fields: ['documentId'] },
+      },
+    } as never)) as unknown as VideoRow[];
 
-    const perVideoResults = videos
-      .map((v) => {
-        if (!isStoredIndex(v.transcriptSegments)) return null;
-        const ranked = searchBM25(v.transcriptSegments.bm25, query, perVideo);
-        if (ranked.length === 0) return null;
-        return {
-          youtubeVideoId: v.youtubeVideoId,
-          videoTitle: v.videoTitle ?? v.summaryTitle ?? null,
-          tags: (v.tags ?? []).map((t) => t.name),
-          topScore: ranked[0].score,
-          passages: ranked.map((r) => ({
-            timecode: formatTimecode(r.chunk.timeSec),
-            timeSec: r.chunk.timeSec,
-            text: r.chunk.text,
-            score: Number(r.score.toFixed(4)),
-          })),
-        };
-      })
-      .filter((r): r is NonNullable<typeof r> => r !== null)
-      // Order videos by best-hit score so the strongest matches come first.
-      .sort((a, b) => b.topScore - a.topScore);
+    const perVideoResults: Array<{
+      youtubeVideoId: string;
+      videoTitle: string | null;
+      tags: string[];
+      indexSource: 'bm25' | 'bm25-transcript';
+      topScore: number;
+      passages: Array<{ timecode: string; timeSec: number; text: string; score: number }>;
+    }> = [];
+
+    // Transcript indexes for the videos the app has not indexed: one query for all of them.
+    const transcriptRows = await loadTranscriptSearchIndexes(
+      strapi,
+      videos
+        .filter((v) => v.transcript && !loadStoredIndex(v.transcriptSegments))
+        .map((v) => v.transcript!.documentId),
+    );
+
+    for (const v of videos) {
+      let index: StoredTranscriptIndex | null = loadStoredIndex(v.transcriptSegments);
+      let indexSource: 'bm25' | 'bm25-transcript' = 'bm25';
+      const transcriptRow = v.transcript ? transcriptRows.get(v.transcript.documentId) : undefined;
+      if (!index && transcriptRow) {
+        index = await ensureTranscriptSearchIndex(strapi, transcriptRow);
+        indexSource = 'bm25-transcript';
+      }
+      if (!index) continue;
+      const ranked = searchBM25(index.bm25, query, perVideo);
+      if (ranked.length === 0) continue;
+      perVideoResults.push({
+        youtubeVideoId: v.youtubeVideoId,
+        videoTitle: v.videoTitle ?? v.summaryTitle ?? null,
+        tags: (v.tags ?? []).map((t) => t.name),
+        indexSource,
+        topScore: ranked[0].score,
+        passages: ranked.map((r) => ({
+          timecode: formatTimecode(r.chunk.timeSec),
+          timeSec: r.chunk.timeSec,
+          text: r.chunk.text,
+          score: Number(r.score.toFixed(4)),
+        })),
+      });
+    }
+    // Strongest matches first.
+    perVideoResults.sort((a, b) => b.topScore - a.topScore);
 
     return {
       query,
@@ -96,7 +122,7 @@ export const crossSearchTranscriptsTool: ToolDef<z.infer<typeof schema>> = {
       results: perVideoResults,
       ...(perVideoResults.length === 0
         ? {
-            hint: 'No transcripts had passages matching that query. Try different terms, drop the tag filter, or call `listVideos` to see what\'s actually in the KB.',
+            hint: "No transcripts had passages matching that query. Try different terms, drop the tag filter, or call `listVideos` to see what's actually in the KB.",
           }
         : {}),
     };

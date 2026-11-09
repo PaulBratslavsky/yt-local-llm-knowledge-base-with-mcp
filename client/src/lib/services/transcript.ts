@@ -1,56 +1,28 @@
 // Transcript utilities used by the summary + chat pipelines.
 //
-// YouTube auto-captions are a noisy source: filler words, stage directions,
-// caption-level duplication, and no real timestamps in the `fullTranscript`
-// string we get from the upstream service. This module handles:
-//   1. cleanTranscript      — strip the obvious noise, give back more usable tokens
-//   2. chunkTranscript      — split cleaned text into ~60s windows with estimated
-//                             timestamps (assumed ~150 wpm since we lack true timing)
-//   3. buildBM25Index       — compute BM25 scoring tables over those chunks
-//   4. searchBM25           — retrieve the top-k chunks for a query
-//
-// Everything lives in pure JS so the index can be cheaply rebuilt on demand
-// and persisted as plain JSON in Strapi (`transcriptSegments`).
+// Cleaning, retrieval chunking, BM25 and timecode grounding come from
+// ./bm25-core — a generated copy of strapi-plugin-yt-kb's source — and are
+// re-exported below so every caller keeps importing from './transcript'.
+// This module adds what only the app needs: timecode annotation for
+// prompts, summary-sized chunks, multi-query fusion, passage chunks for
+// embeddings, citation verification and the section contextualizer for
+// Contextual Retrieval.
 
-// -----------------------------------------------------------------------------
-// 1. Clean
-// -----------------------------------------------------------------------------
-
-// Common filler/hedge words that add noise without meaning. Order doesn't
-// matter, but longer phrases must be attempted before their prefixes.
-const FILLER_PATTERNS: Array<[RegExp, string]> = [
-  // Stage directions / caption artifacts: [Music], (applause), >> SPEAKER:
-  [/\[[^\]]*\]/g, ' '],
-  [/\([^)]*(music|applause|laughter|crosstalk|inaudible)[^)]*\)/gi, ' '],
-  [/^>>\s*[A-Z][A-Z ]+:/gm, ' '],
-
-  // Standalone filler phrases (word-bounded, case-insensitive)
-  [/\b(?:you know|i mean|kind of|sort of|like I said|to be honest|at the end of the day)\b/gi, ' '],
-
-  // Single-word fillers — only when surrounded by word boundaries so we don't
-  // chew into real content (e.g. "so" as a conjunction gets a pass most of
-  // the time; we only strip duplicates below).
-  [/\b(?:um+|uh+|er+|erm+|hmm+|mm+)\b/gi, ' '],
-
-  // Collapse repeated words ("the the thing", "I I I think") to one
-  [/\b(\w+)(?:\s+\1\b){1,}/gi, '$1'],
-
-  // Collapse runs of whitespace
-  [/\s+/g, ' '],
-];
-
-// BM25 scoring and the stored-index format live in ./bm25-core, which the
-// Strapi server copies verbatim. Re-exported here so every existing caller
-// keeps importing from './transcript'.
 export {
   CURRENT_INDEX_PARAMS,
   STOPWORDS,
   STORED_INDEX_VERSION,
   TOKENIZER_VERSION,
   buildBM25Index,
+  buildTranscriptSearchIndex,
+  chunkForRetrieval,
+  cleanTranscript,
+  findEvidenceForQuote,
+  groundSectionsToTranscript,
   isStoredIndex,
   loadStoredIndex,
   makeStoredIndex,
+  prepareSegmentedTranscript,
   searchBM25,
   searchBM25Ranked,
   storedIndexStatus,
@@ -61,122 +33,29 @@ export type {
   ScorableDoc,
   BM25IndexParams,
   Contextualizer,
+  GroundableSection,
+  GroundedSection,
+  PreparedTranscript,
   RankedChunk,
   StoredIndexStatus,
   StoredTranscriptIndex,
   TimedTextSegment,
   TranscriptChunk,
+  TranscriptEvidence,
 } from './bm25-core';
 
 import {
-  BM25_B,
-  BM25_K1,
-  RETRIEVAL_CHUNK_OVERLAP,
-  RETRIEVAL_CHUNK_WORDS,
+  annotateSpan,
+  chunkBy,
+  findEvidenceForQuote,
+  formatMmss,
   searchBM25,
-  tokenize,
   type BM25Index,
+  type Contextualizer,
+  type PreparedTranscript,
   type TimedTextSegment,
   type TranscriptChunk,
-  type Contextualizer,
 } from './bm25-core';
-
-export function cleanTranscript(raw: string): string {
-  let text = raw;
-  for (const [pattern, replacement] of FILLER_PATTERNS) {
-    text = text.replace(pattern, replacement);
-  }
-  return text.trim();
-}
-
-// -----------------------------------------------------------------------------
-// 1b. Clean + preserve timing
-// -----------------------------------------------------------------------------
-//
-// youtubei.js returns caption segments with millisecond-precise start times.
-// Our old path joined them into a single string and then estimated per-word
-// timestamps by linear interpolation against video duration — drift could be
-// ±30s+ on long videos with music intros or pauses. This path preserves the
-// original segment timing: we clean each segment individually and keep a
-// parallel array of ms-start-times per surviving word. Downstream chunkers
-// use that to assign real timeSec values to chunks instead of estimates.
-
-
-export type PreparedTranscript = {
-  /** Cleaned transcript text — segments joined with single spaces. */
-  cleanedText: string;
-  /** For each word in `cleanedText` (when split on /\s+/), the start time in
-   *  milliseconds of the source caption segment. Length === word count. */
-  wordStartMs: number[];
-};
-
-export function prepareSegmentedTranscript(
-  segments: TimedTextSegment[],
-): PreparedTranscript {
-  const wordStartMs: number[] = [];
-  const pieces: string[] = [];
-  for (const seg of segments) {
-    const cleaned = cleanTranscript(seg.text);
-    if (!cleaned) continue;
-    const words = cleaned.split(/\s+/).filter(Boolean);
-    for (let i = 0; i < words.length; i++) {
-      wordStartMs.push(seg.startMs);
-    }
-    pieces.push(cleaned);
-  }
-  // Each piece was already trimmed + whitespace-collapsed; joining with ' '
-  // preserves word boundaries and order — invariant: wordStartMs.length ===
-  // cleanedText.split(/\s+/).filter(Boolean).length.
-  return {
-    cleanedText: pieces.join(' '),
-    wordStartMs,
-  };
-}
-
-// -----------------------------------------------------------------------------
-// Inline timecode helpers
-// -----------------------------------------------------------------------------
-//
-// The model can't guess real timestamps from text alone. When we hand it a
-// cleaned transcript or a retrieval chunk, we inject `[mm:ss]` markers at
-// segment boundaries so the model can copy the correct number into its
-// output instead of estimating from position. BM25 tokenization strips
-// these markers (see `tokenize`) so they don't pollute retrieval scoring.
-
-function formatMmss(sec: number): string {
-  const s = Math.max(0, Math.floor(sec));
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const ss = s % 60;
-  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
-  return `${String(m).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
-}
-
-// Annotate a span of words with inline `[mm:ss]` markers. Emits a marker
-// whenever the elapsed time since the last marker exceeds `minGapSec`, or
-// at the very start. With `minGapSec=15` you typically get one anchor every
-// ~15–30 seconds — fine-grained enough for the model to pick a nearby one
-// for citation, sparse enough that it doesn't bloat the prompt.
-function annotateSpan(
-  words: string[],
-  wordStartMs: number[],
-  startIdx: number,
-  endIdx: number,
-  minGapSec: number,
-): string {
-  const parts: string[] = [];
-  let lastMarkerMs = -Infinity;
-  const gapMs = minGapSec * 1000;
-  for (let i = startIdx; i < endIdx; i++) {
-    const ms = wordStartMs[i];
-    if (typeof ms === 'number' && ms - lastMarkerMs >= gapMs) {
-      parts.push(`[${formatMmss(ms / 1000)}]`);
-      lastMarkerMs = ms;
-    }
-    parts.push(words[i]);
-  }
-  return parts.join(' ');
-}
 
 // Full-transcript annotation for the single-pass summary prompt. Default
 // `minGapSec=30` → roughly one time anchor per 30s of video. Sections the
@@ -189,18 +68,6 @@ export function annotateWithTimecodes(
   if (words.length === 0) return '';
   return annotateSpan(words, prepared.wordStartMs, 0, words.length, minGapSec);
 }
-
-// -----------------------------------------------------------------------------
-// 2. Chunk
-// -----------------------------------------------------------------------------
-
-// Fallback speaking rate used when we can't determine the real video
-// duration. ~150 wpm is the rough average for English YouTube content —
-// podcasts often run hotter (170-190), tutorials slower (120-140). When
-// the pipeline *can* fetch the actual duration, we compute a per-video
-// wpm (= words / durationSec * 60) so each chunk's timeSec maps to a real
-// moment in the video, not an estimate.
-const FALLBACK_WPM = 150;
 
 // Retrieval and summarization want different chunk sizes. Retrieval (BM25)
 // is best with small windows so term frequency stays informative and the
@@ -216,70 +83,6 @@ const FALLBACK_WPM = 150;
 // and lower overlap = less duplicate inference.
 const SUMMARY_CHUNK_WORDS = 2500;
 const SUMMARY_CHUNK_OVERLAP = 50;
-
-
-// Compute per-video words-per-minute. If we know the real video duration
-// we can map word index → real seconds with linear interpolation across
-// the whole video (close enough — most speech has near-constant cadence
-// over long stretches). Without duration we fall back to a global average.
-function effectiveWpm(wordCount: number, durationSec: number | null | undefined): number {
-  if (!durationSec || durationSec <= 0 || wordCount <= 0) return FALLBACK_WPM;
-  const wpm = (wordCount / durationSec) * 60;
-  // Guard against absurd values if the scrape picked up something weird.
-  if (wpm < 40 || wpm > 300) return FALLBACK_WPM;
-  return wpm;
-}
-
-function chunkBy(
-  input: string | PreparedTranscript,
-  chunkWords: number,
-  overlapWords: number,
-  durationSec?: number | null,
-): TranscriptChunk[] {
-  const cleanedText = typeof input === 'string' ? input : input.cleanedText;
-  const wordStartMs = typeof input === 'string' ? null : input.wordStartMs;
-  const words = cleanedText.split(/\s+/).filter(Boolean);
-  if (words.length === 0) return [];
-
-  // Linear-interp fallback wpm, used only when we don't have real per-word
-  // timings (e.g. a cleaned-string input without segments).
-  const wpm = effectiveWpm(words.length, durationSec);
-
-  const chunks: TranscriptChunk[] = [];
-  let id = 0;
-  let i = 0;
-  // Inline marker density. Retrieval chunks are ~150 words ≈ 60s, so a 15s
-  // gap gives 3-4 anchors per chunk — enough for fine citation, not enough
-  // to bloat the index size. For the larger summary chunks the same 15s
-  // gap scales naturally (more words → more anchors).
-  const INLINE_MARKER_MIN_GAP_SEC = 15;
-  while (i < words.length) {
-    const end = Math.min(i + chunkWords, words.length);
-    const timeSec =
-      wordStartMs && typeof wordStartMs[i] === 'number'
-        ? Math.round(wordStartMs[i] / 1000)
-        : Math.round((i / wpm) * 60);
-    // When we have real timings, embed `[mm:ss]` markers at segment
-    // transitions inside the chunk — gives the model real anchors to
-    // copy into its citations. Without timings, fall back to plain text.
-    const text = wordStartMs
-      ? annotateSpan(words, wordStartMs, i, end, INLINE_MARKER_MIN_GAP_SEC)
-      : words.slice(i, end).join(' ');
-    chunks.push({ id: id++, text, startWord: i, timeSec });
-    if (end === words.length) break;
-    i = end - overlapWords;
-  }
-  return chunks;
-}
-
-// Small windows for BM25 retrieval. Pass a PreparedTranscript for real
-// segment-based timestamps, or a cleaned string for linear estimation.
-export function chunkForRetrieval(
-  input: string | PreparedTranscript,
-  durationSec?: number | null,
-): TranscriptChunk[] {
-  return chunkBy(input, RETRIEVAL_CHUNK_WORDS, RETRIEVAL_CHUNK_OVERLAP, durationSec);
-}
 
 // Large windows for map-reduce summarization.
 export function chunkForSummary(
@@ -477,59 +280,6 @@ function findNearestSection(
   return best ?? withTime[0];
 }
 
-// -----------------------------------------------------------------------------
-// Ground AI-generated section timecodes to the real transcript.
-//
-// The model produces `sections[]` with its own `timeSec` estimates — but
-// even with inline timecode markers in the prompt, it can still drift
-// (pick the wrong marker, copy from a nearby chunk, anchor on a visual
-// that doesn't match the heading). Since we already have a BM25 index
-// of the real-timestamped chunks, we can re-anchor each section's
-// timeSec to the chunk that actually matches its content.
-//
-// Strategy:
-//   1. For each section, search BM25 with `heading + body` as the query.
-//   2. Take the top-scoring chunk's real `timeSec`.
-//   3. Only override the model's value when BM25 found a meaningful
-//      match — otherwise trust the model and leave timeSec unchanged.
-// -----------------------------------------------------------------------------
-
-// Minimum BM25 score to trust for grounding. Below this, the match is
-// weak enough that we should trust the model's original timeSec rather
-// than flip it to a loosely-related chunk.
-const GROUNDING_MIN_SCORE = 2.0;
-
-// -----------------------------------------------------------------------------
-// Public citation tool — the primitive industry production systems rely on.
-// Given a claim or quote, returns the real-timestamped transcript chunk that
-// best supports it. Used BOTH at generation time (deterministic section
-// timecode recovery — the Le Borgne pattern) AND at chat time (post-process
-// verification of the model's citations, plus on-demand evidence fetching).
-// -----------------------------------------------------------------------------
-
-export type TranscriptEvidence = {
-  /** Real caption-segment start time in seconds. */
-  timeSec: number;
-  /** The transcript chunk's raw text — shows the user WHY we landed there. */
-  snippet: string;
-  /** BM25 relevance score. Higher = stronger match. */
-  score: number;
-};
-
-export function findEvidenceForQuote(
-  quote: string,
-  index: BM25Index,
-  minScore = 1.0,
-): TranscriptEvidence | null {
-  const hit = searchBM25Top1WithScore(index, quote);
-  if (!hit || hit.score < minScore) return null;
-  return {
-    timeSec: hit.chunk.timeSec,
-    snippet: hit.chunk.text,
-    score: hit.score,
-  };
-}
-
 // Parse a `mm:ss`, `h:mm:ss`, or bare-seconds string into seconds.
 // Mirrors parseTcToSeconds in TimecodeMarkdown — kept here to avoid a
 // dependency from services → components.
@@ -539,7 +289,7 @@ function parseTcStringToSeconds(tc: string): number {
   return parts[0] * 60 + parts[1];
 }
 
-// (formatMmss is defined earlier in the file — reused here.)
+// (formatMmss comes from ./bm25-core.)
 
 // Scan a text for model-emitted `[mm:ss]` / `(mm:ss)` / bare mm:ss citations.
 // For each, extract the surrounding context (~±200 chars) and verify the
@@ -717,79 +467,6 @@ export function extractCitationsWithEvidence(
   }
 
   return merged;
-}
-
-export type GroundableSection = {
-  heading: string;
-  body: string;
-  timeSec?: number;
-};
-
-export type GroundedSection<T extends GroundableSection> = T & {
-  /** Whether timeSec was re-anchored by BM25 grounding. Useful for logs. */
-  grounded?: boolean;
-  /** Model's original timeSec before grounding, when it was overridden. */
-  originalTimeSec?: number;
-};
-
-// BM25 top-1 that also returns the score — shared between `findEvidenceForQuote`
-// (public citation tool) and `groundSectionsToTranscript` (generation-time
-// grounding pass). Mirrors `searchBM25` but keeps score info.
-function searchBM25Top1WithScore(
-  index: BM25Index,
-  query: string,
-): { chunk: TranscriptChunk; score: number } | null {
-  const queryTerms = Array.from(new Set(tokenize(query)));
-  if (queryTerms.length === 0) return null;
-
-  let bestIdx = -1;
-  let bestScore = 0;
-  for (let i = 0; i < index.chunks.length; i++) {
-    let score = 0;
-    for (const term of queryTerms) {
-      const idf = index.idf[term];
-      if (!idf) continue;
-      const f = index.tf[i][term];
-      if (!f) continue;
-      const dl = index.lengths[i];
-      const norm = 1 - BM25_B + (BM25_B * dl) / (index.avgLength || 1);
-      score += idf * ((f * (BM25_K1 + 1)) / (f + BM25_K1 * norm));
-    }
-    if (score > bestScore) {
-      bestScore = score;
-      bestIdx = i;
-    }
-  }
-  if (bestIdx === -1) return null;
-  return { chunk: index.chunks[bestIdx], score: bestScore };
-}
-
-export function groundSectionsToTranscript<T extends GroundableSection>(
-  sections: T[],
-  index: BM25Index,
-): GroundedSection<T>[] {
-  return sections.map((s) => {
-    const hit = searchBM25Top1WithScore(index, `${s.heading}. ${s.body}`);
-    if (!hit || hit.score < GROUNDING_MIN_SCORE) {
-      return s;
-    }
-    const originalTimeSec = s.timeSec;
-    // Skip override if the model's estimate is already close to the BM25
-    // match (within 15s) — both are fine in that case and preserving the
-    // model's number keeps cross-reference with body citations stable.
-    if (
-      typeof originalTimeSec === 'number' &&
-      Math.abs(originalTimeSec - hit.chunk.timeSec) <= 15
-    ) {
-      return s;
-    }
-    return {
-      ...s,
-      timeSec: hit.chunk.timeSec,
-      grounded: true,
-      originalTimeSec,
-    };
-  });
 }
 
 export function makeSectionContextualizer(

@@ -153,7 +153,7 @@ Stored vectors carry `embeddingModel` + `embeddingVersion`. Mismatch with curren
 ### Stored BM25 index invalidation
 
 The BM25 index cached on `Video.transcriptSegments` records the params that
-built it — `CURRENT_INDEX_PARAMS` in `client/src/lib/services/bm25-core.ts`
+built it — `CURRENT_INDEX_PARAMS` in `server/src/plugins/yt-kb/server/src/services/bm25-core.ts`
 (chunk words, chunk overlap, `TOKENIZER_VERSION`). A mismatch makes the row
 **stale**, and `loadStoredIndex` refuses to return it rather than scoring
 today's queries against yesterday's arithmetic. `/settings` reports
@@ -166,10 +166,7 @@ and the same failure mode if you skip it: stale artifacts silently keep
 being trusted. Rows with no cached `rawSegments` (pre-cache era) can't be
 backfilled and are reported separately — they need a full Regenerate.
 
-The scorer itself lives in `bm25-core.ts` and is copied verbatim into
-`server/src/plugins/yt-kb/server/src/services/bm25-core.ts` by `yarn sync:bm25`; the two halves stay
-identical because `bm25-core.sync.test.ts` fails if they drift. Edit the
-client copy, never the server one.
+The scorer, the cleaner, the retrieval chunker and the timecode grounding live in the plugin's `server/src/plugins/yt-kb/server/src/services/bm25-core.ts`, copied verbatim into `client/src/lib/services/bm25-core.ts` by `yarn sync:bm25`; the two halves stay identical because `bm25-core.sync.test.ts` fails if they drift. Edit the plugin copy, never the client one. The plugin also stores a model-free index on every transcript (`Transcript.searchIndex`, same `CURRENT_INDEX_PARAMS`), so the same bump makes those stale too; the search tools rebuild them on first use.
 
 ### Map-reduce kicks in past ~15K tokens
 

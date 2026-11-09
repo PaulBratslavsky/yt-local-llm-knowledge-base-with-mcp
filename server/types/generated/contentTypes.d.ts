@@ -1167,7 +1167,7 @@ export interface PluginYtKbTranscript extends Struct.CollectionTypeSchema {
     publishedAt: Schema.Attribute.DateTime;
     rawSegments: Schema.Attribute.JSON;
     rawText: Schema.Attribute.RichText;
-    searchIndex: Schema.Attribute.JSON;
+    searchIndex: Schema.Attribute.JSON & Schema.Attribute.Private;
     thumbnails: Schema.Attribute.JSON;
     thumbnailUrl: Schema.Attribute.Text &
       Schema.Attribute.SetMinMaxLength<{

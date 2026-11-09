@@ -8,6 +8,7 @@ vi.mock('youtubei.js', () => ({ Innertube: { create: yt.create } }));
 
 import fetcherService from './fetcher';
 import { TranscriptFetchError } from './fetch-errors';
+import { storedIndexStatus } from './bm25-core';
 
 const ID = 'dQw4w9WgXcQ';
 const CAPTION_URL = `https://www.youtube.com/api/timedtext?v=${ID}&lang=de`;
@@ -82,8 +83,10 @@ describe('fetchAndStore', () => {
 
     expect(transcripts.create).toHaveBeenCalledTimes(1);
     const { data } = transcripts.create.mock.calls[0][0] as { data: Record<string, unknown> };
-    const { fetchedAt, ...rest } = data;
+    const { fetchedAt, searchIndex, ...rest } = data;
     expect(typeof fetchedAt).toBe('string');
+    expect(storedIndexStatus(searchIndex)).toBe('current');
+    expect((searchIndex as { bm25: { chunks: unknown[] } }).bm25.chunks.length).toBeGreaterThan(0);
     expect(rest).toEqual({
       youtubeVideoId: ID,
       title: 'Ein Video',

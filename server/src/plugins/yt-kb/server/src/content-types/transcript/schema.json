@@ -84,6 +84,7 @@
     },
     "searchIndex": {
       "type": "json",
+      "private": true,
       "description": "Model-free BM25 index over rawSegments (makeStoredIndex from services/bm25-core.ts, no contextualizer). Built by fetchAndStore and lazily by readers."
     }
   }

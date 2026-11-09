@@ -226,3 +226,88 @@ Kit outputs are in `server/.tmp/e8/m3-*` (not committed). The kit's pre-M3 copy 
 - **Step 5, `bootstrap.ts`: the spec's code did not typecheck.** The verbatim `if (result.success) { … } else { …result.error… }` fails `test:ts:back` with `TS2339: Property 'error' does not exist on type '{ success: true; ip: string; } | { success: false; error: string; }'`. The plugin's tsconfig extends `@strapi/typescript-utils/tsconfigs/server`, which sets `"strict": false`. Without `strictNullChecks`, a truthiness check does not narrow a union on a boolean discriminant. A scratch compile under the same base config showed that `=== true`, `=== false` and `'error' in` all narrow. I stopped and asked. **Ruling:** explicit `=== true` comparison. The plugin's strict:false tsconfig doesn't narrow a boolean discriminant on truthiness; behaviour is identical. Applied at `bootstrap.ts` line 15. The tsc error itself was reported at line 18, where `result.error` is used. No other occurrence of the pattern exists in M3's plugin code; afterwards `test:ts:back` is clean.
 - **Commit message:** as instructed, the first line is the `### M3 — …` title. The spec's milestone has no separate **Commit** bullet.
 - **Verify 8's text check:** the spec's command is correct. It only failed under this agent's `grep` wrapper (see Verify 8).
+
+## M4
+
+**R-E8-2 (before M4, its own commit `fix(plugin): don't repeat the message in yt-kb log meta`):** a yt-kb log line's meta object never contains a `message` key.
+- `fetcher.ts`'s fail line keeps `{ videoId, reason }`, and its comment is updated.
+- `bootstrap.ts`'s backfill warn is called with the text only.
+- `fetcher.test.ts` asserts `not.toHaveProperty('message')` once.
+- Result: plugin 61/61, `test:ts:back` 0.
+- M4's new warn in `services/search-index.ts` follows the rule: its meta is `{ documentId }`, not the spec's `{ documentId, message }`.
+
+**Milestone:** M4 — Search ownership and grounding. Started from HEAD `e5321b3` (R-E8-2 on top of M3), clean working tree. Ports 1340, 1341 and 3005 were free before the checks and after them. The first run stopped at Verify 3 (R-E8-3 below); it resumed after the ruling. As with M1–M3, the commit hash is reported in the hand-off.
+
+### Steps
+
+- **Steps 1–11 and 13's fixture:** a script copied every fenced block verbatim from the spec. It took each block from a given line number to its closing fence and dedented it, asserting every anchor first. The moved `transcript.ts` ranges were checked line by line against the table (the file is unchanged since 721f210). The three `export` additions were applied. `save-summary.ts` takes the schema from 721f210 lines 31–66.
+- **Changes from the spec text (rulings):**
+  - `search-index.ts`'s warn meta drops `message` (R-E8-2).
+  - R-E8-3 changed how steps 9–11 load the private `searchIndex`; see "R-E8-3" below.
+- **Step 12, `CLAUDE.md`:** both edits applied. The new paragraph is asserted equal to the spec's text.
+- **Step 13, tests:**
+  - 13a `services/search-index.test.ts`: 11 tests. These are the spec's 8 plus 3 for R-E8-3's loaders: single `findOne`; batched `findMany` with segments only for the rows that need a build, after which `ensure…` reads nothing more; no query for no ids.
+  - 13b `mcp/tools/search-tools.test.ts`: 8 tests. The spec's cases, plus "a current stored transcript index is used without rebuilding". The fake's transcript `findOne`/`findFirst`/`findMany` return only the requested fields.
+    - Every case asserts that no video query's `populate` contains `searchIndex`. A mutation check (putting `searchIndex` back into cross-search's populate) fails 1 of 8.
+    - The cross-search case asserts there is no per-video `findOne`, and exactly two transcript `findMany` calls: indexes (`$in` of the two videos without an app index, `limit: 2`), then segments.
+  - 13c `mcp/tools/save-summary.test.ts`: 3 tests. The spec's cases, plus: the populate has no `searchIndex`, and the index is read with `findOne({ documentId: 't2', fields: ['searchIndex', 'durationSec'] })`.
+  - 13d: `fetcher.test.ts`'s success case takes `searchIndex` out of its exact `toEqual` and asserts it is current with chunks.
+  - `tsconfig.build.json` excludes `**/__fixtures__/**`, and `dist/` has no fixture.
+- **Step 14:** the first boot rewrote `server/types/generated/contentTypes.d.ts` (`searchIndex: Schema.Attribute.JSON & Schema.Attribute.Private`). That is its only change, and it is committed.
+
+### R-E8-3: the private `searchIndex` is never named inside a populate
+
+- **The problem (first run, Verify 3):** every `searchTranscript` and `crossSearchTranscripts` call returned `isError: true`, `Invalid key searchIndex`.
+- **Cause, in Strapi 5.61.0:**
+  - `@strapi/core/dist/services/document-service/repository.js` `validateParams` checks root `fields` with `['scalarAttributes']` only.
+  - It passes populate includes as `{ sort, field, filters, populate }`, with the key `field`.
+  - `@strapi/utils/dist/validate/validators.js` `validatePopulate` reads `includes?.fields || FIELDS_TRAVERSALS`, which is `['scalarAttributes','privateFields','passwordFields']`.
+  - So a `fields` list inside a populate is checked with `throwPrivate`, and a root one is not.
+- **Probe:** a script called those validators with yt-kb's schemas and the Document Service's includes:
+  - root `fields: ['title','searchIndex']` → ok;
+  - `populate: { transcript: { fields: ['searchIndex','durationSec'] } }` → `Invalid key searchIndex`;
+  - the same with `private` removed → ok;
+  - `populate: { transcript: true }` → ok.
+- **Ruling R-E8-3, option (B), batched:** keep step 5's `"private": true`, and never name `searchIndex` inside a populate. Applied:
+  - `services/search-index.ts` gains:
+    - `loadTranscriptSearchIndex(strapi, documentId)`: one root-level `findOne` with `fields: ['searchIndex', 'durationSec']`.
+    - `loadTranscriptSearchIndexes(strapi, ids)`: one root-level `findMany({ filters: { documentId: { $in } }, fields: ['documentId','searchIndex','durationSec'], limit })`. Then, only for rows whose index is missing or stale, one more `findMany` for `rawSegments`/`durationSec`; a missing row's `rawSegments` is set to `null`, so `ensure…` never reads per row.
+    - A header paragraph saying why.
+  - `search-transcript.ts`: the video's populate uses `POPULATED_TRANSCRIPT_FIELDS = ['documentId','title','rawSegments','durationSec']`, then `loadTranscriptSearchIndex` for the linked transcript. The no-Video fallback stays a root-level `findFirst` with `TRANSCRIPT_FIELDS`, which is allowed.
+  - `save-summary.ts`: populate `fields: ['documentId','durationSec']`, then `loadTranscriptSearchIndex`. The no-link fallback stays root-level.
+  - `cross-search-transcripts.ts`: populate `transcript: { fields: ['documentId'] }`, then one `loadTranscriptSearchIndexes` call for the videos without a current app index. So it adds one query in total, two when some need a build.
+  - `git grep searchIndex` in the plugin's tools: no populate names it.
+
+### Verify results
+
+| # | Check | Result | What it proved / did not prove |
+|---|---|---|---|
+| 1 | Gates (re-run after R-E8-3) | `sync:bm25 --check` 0, `up to date`. The client copy's line 1 is the banner; the plugin source has 0. `CURRENT_INDEX_PARAMS` = `{150,20,2}`. Plugin `{"passed":83,"failed":0,"floor":61,"missing":[]}`, written to `plugin-passed-m4.txt` (83). `test:ts:back` 0, plugin build 0, client and server `tsc --noEmit` 0. Client `{"total":335,"passed":333,"failed":0,"pending":2}`, the same as M3. `yarn test` 0. Drift: sync test `exit=1`, `--check` 1, restore, `git diff --exit-code` 0, `--check` 0. | Proves the move, the copy direction (plugin → client), the unchanged index params, and the unit behaviour. The plugin's fakes do not run Strapi's query validation; Verify 3 covers that live. |
+| 2 | Scratch fixtures | builds 0. Fresh `e8-m4.db`. `create-user` 0. The fixture script exits 0 and prints `{"ok":true}`. `/_health` 204. `admin-tokens` ok (read, write). `token app` ok (`plugin::yt-kb.transcript.find`). | Fixture check parsed with `jq -R 'fromjson?'` (see "Spec discrepancies"). |
+| 3 | Search order via MCP | all 12 spec checks pass. contextual first (240, no transcript index built); lazy build on the pending video (v2, t2, 16 chunks); built once (`updated_at` unchanged on the second search); plain index (`zebracontext` → `[]`); stale not trusted and rebuilt (t2); transcript with no Video (`title` from the transcript); no transcript → `No searchable transcript`; cross search `videosScanned` 4, with Ctx `bm25` and Lazy and Stale `bm25-transcript`, no NoTrans. **R-E8-3 REST check:** `GET /api/yt-kb/transcripts?pagination[pageSize]=1` with the `app` token → 200, one row, `rawSegments` present, **no `searchIndex`**. The Strapi log has no `Invalid key` and no tool error. | Proves the search order, the lazy write and the batched reads against real Strapi 5.61 query validation, and that private keeps the index out of the content API. |
+| 4 | Grounding via `saveSummary` | `sectionsWithTimecode` 2. `getVideo` sections `[240,120,null]`, so the caller's 999 was not stored. NoTrans → 0. `GET …?filters[youtubeVideoId][$eq]=m4LazyVid01` (`app`) → no `searchIndex`, 8 `rawSegments`. 1341 stopped and free. | Proves grounding with the app's query, function and threshold through the real MCP path. |
+| 5 | Copy of real data | backup `integrity: ok`, B4 = 190. `create-user` 0, `/_health` 204, tokens ok. A real app index is still `bm25`. Cross search (100 newest) has no error: 100 scanned, 58 hits, all `bm25`. Built indexes not current: 0. B4 again 190. | **The spec's checks did not exercise the lazy write on real data:** the 100 newest videos all have current app indexes, so nothing was built, and "every built index is current" held with nothing built. **Extra check (not in spec):** `searchTranscript` on `gvZIUEL6Ruc`, one of the 4 real videos with a transcript but no app index → `bm25-transcript`, one result. The row's `search_index` became version 2, tokenizer 2, 59 chunks ("built transcript search index … (59 chunks)" logged once). Not-current count still 0, B4 still 190. |
+| — | Clean up | 1341 killed (started here). `server/.tmp/e8-m4.db` and `e8-m4-real.db` removed, plus 17 `server/.tmp/e8/m4-*` files. 1340, 1341 and 3005 free; no `strapi develop` left. `plugin-passed-m4.txt` kept for M5. | — |
+
+### Stubs and mocks
+
+- **Plugin tests:** hand-written fake Strapis.
+  - `documents(uid)` → `vi.fn`s.
+  - In 13b and 13c, the transcript reads come from a store and return only the requested fields.
+  - None of them run Strapi's query validation; the populate guard assertions stand in for it.
+  - The fetcher test mocks `youtubei.js` and `fetch` (M3's setup).
+- **Verify 2–5:** real Strapi 5.61.0 with `PROXY_URL=http://127.0.0.1:9`. Verify 2–4 used a fresh scratch DB. Verify 5 used an online-backup copy of `data.db`, and nothing was booted on `data.db`.
+
+### Pre-existing problems found (not fixed)
+
+- **Strapi 5.61.0 query validation:** the populate check reads `includes.fields`, but the Document Service passes the key `field` (above). Private attributes are refused inside a populate's `fields` but accepted at the root. This looks like an upstream inconsistency; I did not look for an issue.
+- **Real data:** `test-smoke-001` is a Video with no transcript and no app index. Possibly a test leftover in the owner's library.
+
+### Spec discrepancies
+
+- **R-E8-3 (spec error):** steps 5 and 9–11 together are impossible on 5.61.0. Strapi rejects the private `searchIndex` inside a populate's `fields` (probe above). Ruled option (B), batched, as applied above, plus a live REST check in Verify 3.
+- **Verify 2 (spec error):** `… m4-fixtures.mjs) | jq -e '.ok == true'` cannot parse the output, because `createStrapi().load()` also logs to stdout. I parsed the same stdout with `jq -R 'fromjson? | select(type=="object" and has("ok"))' | jq -s -e 'length==1 and .[0].ok==true'` → true.
+- **Verify 1 drift check (spec error):** `git diff --exit-code client/src/lib/services/bm25-core.ts` compares against the index, and the regenerated copy is new in M4. Run before staging, it returns 1 even after a correct restore. I staged the regenerated copy first and then ran the whole drift sequence.
+- **13d:** the existing success case's exact `toEqual` must take `searchIndex` out before it can assert on it.
+- **Commit message:** the spec's **Commit** bullet says `M4: Search ownership and grounding`. As instructed, the first line is the `### M4 — …` title. The bullet does not list this log; it is included as instructed.
+- **Tool note:** in this agent's zsh, `rm -f server/.tmp/e8-m4.db*` aborts when the glob matches nothing (`no matches found`). The DB was then removed with `find … -delete`.

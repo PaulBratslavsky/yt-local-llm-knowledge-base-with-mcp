@@ -1,4 +1,5 @@
 import type { Core } from '@strapi/strapi';
+import { buildTranscriptSearchIndex } from './bm25-core';
 import { isUniqueViolation } from './db-errors';
 import { TranscriptFetchError } from './fetch-errors';
 import {
@@ -129,6 +130,7 @@ export default ({ strapi }: { strapi: Core.Strapi }) => {
         thumbnailUrl: meta.thumbnailUrl ?? clip(oembed.thumbnailUrl, 2000),
         rawSegments,
         rawText: result.fullTranscript,
+        searchIndex: buildTranscriptSearchIndex(rawSegments, result.durationSec),
         fetchedAt: new Date().toISOString(),
       };
 
