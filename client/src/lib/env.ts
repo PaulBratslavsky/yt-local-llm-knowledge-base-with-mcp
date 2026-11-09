@@ -123,6 +123,13 @@ export function envWarnings(env: ValidatableEnv): string[] {
   return out;
 }
 
+// Warnings worth printing at startup. Server only: this module is also bundled
+// into the browser, where server env (STRAPI_API_TOKEN above all) is never
+// present by design, so every check there would be a false alarm.
+export function startupWarnings(env: ValidatableEnv, opts: { isServer: boolean }): string[] {
+  return opts.isServer ? envWarnings(env) : [];
+}
+
 // One-shot startup validation. Runs at module load — the first import in any
 // request path prints warnings once per process. Doesn't throw: local-first
 // should degrade gracefully, and most of these are "works but not ideal".
@@ -130,7 +137,8 @@ let validated = false;
 function validateOnce() {
   if (validated) return;
   validated = true;
-  for (const msg of envWarnings({ OLLAMA_MODEL, OLLAMA_CHAT_MODEL, STRAPI_URL, STRAPI_API_TOKEN })) {
+  const env = { OLLAMA_MODEL, OLLAMA_CHAT_MODEL, STRAPI_URL, STRAPI_API_TOKEN };
+  for (const msg of startupWarnings(env, { isServer: typeof window === 'undefined' })) {
     console.warn(`[env] ${msg}`);
   }
 }

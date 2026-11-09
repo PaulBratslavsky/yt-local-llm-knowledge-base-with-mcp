@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { envWarnings } from '#/lib/env';
+import { envWarnings, startupWarnings } from '#/lib/env';
 
 // A complete, healthy env. Each test perturbs one field so a warning can
 // only come from the thing under test.
@@ -46,5 +46,19 @@ describe('envWarnings', () => {
       STRAPI_API_TOKEN: '',
     });
     expect(out).toHaveLength(4);
+  });
+});
+
+describe('startupWarnings', () => {
+  const empty = { ...healthy, STRAPI_API_TOKEN: undefined };
+
+  it('warns on the server, where the token is read', () => {
+    expect(startupWarnings(empty, { isServer: true })).toHaveLength(1);
+  });
+
+  it('is silent in the browser, which never receives server env', () => {
+    // env.ts is bundled into the client too; there STRAPI_API_TOKEN is always
+    // unset by design, so a warning would be a false alarm.
+    expect(startupWarnings(empty, { isServer: false })).toEqual([]);
   });
 });
