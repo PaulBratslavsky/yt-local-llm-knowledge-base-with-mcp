@@ -34,3 +34,11 @@ All PROPOSE FIX: Strapi Cloud managed DB — tokens via the admin panel as the m
 ## Escalations
 
 None.
+
+---
+
+## Re-run (2026-11-08) — after the first round of fixes
+
+- **Reviewers:** `egm:egm-implementation-readiness` (0 Blockers / 7 Majors / 4 Nits) and `egm:egm-codebase-details` (0 / 3 / 8) — the two that had found Blockers; the fact-checker's findings were version pins, re-checked by the fix pass. This is the one re-run C allows.
+- **Verdict:** no Blockers. Every Major and Nit was applied (18 fixes), chiefly: a dead proxy (`PROXY_URL=http://127.0.0.1:9`) on every scratch boot from M5 on, so no check can use the owner's proxy credentials; exact start/stop/log commands for Deployment step 2–3; zod accepted as `>=4.2 <5`; a documentId pre-check (Elephant ran it: 0 mismatches in all five tables); live service-level race tests for `createVideoService`/`upsertDigestService` (browser-level check recorded as an accepted §7 deviation, OQ-2); a guard that `yarn site:deploy` resolves the `npx` stub plus invalid Netlify credentials; M4 commits its regenerated types; JSON-reporter test checks in M3–M5; `--incremental false` on the plugin typecheck; mechanical M8 checks.
+- Spec is ready for E8.

@@ -80,7 +80,7 @@ Accepted findings (`reviews/B-design-review.md`):
   - CI (`.github/workflows/ci.yml`) has a "Typecheck server" step, but `server/tsconfig.json` excludes `src/plugins/` (twice: `"src/plugins/"` and `"src/plugins/**"`), so CI never typechecks, builds, verifies or tests the plugin. The plugin's own typecheck (`tsc -p server/tsconfig.json --noEmit`) passes at `721f210` on 5.52.1 (run with `--incremental false`, 2026-11-08).
   - The only plugin-facing guard in the client is `client/src/lib/services/mcp-permissions.guard.test.ts` (3 tests; reads `PSRC/mcp-official/index.ts` and `permissions.ts`). `bm25-core.sync.test.ts` stays in the client (contract: Search). `strapi-paths.guard.test.ts` and `youtube-fetch.guard.test.ts` guard client code and stay.
   - Client: `vite` is `^8.0.0` (installed 8.0.8); `seroval` resolves to 1.5.2 (via `solid-js@1.9.12`, range `~1.5.0`), 1.6.2 and 1.7.6 (`client/yarn.lock`); seroval has advisories through 1.6.7, so the floor is 1.7.6. `vitest` is `^3.0.5` (installed 3.2.4), which has a critical advisory (its UI server only) fixed in 3.2.6.
-  - **zod under `@strapi/utils` changes major.** On 5.52.1, `@strapi/utils` depends on `zod` 3.25.76 and exports its zod 4 API (`require('zod/v4')`, `@strapi/utils/dist/zod.js`); on 5.60.0 (`/Users/paul/work/plugin-dev/strapi-prod`) it depends on `zod` 4.4.3, and 5.61.0 is expected to match (M1 Verify 1 checks `zodForUtils` = 4.4.3). Every plugin tool schema is built with `z` from `@strapi/utils`, so the API the plugin uses stays zod 4, but the package underneath is new. **If `test:ts:back`, the plugin tests, or MCP `tools/list` (Verify 3, 6) fail because of zod types or schema conversion, STOP and ask** — do not rewrite schemas or pin zod.
+  - **zod under `@strapi/utils` changes major.** On 5.52.1, `@strapi/utils` depends on `zod` 3.25.76 and exports its zod 4 API (`require('zod/v4')`, `@strapi/utils/dist/zod.js`); on 5.60.0 (`/Users/paul/work/plugin-dev/strapi-prod`) it depends on `zod` 4.4.3, and 5.61.0 is expected to resolve a zod 4 at or above 4.2.0 (M1 Verify 1 accepts `zodForUtils` `>=4.2.0 <5` and records the exact version; outside that range, STOP and ask). Every plugin tool schema is built with `z` from `@strapi/utils`, so the API the plugin uses stays zod 4, but the package underneath is new. **If `test:ts:back`, the plugin tests, or MCP `tools/list` (Verify 3, 6) fail because of zod types or schema conversion, STOP and ask** — do not rewrite schemas or pin zod.
 - **Preconditions (stop and ask if any fails):**
   1. Nothing listens on ports 1340, 1341 or 3005, on IPv4 or IPv6. The upgrade replaces `server/node_modules` under any running Strapi, and the checks use 1341 and 3005. Check, from the repo root (`lsof -nP -iTCP:<port> -sTCP:LISTEN` exits 1 when nothing listens on the port, on any address):
      ```bash
@@ -324,6 +324,7 @@ Accepted findings (`reviews/B-design-review.md`):
    - **Backups of the owner's DB:** `node $K backup server/.tmp/data.db server/.tmp/data.db.pre-m<N>-$TS` (online backup + `integrity_check`), never a plain `cp` of a live file.
    - **Ports:** scratch Strapi on `127.0.0.1:1341` (`PORT=1341 HOST=127.0.0.1`), the app on `3005`, extra stubs on `1398`/`1399` where M6/M7 say. Before a milestone's checks, precondition 1's port check (1340, 1341, 3005, plus the milestone's stub ports, added to its `for p in …` list) must print `"busy":false` for each — never kill the owner's processes. The probe is always `lsof -nP -iTCP:<port> -sTCP:LISTEN` (exit 1 = free), which sees IPv4 and IPv6 (`::1`) listeners alike; no milestone probes a port by connecting to `127.0.0.1` only. Stop only what the checks started: `lsof -ti tcp:<port> -sTCP:LISTEN | xargs kill`.
    - **Starting the scratch Strapi:** `(cd server && DATABASE_FILENAME=.tmp/e8-m<N>.db PORT=1341 HOST=127.0.0.1 nohup yarn develop > .tmp/e8/m<N>-strapi.log 2>&1 &)` then `node $K wait http://127.0.0.1:1341/_health 300` → `"status": 204`. Each scratch DB gets the scratch admin with `(cd server && DATABASE_FILENAME=.tmp/e8-m<N>.db yarn -s strapi admin:create-user --email="$(node -p 'require("./.tmp/e8/admin.json").email')" --password="$(node -p 'require("./.tmp/e8/admin.json").password')" --firstname=E8 --lastname=Check)` with Strapi stopped.
+   - **Dead proxy (from M3 on):** every scratch Strapi start or in-process load — `yarn develop`, `strapi admin:create-user`, `create-tokens.cjs`, and every script that calls `createStrapi(…).load()` (M4's fixtures, M5's `m5-inspect.cjs`) — sets `PROXY_URL=http://127.0.0.1:9` on its own command line, next to `DATABASE_FILENAME`. From M3 the plugin reads `proxyUrl` (default `env('PROXY_URL')`) and its bootstrap makes a proxy check at every load; shell variables win over `server/.env`, so the owner's real proxy is never used and nothing a check starts can reach YouTube through it (port 9 on loopback refuses at once). M1 and M2 run code that does not read `PROXY_URL`. Deployment's verification boot on `data.db` sets it too.
    - **Tokens:** `T=server/.tmp/e8/tokens.json` (mode 0600), rewritten per milestone by `admin-tokens` (keys `base`, `rest` = full-access Content API, `mcp` = admin token) and extended with named keys by M3's `token`. A key file written by another tool (M5's `create-tokens.cjs`) is passed as `@<path>`. No step prints a key.
    - **Working files:** `server/.tmp/e8/m<N>-*` (JSON outputs, logs, key files, helper scripts), or the directory `server/.tmp/e8/m<N>/` (mode 700) where a milestone has many (M6, M7). `server/.tmp` is gitignored.
 
@@ -382,7 +383,7 @@ Accepted findings (`reviews/B-design-review.md`):
        "watch": "strapi-plugin watch",
        "verify": "strapi-plugin verify",
        "test": "vitest run",
-       "test:ts:back": "tsc -p server/tsconfig.json --noEmit"
+       "test:ts:back": "tsc -p server/tsconfig.json --noEmit --incremental false"
      },
      "dependencies": {
        "undici": "6.29.1",
@@ -585,6 +586,7 @@ Accepted findings (`reviews/B-design-review.md`):
            run: npx tsc --noEmit
            working-directory: server
 
+         # test:ts:back is `tsc -p server/tsconfig.json --noEmit --incremental false`.
          - name: Typecheck plugin
            run: yarn test:ts:back
            working-directory: server/src/plugins/yt-kb
@@ -663,9 +665,9 @@ Run from the repo root, in order. Every check prints JSON; "→" is the expected
 
 1. **Installed versions:**
    ```bash
-   node -e 'const {createRequire}=require("module");const r=createRequire(process.cwd()+"/server/package.json");const v=n=>r(n+"/package.json").version;const o={strapi:v("@strapi/strapi"),core:v("@strapi/core"),database:v("@strapi/database"),utils:v("@strapi/utils"),cloud:v("@strapi/plugin-cloud"),usersPermissions:v("@strapi/plugin-users-permissions"),zodForUtils:require(require.resolve("zod/package.json",{paths:[r.resolve("@strapi/utils")]})).version,undici:require("./server/src/plugins/yt-kb/node_modules/undici/package.json").version,vite:require("./client/node_modules/vite/package.json").version,clientVitest:require("./client/node_modules/vitest/package.json").version,pluginVitest:require("./server/src/plugins/yt-kb/node_modules/vitest/package.json").version};console.log(JSON.stringify(o));const bad=Object.entries({strapi:"5.61.0",core:"5.61.0",database:"5.61.0",utils:"5.61.0",cloud:"5.61.0",usersPermissions:"5.61.0",zodForUtils:"4.4.3",undici:"6.29.1",vite:"8.3.6",clientVitest:"3.2.6",pluginVitest:"3.2.6"}).filter(([k,x])=>o[k]!==x);if(bad.length){console.log(JSON.stringify({mismatch:bad}));process.exit(1)}'
+   node -e 'const {createRequire}=require("module");const r=createRequire(process.cwd()+"/server/package.json");const v=n=>r(n+"/package.json").version;const o={strapi:v("@strapi/strapi"),core:v("@strapi/core"),database:v("@strapi/database"),utils:v("@strapi/utils"),cloud:v("@strapi/plugin-cloud"),usersPermissions:v("@strapi/plugin-users-permissions"),zodForUtils:require(require.resolve("zod/package.json",{paths:[r.resolve("@strapi/utils")]})).version,undici:require("./server/src/plugins/yt-kb/node_modules/undici/package.json").version,vite:require("./client/node_modules/vite/package.json").version,clientVitest:require("./client/node_modules/vitest/package.json").version,pluginVitest:require("./server/src/plugins/yt-kb/node_modules/vitest/package.json").version};console.log(JSON.stringify(o));const bad=Object.entries({strapi:"5.61.0",core:"5.61.0",database:"5.61.0",utils:"5.61.0",cloud:"5.61.0",usersPermissions:"5.61.0",undici:"6.29.1",vite:"8.3.6",clientVitest:"3.2.6",pluginVitest:"3.2.6"}).filter(([k,x])=>o[k]!==x);const z=/^(\d+)\.(\d+)\.(\d+)$/.exec(o.zodForUtils);const zodOk=!!z&&+z[1]===4&&+z[2]>=2;if(bad.length||!zodOk){console.log(JSON.stringify({mismatch:bad,zodOutOfRange:zodOk?null:o.zodForUtils}));process.exit(1)}'
    ```
-   → exits 0. Then the lockfiles M1 changed match their `package.json`s: `yarn --cwd client install --frozen-lockfile && yarn --cwd server/src/plugins/yt-kb install --frozen-lockfile` → exit 0, and `git diff --name-only -- client/yarn.lock` lists `client/yarn.lock` (step 7's update is there to commit).
+   → exits 0. Record the printed `zodForUtils` (any `4.x.y` with x ≥ 2, i.e. `>=4.2.0 <5`; 4.4.3 on 5.60.0) in the E8 log. If it exits 1 with a non-null `zodOutOfRange` (a zod 3, a zod 5, a 4.0/4.1 or a pre-release), STOP and ask — don't pin or change zod. Then the lockfiles M1 changed match their `package.json`s: `yarn --cwd client install --frozen-lockfile && yarn --cwd server/src/plugins/yt-kb install --frozen-lockfile` → exit 0, and `git diff --name-only -- client/yarn.lock` lists `client/yarn.lock` (step 7's update is there to commit).
 2. **Every `seroval` in the client tree is ≥ 1.6.8** (advisories through 1.6.7; the resolution `^1.7.6` should leave only 1.7.6 or later):
    ```bash
    yarn --cwd client list --pattern seroval --json 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const tree=s.split("\n").filter(Boolean).map(l=>JSON.parse(l)).find(j=>j.type==="tree");const found=[];const walk=n=>{const m=/^seroval@(\d+)\.(\d+)\.(\d+)$/.exec(n.name);if(m)found.push(m.slice(1).map(Number));(n.children||[]).forEach(walk)};tree.data.trees.forEach(walk);const low=found.filter(([a,b,c])=>a<1||(a===1&&(b<6||(b===6&&c<8))));console.log(JSON.stringify({versions:found.map(v=>v.join(".")),low:low.map(v=>v.join("."))}));process.exit(found.length&&!low.length?0:1)})'
@@ -735,14 +737,15 @@ Run from the repo root, in order. Every check prints JSON; "→" is the expected
     → `failed: 0` and `total` = `CLIENT_BASELINE − 3` (the moved guard's three tests). `yarn site:test` → exit 0, same total as the baseline.
 12. **CI, as a fresh clone would run it** (after the M1 commit):
     ```bash
-    C="${TMPDIR:-/tmp}/yt-kb-e8-clone"; rm -rf "$C"; git clone --quiet "$PWD" "$C" && cd "$C" && git checkout --quiet egm/yt-kb-any-strapi \
-      && yarn install:all \
-      && (cd client && npx tsc --noEmit) && (cd server && npx tsc --noEmit) \
-      && (cd server/src/plugins/yt-kb && yarn test:ts:back && yarn build && yarn verify && yarn test) \
-      && (cd site && SITE_SKIP_STRAPI_FETCH=1 npx astro sync && npx tsc --noEmit) \
-      && yarn test && yarn site:test && (cd client && yarn build); echo "{\"ciExit\":$?}"
+    C="${TMPDIR:-/tmp}/yt-kb-e8-clone"; rm -rf "$C"; git clone --quiet "$PWD" "$C" \
+      && ( cd "$C" && git checkout --quiet egm/yt-kb-any-strapi \
+        && yarn install:all \
+        && (cd client && npx tsc --noEmit) && (cd server && npx tsc --noEmit) \
+        && (cd server/src/plugins/yt-kb && yarn test:ts:back && yarn build && yarn verify && yarn test) \
+        && (cd site && SITE_SKIP_STRAPI_FETCH=1 npx astro sync && npx tsc --noEmit) \
+        && yarn test && yarn site:test && (cd client && yarn build) ); echo "{\"ciExit\":$?}"
     ```
-    → `{"ciExit":0}`. Then, in the same clone: `rm -rf server/src/plugins/yt-kb/node_modules server/src/plugins/yt-kb/dist && yarn setup:plugin && node -e 'require.resolve("./server/src/plugins/yt-kb/dist/server/index.js");console.log(JSON.stringify({setupBuildsPlugin:true}))'` → `setupBuildsPlugin: true`. Remove the clone afterwards (`rm -rf "$C"` — a scratch directory this step created).
+    → `{"ciExit":0}`. Then, in the same clone (again in a subshell, so the shell stays at the repo root): `( cd "$C" && rm -rf server/src/plugins/yt-kb/node_modules server/src/plugins/yt-kb/dist && yarn setup:plugin && node -e 'require.resolve("./server/src/plugins/yt-kb/dist/server/index.js");console.log(JSON.stringify({setupBuildsPlugin:true}))' )` → `setupBuildsPlugin: true`. Remove the clone afterwards, from the repo root: `rm -rf "$C"` (a scratch directory this step created; `$C` is set in this shell, never inside the clone).
 
 - **Done when:** the CI command sequence in Verify 12 exits 0 on a fresh clone of the M1 commit, and Verify 1–11 all exit 0.
 - **Commit:** `M1: Strapi 5.61.0, pinned undici/vite/vitest/seroval, plugin in setup, CI and tests` — `server/package.json`, `server/yarn.lock`, `server/types/generated/*`, `server/src/plugins/yt-kb/{package.json,yarn.lock,vitest.config.mts}`, the moved guard, the step 11 comment fixes (`PSRC/mcp/registry.ts`, `PSRC/mcp-official/adapter.ts`, `PSRC/mcp-official/tools.ts`), `client/package.json`, `client/yarn.lock`, `package.json`, `.github/workflows/ci.yml`.
@@ -880,7 +883,7 @@ At read time `server/node_modules` is 5.52.1, and the reference install `~/work/
        "description": "Model-free BM25 index over rawSegments (makeStoredIndex from services/bm25-core.ts, no contextualizer). Built by fetchAndStore and lazily by readers."
      }
      ```
-     Filled by: `channelId`, `thumbnails`, `viewCount`, `description`, `keywords`, `category`, `videoPublishedAt` — M3 (fetcher metadata and the `backfillMetadata` boot job); `searchIndex` — M4. Until then they are `NULL` on every row. Strapi returns `biginteger` values as strings (M3's mapper must not assume a number).
+     Filled by: `channelId`, `thumbnails`, `viewCount`, `description`, `keywords`, `category`, `videoPublishedAt` — M3 (fetcher metadata and the `backfillMetadata` boot job); `searchIndex` — M4. Until then they are `NULL` on every row. Strapi returns `biginteger` values as strings (M3's mapper must not assume a number). `channelId`, `category` and `videoPublishedAt` stay `string` (`varchar(255)` on Postgres), unlike the M-17 retypes above, because M3's `transcriptMetadataData` clips them to 64, 100 and 100 characters before every write.
    - `tag/schema.json`:
      ```json
      "name": {
@@ -1885,6 +1888,67 @@ At read time `server/node_modules` is 5.52.1, and the reference install `~/work/
     });
     ```
 
+18a. **Tests — app, live: `client/src/lib/services/unique-recovery.live.test.ts` — new file.** The same two services as step 18, through the real `strapiFetch` (nothing mocked) against the M2 scratch Strapi; skipped unless `E8_STRAPI_URL` and `E8_TOKEN_FILE` are both set, so `yarn test` and CI count its two tests as skipped. Verify 10 runs it.
+    ```ts
+    import { readFileSync } from 'node:fs';
+    import { describe, expect, it } from 'vitest';
+    import type { Digest } from './digest';
+
+    // Live race check for M2: createVideoService (the share path) and
+    // upsertDigestService (saveDigest) through the real strapiFetch, against a
+    // scratch Strapi. Runs only when E8_STRAPI_URL and E8_TOKEN_FILE are set
+    // (M2 Verify 10); otherwise both tests are skipped and nothing is fetched.
+    // E8_TOKEN_FILE is the check kit's tokens.json; its `rest` key is read
+    // here and never printed.
+    const BASE = process.env.E8_STRAPI_URL;
+    const TOKEN_FILE = process.env.E8_TOKEN_FILE;
+    const LIVE = Boolean(BASE && TOKEN_FILE);
+
+    // env.ts reads STRAPI_URL and STRAPI_API_TOKEN when it is first imported,
+    // so they are set before the services are imported.
+    async function services() {
+      process.env.STRAPI_URL = BASE;
+      process.env.STRAPI_API_TOKEN = JSON.parse(readFileSync(TOKEN_FILE as string, 'utf8')).rest;
+      const { createVideoService } = await import('./videos');
+      const { upsertDigestService } = await import('./digests');
+      return { createVideoService, upsertDigestService };
+    }
+
+    describe.skipIf(!LIVE)('unique-key races against a live Strapi', () => {
+      it('createVideoService: five shares of one id at once leave one row', async () => {
+        const { createVideoService } = await services();
+        const id = 'e8LiveVid01';
+        const results = await Promise.all(
+          Array.from({ length: 5 }, () =>
+            createVideoService({ videoId: id, url: `https://www.youtube.com/watch?v=${id}`, tagNames: ['e8 live'] }),
+          ),
+        );
+        const docIds = results.map((r) => (r.success || r.kind === 'exists' ? r.video.documentId : null));
+        expect(results.filter((r) => r.success)).toHaveLength(1);
+        expect(results.filter((r) => !r.success && r.kind === 'exists')).toHaveLength(4);
+        expect(new Set(docIds).size).toBe(1);
+        expect(docIds[0]).not.toBeNull();
+      });
+
+      it('upsertDigestService: five saves of one video set at once leave one row, created once', async () => {
+        const { upsertDigestService } = await services();
+        const digest = {
+          title: 'E8 live', description: 'D', overallTheme: 'O', bottomLine: 'B',
+          sharedThemes: [], uniqueInsights: [], contradictions: [], viewingOrder: [],
+        } as unknown as Digest;
+        const results = await Promise.all(
+          Array.from({ length: 5 }, () =>
+            upsertDigestService({ videoSetKey: 'e8live-a,e8live-b', title: 'E8 live', digest, videoDocumentIds: [] }),
+          ),
+        );
+        const saved = results.flatMap((r) => (r.success ? [r.data] : []));
+        expect(saved).toHaveLength(5);
+        expect(saved.filter((d) => d.created)).toHaveLength(1);
+        expect(new Set(saved.map((d) => d.documentId)).size).toBe(1);
+      });
+    });
+    ```
+
 19. **`server/types/generated/contentTypes.d.ts`** — Strapi rewrites it on the first boot on the new schema (Verify 3). Commit what it writes.
 
 - **Data:** the schema sync in step 2 (indexes, retyped columns, new `NULL` columns), gated by the duplicate check and preceded by the backup in step 1. Tested on a copy of the real data (`server/.tmp/e8-m2.db`, Verify 3). No migration file: nothing moves between fields.
@@ -1896,14 +1960,14 @@ At read time `server/node_modules` is 5.52.1, and the reference install `~/work/
 
 #### M2 verify
 
-Run from the repo root, with M1 done. Ports 1341 and 3005 free (as in M1's precondition 1). Steps 6–8 use `T=server/.tmp/e8/tokens.json; K=server/.tmp/e8/e8.mjs` — set both in every shell that runs them.
+Run from the repo root, with M1 done. Ports 1341 and 3005 free (as in M1's precondition 1). Steps 6–8 and 10 use `T=server/.tmp/e8/tokens.json; K=server/.tmp/e8/e8.mjs` — set both in every shell that runs them.
 
 1. **Facts on 5.61.0** — step 0's commands → the expected output listed there.
 2. **Gates:** `yarn --cwd server/src/plugins/yt-kb test:ts:back` → 0; `yarn plugin:build` → 0; `yarn --cwd server/src/plugins/yt-kb verify` → 0; `cd client && npx tsc --noEmit` → 0; `yarn --cwd client build` → 0. Plugin tests, parsed:
    ```bash
    yarn --cwd server/src/plugins/yt-kb vitest run --reporter=json --outputFile="$PWD/server/.tmp/e8/m2-plugin-vitest.json"; node -e 'const r=require("./server/.tmp/e8/m2-plugin-vitest.json");console.log(JSON.stringify({passed:r.numPassedTests,failed:r.numFailedTests}));process.exit(r.numFailedTests===0&&r.numPassedTests===28?0:1)'
    ```
-   → `{"passed":28,"failed":0}` (3 guard + 9 db-errors + 7 document-rules + 6 tags + 3 writes; any other count means a file did not run or a test was added without updating this check). Client suite with the same reporter → `failed: 0`, total = M1's total + 6.
+   → `{"passed":28,"failed":0}` (3 guard + 9 db-errors + 7 document-rules + 6 tags + 3 writes; any other count means a file did not run or a test was added without updating this check). Client suite with the same reporter → `failed: 0`, total = M1's total + 8 (6 in `unique-recovery.test.ts`, plus the 2 tests of `unique-recovery.live.test.ts`, which report as skipped here because `E8_STRAPI_URL` is not set; `numPendingTests` = M1's + 2).
 3. **Schema sync on a copy of real data:**
    ```bash
    node server/.tmp/e8/e8.mjs backup server/.tmp/data.db server/.tmp/e8-m2.db
@@ -1966,11 +2030,19 @@ Run from the repo root, with M1 done. Ports 1341 and 3005 free (as in M1's preco
    node -e 'const a=require("./server/.tmp/e8/m2-tag1.json").structuredContent,b=require("./server/.tmp/e8/m2-tag2.json").structuredContent,u=require("./server/.tmp/e8/m2-untag.json").structuredContent,t=require("./server/.tmp/e8/m2-mcp-tags.json").rows;const ok=JSON.stringify(a.tagsAdded)===JSON.stringify(["e8 mcp c++","e8 mcp c#"])&&b.tagsAdded.length===0&&b.totalTags===a.totalTags&&JSON.stringify(u.removed)===JSON.stringify(["e8 mcp c++"])&&u.remainingTagCount===a.totalTags-1&&JSON.stringify(t)===JSON.stringify([{name:"e8 mcp c++",slug:"e8-mcp-c"},{name:"e8 mcp c#",slug:"e8-mcp-c-2"}]);console.log(JSON.stringify({first:a,second:b,untag:u,tags:t}));process.exit(ok?0:1)'
    ```
    → exits 0. Then the M1 tool-list check (M1 Verify 6) still reports `missing: []`.
-9. **Stop the scratch Strapi:** `lsof -ti tcp:1341 -sTCP:LISTEN | xargs kill`.
-10. **Not run here, and why:** `addVideo` and `fetchTranscript` call YouTube; their race and transaction paths are covered by `mcp/tools/writes.test.ts` with a stubbed fetcher. `shareVideo` and `saveDigest` call oEmbed / Ollama before the paths M2 changed; those paths are covered at the service level by `unique-recovery.test.ts`, which drives the real `strapiFetch` with the HTTP boundary mocked (Open questions, OQ-2).
+9. **Not run here, and why:** `addVideo` and `fetchTranscript` call YouTube; their race and transaction paths are covered by `mcp/tools/writes.test.ts` with a stubbed fetcher. The two app handlers M2 changed are not driven through the browser (a recorded deviation from standard §7, accepted by the Elephant — Open questions, OQ-2): `shareVideo` calls oEmbed (youtube.com) before `createVideoService`; `saveDigest` calls no outside service — it looks up each video (`fetchVideoByVideoIdWithStatusService`) and then calls `upsertDigestService` — but its only caller is the `/digest` page (`client/src/routes/digest.tsx`), which saves the digest on screen — for a video set with no saved digest, one Ollama has just generated. Instead, step 10 drives the two services those handlers call, `createVideoService` and `upsertDigestService`, live through the real `strapiFetch` against this scratch Strapi; `unique-recovery.test.ts` covers their branches with the HTTP boundary mocked.
+10. **Live service check, then stop the scratch Strapi** (Strapi from step 3 still up on 1341, `$T` from step 5):
+    ```bash
+    E8_STRAPI_URL=http://127.0.0.1:1341 E8_TOKEN_FILE="$PWD/server/.tmp/e8/tokens.json" yarn --cwd client vitest run src/lib/services/unique-recovery.live.test.ts --reporter=json --outputFile="$PWD/server/.tmp/e8/m2-live-vitest.json"; node -e 'const r=require("./server/.tmp/e8/m2-live-vitest.json");console.log(JSON.stringify({passed:r.numPassedTests,failed:r.numFailedTests,skipped:r.numPendingTests}));process.exit(r.numFailedTests===0&&r.numPassedTests===2?0:1)'
+    node $K sql server/.tmp/e8-m2.db "SELECT (SELECT COUNT(*) FROM yt_kb_videos WHERE youtube_video_id='e8LiveVid01') AS v, (SELECT COUNT(*) FROM yt_kb_tags WHERE name='e8 live') AS g, (SELECT COUNT(*) FROM yt_kb_digests WHERE video_set_key='e8live-a,e8live-b') AS d" | jq -e '.rows[0] == {"v":1,"g":1,"d":1}'
+    # Negative: without the variables the file runs nothing
+    yarn --cwd client vitest run src/lib/services/unique-recovery.live.test.ts --reporter=json --outputFile="$PWD/server/.tmp/e8/m2-live-skip.json"; node -e 'const r=require("./server/.tmp/e8/m2-live-skip.json");console.log(JSON.stringify({passed:r.numPassedTests,skipped:r.numPendingTests}));process.exit(r.numPassedTests===0&&r.numPendingTests===2?0:1)'
+    lsof -ti tcp:1341 -sTCP:LISTEN | xargs kill
+    ```
+    → `{"passed":2,"failed":0,…}`; the count row is `{"v":1,"g":1,"d":1}`; the negative prints `{"passed":0,"skipped":2}`. Then stop the scratch Strapi (the last line).
 
-- **Done when:** Verify 2–8 exit 0 — in particular five concurrent creates of the same key leave exactly one row for each of video, transcript, tag and digest, every loser gets a 400 (never a 500), and `c++` then `c#` give slugs `…-c` and `…-c-2`.
-- **Commit:** `M2: unique keys in the database, text columns, transcript attributes, race-safe writes` — the four schemas, `server/types/generated/contentTypes.d.ts`, the plugin files and tests in steps 3–11 and 17, the app files and test in steps 12–16 and 18.
+- **Done when:** Verify 2–8 and 10 exit 0 — in particular five concurrent creates of the same key leave exactly one row for each of video, transcript, tag and digest, every loser gets a 400 (never a 500), five concurrent `createVideoService` / `upsertDigestService` calls through the real `strapiFetch` leave one row each, and `c++` then `c#` give slugs `…-c` and `…-c-2`.
+- **Commit:** `M2: unique keys in the database, text columns, transcript attributes, race-safe writes` — the four schemas, `server/types/generated/contentTypes.d.ts`, the plugin files and tests in steps 3–11 and 17, the app files and tests in steps 12–16, 18 and 18a.
 - **Rollback:** `git revert <M2 commit>` and `yarn plugin:build`. At the next boot, `forceMigration: true` makes Strapi drop the five unique indexes and the eight new transcript columns and retype the three columns back to `varchar(255)`. In M2 the new columns are empty, so nothing is lost on SQLite. On Postgres, the retype back fails if any `title`, `author` or `videoAuthor` value is longer than 255 characters — restore instead. Once M3/M4 have filled the new columns, reverting M2 alone drops that data: restore the backup with Strapi stopped (`cp server/.tmp/data.db.pre-m2-<TS> server/.tmp/data.db`), which loses anything written since it was taken.
 
 ### M3 — Fetcher parity and REST routes
@@ -2617,7 +2689,6 @@ PSRC = `server/src/plugins/yt-kb/server/src`.
 
    ```ts
    import type { Core } from '@strapi/strapi';
-   import { errors } from '@strapi/utils';
    import { isUniqueViolation } from './db-errors';
    import { TranscriptFetchError } from './fetch-errors';
    import {
@@ -2766,10 +2837,14 @@ PSRC = `server/src/plugins/yt-kb/server/src`.
            });
            return { action: 'created', transcript: transcript as Record<string, any> };
          } catch (err) {
-           // Two fetches of the same id raced and the other stored it first —
-           // the database's unique index (M2) or the Document Service rule
-           // (document-rules.ts) refused ours. The stored row wins.
-           if (isUniqueViolation(err) || err instanceof errors.ApplicationError) {
+           // Two fetches of the same id raced and the other stored it first.
+           // Every duplicate on a yt-kb write reaches here carrying
+           // details.code 'YT_KB_UNIQUE' (M2): the Document Service rule's own
+           // "A transcript for this id already exists", or a unique-index or
+           // validator failure rethrown by document-rules.ts. isUniqueViolation
+           // matches all of them; any other error (a real ApplicationError
+           // included) is rethrown. The stored row wins.
+           if (isUniqueViolation(err)) {
              const winner = await findStored(videoId);
              if (winner) return { action: 'skipped', transcript: winner };
            }
@@ -2780,7 +2855,7 @@ PSRC = `server/src/plugins/yt-kb/server/src`.
    };
    ```
 
-   This replaces the file M2 step 10 edited; M2's unique-violation branch is kept above (`action: 'skipped'` with the stored row), now also catching the Document Service rule's `ApplicationError`.
+   This replaces the file M2 step 10 edited; M2's unique-violation branch is kept above (`action: 'skipped'` with the stored row), and it catches only `isUniqueViolation(err)`: M2's `document-rules.ts` gives the rule's "already exists" `ApplicationError` `details.code: 'YT_KB_UNIQUE'`, so no separate `ApplicationError` clause is needed (one would also treat unrelated errors such as "youtubeVideoId is required on transcript" as a race). The file no longer imports `errors` from `@strapi/utils`.
 
 4. **`PSRC/services/metadata-backfill.ts` — new file** (YT L367-438 semantics, metadata only):
 
@@ -2789,14 +2864,19 @@ PSRC = `server/src/plugins/yt-kb/server/src`.
    import { transcriptMetadataData, YOUTUBE_VIDEO_ID } from './fetcher';
    import { fetchYouTubeMetadata } from './youtube-transcript';
 
-   // Fills the metadata on transcripts stored before M3: M2's new fields and the
-   // real caption language (every row before M3 says 'en'). Same semantics as
-   // strapi-plugin-youtube-transcripts' backfill (YT L367-438): at most `limit`
-   // rows, a pause after each YouTube call, one failure never stops the run.
-   // Differences: metadata only — no caption download; rawSegments, rawText and
-   // fetchedAt are left alone — and only non-null values are written, so a field
-   // YouTube omits keeps what it had. Started from bootstrap.ts when the plugin
-   // config has `backfillMetadata: true`.
+   // Fills the metadata on transcripts stored before M3 (M2's new fields, plus
+   // author / thumbnailUrl / durationSec where YouTube has them). Same semantics
+   // as strapi-plugin-youtube-transcripts' backfill (YT L367-438): at most
+   // `limit` rows per boot, a pause after each YouTube call, one failure never
+   // stops the run. Differences: it reads only rows that still need it
+   // (`thumbnails` is null), paged by id; metadata only — no caption download;
+   // rawSegments, rawText, fetchedAt and `language` are left alone — and only
+   // non-null values are written, so a field YouTube omits keeps what it had.
+   // `language` is not re-derived for existing rows: a metadata call cannot
+   // tell which caption track the stored rawSegments came from, so the row
+   // keeps its old 'en' until a forced re-fetch (`force: true`) rewrites the
+   // captions and their language together. Started from bootstrap.ts when the
+   // plugin config has `backfillMetadata: true`.
 
    const UID = 'plugin::yt-kb.transcript';
 
@@ -2824,43 +2904,60 @@ PSRC = `server/src/plugins/yt-kb/server/src`.
 
    const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+   /** Rows read per findMany. */
+   const PAGE_SIZE = 100;
+
    export async function backfillTranscriptMetadata(
      strapi: Core.Strapi,
      options: { proxyUrl?: string; limit?: number; pauseMs?: number } = {},
    ): Promise<BackfillResult> {
      const result: BackfillResult = { scanned: 0, updated: 0, skipped: 0, failed: [] };
-     const rows = (await strapi.documents(UID as never).findMany({
-       limit: options.limit ?? 500,
-       sort: 'createdAt:asc',
-       fields: ['youtubeVideoId', ...BACKFILL_FIELDS],
-     } as never)) as Array<Record<string, any>>;
-     result.scanned = rows.length;
+     const limit = options.limit ?? 500;
+     // needsMetadataBackfill(row) is true exactly when `thumbnails` is missing
+     // (thumbnails is one of BACKFILL_FIELDS), so this filter reads the same
+     // rows it would accept. Paged by id rather than by offset: a row this run
+     // fills leaves the filter, and an offset would then skip the next one.
+     let lastId = 0;
+     while (result.scanned < limit) {
+       const rows = (await strapi.documents(UID as never).findMany({
+         filters: { thumbnails: { $null: true }, id: { $gt: lastId } },
+         sort: 'id:asc',
+         limit: Math.min(PAGE_SIZE, limit - result.scanned),
+         fields: ['youtubeVideoId', ...BACKFILL_FIELDS],
+       } as never)) as Array<Record<string, any>>;
+       if (rows.length === 0) break;
+       lastId = Number(rows[rows.length - 1].id);
+       result.scanned += rows.length;
 
-     for (const row of rows) {
-       if (!needsMetadataBackfill(row)) {
-         result.skipped += 1;
-         continue;
+       for (const row of rows) {
+         if (!needsMetadataBackfill(row)) {
+           result.skipped += 1;
+           continue;
+         }
+         const videoId = String(row.youtubeVideoId ?? '');
+         if (!YOUTUBE_VIDEO_ID.test(videoId)) {
+           result.failed.push({ videoId: videoId || '(missing)', reason: 'row has no valid youtubeVideoId' });
+           continue;
+         }
+         try {
+           const meta = await fetchYouTubeMetadata(videoId, { proxyUrl: options.proxyUrl });
+           // `language` is left alone (see the header comment).
+           const data = Object.fromEntries(
+             Object.entries(transcriptMetadataData(meta)).filter(
+               ([k, v]) => k !== 'language' && v !== null && v !== undefined,
+             ),
+           );
+           if (Object.keys(data).length === 0) throw new Error('YouTube returned no metadata');
+           await strapi.documents(UID as never).update({ documentId: row.documentId, data: data as never });
+           result.updated += 1;
+           strapi.log.info(`[yt-kb] backfilled metadata for ${videoId}`);
+         } catch (error) {
+           const reason = (error instanceof Error ? error.message : String(error)).slice(0, 120);
+           result.failed.push({ videoId, reason });
+           strapi.log.warn(`[yt-kb] metadata backfill failed for ${videoId}: ${reason}`, { videoId, reason });
+         }
+         await sleep(options.pauseMs ?? 1500);
        }
-       const videoId = String(row.youtubeVideoId ?? '');
-       if (!YOUTUBE_VIDEO_ID.test(videoId)) {
-         result.failed.push({ videoId: videoId || '(missing)', reason: 'row has no valid youtubeVideoId' });
-         continue;
-       }
-       try {
-         const meta = await fetchYouTubeMetadata(videoId, { proxyUrl: options.proxyUrl });
-         const data = Object.fromEntries(
-           Object.entries(transcriptMetadataData(meta)).filter(([, v]) => v !== null && v !== undefined),
-         );
-         if (Object.keys(data).length === 0) throw new Error('YouTube returned no metadata');
-         await strapi.documents(UID as never).update({ documentId: row.documentId, data: data as never });
-         result.updated += 1;
-         strapi.log.info(`[yt-kb] backfilled metadata for ${videoId}`);
-       } catch (error) {
-         const reason = (error instanceof Error ? error.message : String(error)).slice(0, 120);
-         result.failed.push({ videoId, reason });
-         strapi.log.warn(`[yt-kb] metadata backfill failed for ${videoId}: ${reason}`, { videoId, reason });
-       }
-       await sleep(options.pauseMs ?? 1500);
      }
 
      strapi.log.info(
@@ -2869,6 +2966,8 @@ PSRC = `server/src/plugins/yt-kb/server/src`.
      return result;
    }
    ```
+
+   One boot processes at most 500 rows (`limit`), read 100 at a time in `id` order, and only rows whose `thumbnails` is still null; a host with more rows to fill gets the next 500 on its next boot with `backfillMetadata: true` (rows filled earlier no longer match the filter; rows that failed do, and are retried). The Document Service always returns `id` and `documentId`, so neither is listed in `fields`. If 5.61's Document Service refuses the `$null` filter on the `json` attribute `thumbnails` or the `id` filter (12d's fake cannot show it; the first real run would log `metadata backfill did not complete`), STOP and ask.
 
 5. **`PSRC/bootstrap.ts` — new file**, wired as the plugin's `bootstrap` in step 6. M5 later adds one import and makes `await seedPermissions(strapi);` (legacy permission migration, Users & Permissions cleanup) the first statement of this function — the only change M5 makes here.
 
@@ -3263,7 +3362,7 @@ PSRC = `server/src/plugins/yt-kb/server/src`.
     | getInfo fails, getBasicInfo works | `getInfo` rejects `new Error('boom')`; `getBasicInfo` resolves `{ ...germanInfo, primary_info: null }` | `created`; `create` data has `videoPublishedAt: null` and `language: 'de'` |
     | YouTube unreachable | `yt.create.mockRejectedValue(new TypeError('fetch failed'))` | rejects with `reason: 'network'` |
     | invalid id | `service.fetchAndStore('not-an-id')` | rejects with `reason: 'invalid_id'`; `transcripts.findFirst` and `yt.create` not called; `log.warn` called once |
-    | create race | `create.mockRejectedValueOnce(new (await import('@strapi/utils')).errors.ApplicationError('A transcript for this id already exists.'))`; `findFirst` returns `null` on the first call and `{ documentId: 'winner' }` on the second | resolves `{ action: 'skipped', transcript: { documentId: 'winner' } }` |
+    | create race | `create.mockRejectedValueOnce(new (await import('@strapi/utils')).errors.ApplicationError('A transcript for this id already exists. documentId=winner', { code: 'YT_KB_UNIQUE' }))` (the shape M2's rule throws); `findFirst` returns `null` on the first call and `{ documentId: 'winner' }` on the second | resolves `{ action: 'skipped', transcript: { documentId: 'winner' } }` |
     | the proxy URL is masked | `maskProxyUrl('http://user:secret@proxy.test:8080')` (import from `./youtube-transcript`) | `'http://user:****@proxy.test:8080'` |
 
     **12b. `PSRC/controllers/fetcher.test.ts`** — fake `ctx` `{ params, request: { body }, state: { auth: undefined }, status: 200, body: undefined, badRequest: vi.fn(function (this: any, m) { this.status = 400; this.body = { error: { message: m } }; }) }` and a fake Strapi whose `plugin().service('fetcher').fetchAndStore` is a `vi.fn`, `getModel` returns `{}`, `contentAPI.sanitize.output` is `vi.fn(async (d) => d)`:
@@ -3287,10 +3386,12 @@ PSRC = `server/src/plugins/yt-kb/server/src`.
     | `cfg = { proxyUrl: '', backfillMetadata: true }` | `backfillTranscriptMetadata` called once with `(strapi, { proxyUrl: undefined })` |
     | `cfg = { proxyUrl: '' }` (backfill unset) | `backfillTranscriptMetadata` not called |
 
-    **12d. `PSRC/services/metadata-backfill.test.ts`** — `vi.mock('./youtube-transcript', async (orig) => ({ ...(await orig()), fetchYouTubeMetadata: vi.fn() }))`; fake `documents().findMany` returning `[{ documentId: 'a', youtubeVideoId: 'AAAAAAAAAAA', thumbnails: null }, { documentId: 'b', youtubeVideoId: 'BBBBBBBBBBB', thumbnails: [{ url: 'u', width: 1, height: 1 }], channelId: 'x' }, { documentId: 'c', youtubeVideoId: 'CCCCCCCCCCC', thumbnails: null }]`; `fetchYouTubeMetadata` resolves (for `AAAAAAAAAAA`) `{ title: 'T', author: 'A', channelId: 'UC1', thumbnailUrl: 'https://i/t.jpg', thumbnails: [{ url: 'https://i/t.jpg', width: 1, height: 1 }], durationSec: 10, viewCount: 5, description: null, keywords: null, category: 'Music', videoPublishedAt: null, language: 'fr' }` and rejects `new TranscriptFetchError('blocked', 'nope')` for `CCCCCCCCCCC`; call with `{ pauseMs: 0 }`:
-    - result deep-equals `{ scanned: 3, updated: 1, skipped: 1, failed: [{ videoId: 'CCCCCCCCCCC', reason: 'nope' }] }`;
-    - `update` called once, with `{ documentId: 'a', data }` where `data` has exactly the keys `author, channelId, thumbnailUrl, thumbnails, durationSec, viewCount, category, language` (no null-valued key, no `title`, no `rawSegments`, no `fetchedAt`) and `language: 'fr'`;
-    - `findMany` called with `limit: 500`.
+    **12d. `PSRC/services/metadata-backfill.test.ts`** — two `it`s. `vi.mock('./youtube-transcript', async (orig) => ({ ...(await orig()), fetchYouTubeMetadata: vi.fn() }))`.
+    - **One page, then the end** — fake `documents().findMany` returning, on its first call, `[{ id: 1, documentId: 'a', youtubeVideoId: 'AAAAAAAAAAA', thumbnails: null }, { id: 2, documentId: 'b', youtubeVideoId: 'BBBBBBBBBBB', thumbnails: [{ url: 'u', width: 1, height: 1 }], channelId: 'x' }, { id: 3, documentId: 'c', youtubeVideoId: 'CCCCCCCCCCC', thumbnails: null }]` (row `b` cannot match the real filter; it checks that `needsMetadataBackfill` still guards) and `[]` on the second; `fetchYouTubeMetadata` resolves (for `AAAAAAAAAAA`) `{ title: 'T', author: 'A', channelId: 'UC1', thumbnailUrl: 'https://i/t.jpg', thumbnails: [{ url: 'https://i/t.jpg', width: 1, height: 1 }], durationSec: 10, viewCount: 5, description: null, keywords: null, category: 'Music', videoPublishedAt: null, language: 'fr' }` and rejects `new TranscriptFetchError('blocked', 'nope')` for `CCCCCCCCCCC`; call with `{ pauseMs: 0 }`:
+      - result deep-equals `{ scanned: 3, updated: 1, skipped: 1, failed: [{ videoId: 'CCCCCCCCCCC', reason: 'nope' }] }`;
+      - `update` called once, with `{ documentId: 'a', data }` where `data` has exactly the keys `author, channelId, thumbnailUrl, thumbnails, durationSec, viewCount, category` (no `language` although YouTube returned `'fr'`, no null-valued key, no `title`, no `rawSegments`, no `fetchedAt`);
+      - `findMany` called twice: first with `expect.objectContaining({ filters: { thumbnails: { $null: true }, id: { $gt: 0 } }, sort: 'id:asc', limit: 100 })`, then with `filters.id` `{ $gt: 3 }`.
+    - **The cap** — fake `findMany` that, for each call, returns `args.limit` rows with ids continuing from `args.filters.id.$gt + 1`, each `{ id, documentId: \`d${id}\`, youtubeVideoId: 'AAAAAAAAAAA', thumbnails: null }`; `fetchYouTubeMetadata` resolves the metadata above; call with `{ limit: 150, pauseMs: 0 }` → `scanned: 150`, `updated: 150`; `findMany` called exactly twice, with `limit: 100` then `limit: 50`.
 
     **12e. `PSRC/mcp/tools/fetch-transcript.test.ts`:**
     - `fetchTranscriptTool.schema.safeParse({ videoId: 'short' }).success === false`;
@@ -3390,7 +3491,7 @@ PSRC = `server/src/plugins/yt-kb/server/src`.
     }
     ```
 
-15. **`client/src/lib/services/learning.ts` — edit `fetchTranscriptThroughStrapi`** (lines 104-147 at 721f210):
+15. **`client/src/lib/services/learning.ts` — edit `fetchTranscriptThroughStrapi`** (`learning.ts:100-138` at 721f210 — its three-line doc comment at 100–102 and the function at 103–138):
     - Add `type TranscriptFetchReason,` to the `import { … } from '#/lib/services/videos'` list.
     - Above `fetchTranscriptThroughStrapi`, add:
 
@@ -3542,7 +3643,7 @@ PSRC = `server/src/plugins/yt-kb/server/src`.
 
 #### Data
 
-None. M2 added the columns; no row is rewritten. Existing transcripts keep `language = 'en'` (all 195 local rows, `SELECT count(*), sum(language='en') FROM yt_kb_transcripts` → `195|195` on 2026-11-08) and empty metadata until they are re-fetched with `force` or the owner boots once with `backfillMetadata: true` (optional, see Env / deploy).
+None. M2 added the columns; no row is rewritten. Existing transcripts keep `language = 'en'` (all 195 local rows, `SELECT count(*), sum(language='en') FROM yt_kb_transcripts` → `195|195` on 2026-11-08) and empty metadata until they are re-fetched with `force` or the owner boots once with `backfillMetadata: true` (optional, see Env / deploy). The backfill fills metadata only: it does not re-derive `language` for existing rows, so only a forced re-fetch (`POST /api/yt-kb/transcripts/fetch` with `force: true`, or the MCP fetch tool with `force`) corrects a row's `'en'`.
 
 #### Callers updated
 
@@ -3561,7 +3662,11 @@ Run from the repo root on branch `egm/yt-kb-any-strapi`, with M1's check convent
 0. **Ports free:** M1 precondition 1's command → `"busy":false` for 1340, 1341 and 3005.
 
 1. **Static gates and unit tests:**
-   - `yarn --cwd server/src/plugins/yt-kb test` → exit 0; the five new test files (12a–12e) run and pass.
+   - Plugin tests, parsed with the same reporter as M1/M2. 12b's "each of the six reasons" and 12d/12e's bullets don't fix how many `it`s the files hold, so the total cannot be computed from this spec: the check is no failure, every file M1–M3 added ran and passed, by name, and `passed` is above M2's 28. On success it writes `passed` to `server/.tmp/e8/plugin-passed-m3.txt` (scratch; M4 compares against it); record it in the E8 log too:
+     ```bash
+     yarn --cwd server/src/plugins/yt-kb vitest run --reporter=json --outputFile="$PWD/server/.tmp/e8/m3-plugin-vitest.json"; node -e 'const r=require("./server/.tmp/e8/m3-plugin-vitest.json");const want=process.argv.slice(1);const ok=new Set(r.testResults.filter(f=>f.status==="passed"&&f.assertionResults.length>0).map(f=>f.name.split("/server/src/plugins/yt-kb/server/src/")[1]));const missing=want.filter(w=>!ok.has(w));console.log(JSON.stringify({passed:r.numPassedTests,failed:r.numFailedTests,missing}));const pass=r.numFailedTests===0&&r.numPassedTests>28&&missing.length===0;if(pass)require("fs").writeFileSync("server/.tmp/e8/plugin-passed-m3.txt",String(r.numPassedTests));process.exit(pass?0:1)' mcp-official/permissions.guard.test.ts services/db-errors.test.ts document-rules.test.ts services/tags.test.ts mcp/tools/writes.test.ts services/fetcher.test.ts controllers/fetcher.test.ts bootstrap.test.ts services/metadata-backfill.test.ts mcp/tools/fetch-transcript.test.ts
+     ```
+     → `failed: 0`, `missing: []` (the M1 guard, M2's four files and 12a–12e).
    - `yarn --cwd server/src/plugins/yt-kb test:ts:back` → exit 0.
    - `yarn --cwd server/src/plugins/yt-kb build` → exit 0.
    - `(cd client && npx tsc --noEmit)` → exit 0. `(cd server && npx tsc --noEmit)` → exit 0.
@@ -3674,7 +3779,7 @@ Run from the repo root on branch `egm/yt-kb-any-strapi`, with M1's check convent
    ```bash
    yarn --cwd server/src/plugins/yt-kb build
    node $K backup server/.tmp/data.db server/.tmp/e8-m3.db
-   (cd server && DATABASE_FILENAME=.tmp/e8-m3.db yarn -s strapi admin:create-user --email="$(node -p 'require("./.tmp/e8/admin.json").email')" --password="$(node -p 'require("./.tmp/e8/admin.json").password')" --firstname=E8 --lastname=Check)
+   (cd server && DATABASE_FILENAME=.tmp/e8-m3.db PROXY_URL=http://127.0.0.1:9 yarn -s strapi admin:create-user --email="$(node -p 'require("./.tmp/e8/admin.json").email')" --password="$(node -p 'require("./.tmp/e8/admin.json").password')" --firstname=E8 --lastname=Check)
    (cd server && DATABASE_FILENAME=.tmp/e8-m3.db PROXY_URL=http://127.0.0.1:9 PORT=1341 HOST=127.0.0.1 nohup yarn develop > .tmp/e8/m3-strapi.log 2>&1 &)
    node $K wait http://127.0.0.1:1341/_health 300
    node $K admin-tokens http://127.0.0.1:1341 $A $T plugin::yt-kb.tool.fetch-transcript,plugin::yt-kb.maintenance
@@ -3734,7 +3839,7 @@ Run from the repo root on branch `egm/yt-kb-any-strapi`, with M1's check convent
   | `PROXY_URL` | backend (`server/.env`, any host's env) | add | `http://user:pass@proxy.example.com:8080` | Optional, server-only. Read through the plugin config default `proxyUrl: env('PROXY_URL', '')`; an explicit `proxyUrl` in the host's `config/plugins.ts` wins. |
   | `TRANSCRIPT_PROXY_URL` | backend | remove | — | No fallback. **Owner step** (the agent never opens, prints or edits a `.env`; it tells the owner what to change, as in Deployment step 3): if `server/.env` has a value for it, rename the key to `PROXY_URL` and keep the value. |
 
-  Optional owner step after deploy: to fill metadata and the real language on the 195 stored transcripts, set `config: { mcp: true, backfillMetadata: true }` for `yt-kb` in the host's `config/plugins.ts`, boot once (it calls YouTube about 195 times, 1.5 s apart, ~5 min, in the background), check the log for `[yt-kb] metadata backfill complete`, then remove the setting.
+  Optional owner step after deploy: to fill metadata on the 195 stored transcripts (not `language`, which only a forced re-fetch rewrites), set `config: { mcp: true, backfillMetadata: true }` for `yt-kb` in the host's `config/plugins.ts`, boot once (it calls YouTube about 195 times, 1.5 s apart, ~5 min, in the background), check the log for `[yt-kb] metadata backfill complete`, then remove the setting.
 
 ### M4 — Search ownership and grounding
 
@@ -4527,6 +4632,8 @@ Run from the repo root on branch `egm/yt-kb-any-strapi`, with M1's check convent
     | | `saveSummaryTool.schema.parse(...)` with a section `timeSec: 5` | the parsed section has no `timeSec` key |
     | 13d extend `services/fetcher.test.ts` (M3) | the success case | `create` data has `searchIndex` with `storedIndexStatus === 'current'` and `bm25.chunks.length > 0` |
 
+14. **`server/types/generated/contentTypes.d.ts`** (and `server/types/generated/components.d.ts` if it changes) — as in M2 step 19: Strapi rewrites it on the first boot with step 5's `"private": true` (the `yarn develop` in Verify 2; `searchIndex` gains `Schema.Attribute.Private`). Commit what that boot writes, in M4's commit; do not edit it by hand. `git status --short server/types/generated` after Verify 2 lists what to add.
+
 #### Data
 
 No migration. Existing transcripts get `searchIndex` the first time a search tool or `saveSummary` reads them, or on their next fetch; every new fetch writes it. `Video.transcriptSegments` is not touched. The lazy write is tested on a copy of real data (Verify step 5).
@@ -4545,9 +4652,14 @@ No migration. Existing transcripts get `searchIndex` the first time a search too
    - `yarn sync:bm25 --check` → exit 0 and `bm25-core copy is up to date.`
    - `head -1 client/src/lib/services/bm25-core.ts` → `// GENERATED FILE — DO NOT EDIT.`; `grep -c 'GENERATED FILE' server/src/plugins/yt-kb/server/src/services/bm25-core.ts` → `0`.
    - Index parameters unchanged: `node --experimental-strip-types -e "import('./client/src/lib/services/bm25-core.ts').then(m => console.log(JSON.stringify(m.CURRENT_INDEX_PARAMS)))" | jq -e '. == {"chunkWords":150,"chunkOverlap":20,"tokenizer":2}'`.
-   - `yarn --cwd server/src/plugins/yt-kb test` → exit 0 (13a–13d). `yarn --cwd server/src/plugins/yt-kb test:ts:back`, `yarn --cwd server/src/plugins/yt-kb build`, `(cd client && npx tsc --noEmit)`, `(cd server && npx tsc --noEmit)` → exit 0.
+   - Plugin tests, parsed as in M3 Verify 1 (M3's total is not fixed by this spec, so neither is M4's): no failure, every file M1–M4 added ran and passed by name, and `passed` is above M3's (`server/.tmp/e8/plugin-passed-m3.txt`; 13a–13c add tests, 13d only extends an existing case). On success it writes `server/.tmp/e8/plugin-passed-m4.txt` for M5; record `passed` in the E8 log too:
+     ```bash
+     yarn --cwd server/src/plugins/yt-kb vitest run --reporter=json --outputFile="$PWD/server/.tmp/e8/m4-plugin-vitest.json"; node -e 'const fs=require("fs");const r=require("./server/.tmp/e8/m4-plugin-vitest.json");const floor=Number(fs.readFileSync("server/.tmp/e8/plugin-passed-m3.txt","utf8"));const want=process.argv.slice(1);const ok=new Set(r.testResults.filter(f=>f.status==="passed"&&f.assertionResults.length>0).map(f=>f.name.split("/server/src/plugins/yt-kb/server/src/")[1]));const missing=want.filter(w=>!ok.has(w));console.log(JSON.stringify({passed:r.numPassedTests,failed:r.numFailedTests,floor,missing}));const pass=r.numFailedTests===0&&floor>28&&r.numPassedTests>floor&&missing.length===0;if(pass)fs.writeFileSync("server/.tmp/e8/plugin-passed-m4.txt",String(r.numPassedTests));process.exit(pass?0:1)' mcp-official/permissions.guard.test.ts services/db-errors.test.ts document-rules.test.ts services/tags.test.ts mcp/tools/writes.test.ts services/fetcher.test.ts controllers/fetcher.test.ts bootstrap.test.ts services/metadata-backfill.test.ts mcp/tools/fetch-transcript.test.ts services/search-index.test.ts mcp/tools/search-tools.test.ts mcp/tools/save-summary.test.ts
+     ```
+     → `failed: 0`, `missing: []`.
+   - `yarn --cwd server/src/plugins/yt-kb test:ts:back`, `yarn --cwd server/src/plugins/yt-kb build`, `(cd client && npx tsc --noEmit)`, `(cd server && npx tsc --noEmit)` → exit 0.
    - `yarn test` → exit 0 with the same count as after M3 (no client test added; `transcript.test.ts`, `retrieval.equivalence.test.ts`, `bm25-core.invalidation.test.ts`, `learning.draft.test.ts` pass unchanged).
-   - Negative — drift is caught: `printf '\n// drift\n' >> client/src/lib/services/bm25-core.ts && (yarn --cwd client test src/lib/services/bm25-core.sync.test.ts; echo "exit=$?")` → prints `exit=1`; then `yarn sync:bm25 --check` → exit 1; then restore with `yarn sync:bm25` and `git diff --exit-code client/src/lib/services/bm25-core.ts` → exit 0.
+   - Negative — drift is caught: `printf '\n// drift\n' >> client/src/lib/services/bm25-core.ts && (yarn --cwd client test src/lib/services/bm25-core.sync.test.ts; echo "exit=$?")` → prints `exit=1`; then `yarn sync:bm25 --check` → exit 1; then restore with `yarn sync:bm25` and `git diff --exit-code client/src/lib/services/bm25-core.ts` → exit 0; then `yarn sync:bm25 --check` → exit 0 (`scripts/sync-bm25-core.mjs`, step 2, handles `--check`: it exits 1 only when the copy would change).
 
 2. **Scratch fixtures** — a fresh DB `server/.tmp/e8-m4.db`, port 1341, dead proxy as in M3, the kit as extended in M3 Verify 2. In every shell: `K=server/.tmp/e8/e8.mjs; T=server/.tmp/e8/tokens.json; A=server/.tmp/e8/admin.json; DB=server/.tmp/e8-m4.db`. Ports 1340, 1341 and 3005 free (M1 precondition 1). Create `server/.tmp/e8/m4-fixtures.mjs` (Node runs the `.ts` import with type stripping — native from Node 22.18 / 23.6, the flag below covers older 22.x). It writes rows only, with Strapi stopped, through the Document Service (the stale fixture needs the private `searchIndex`); it creates no token:
 
@@ -4617,7 +4729,7 @@ No migration. Existing transcripts get `searchIndex` the first time a search too
    ```bash
    yarn --cwd server/src/plugins/yt-kb build && yarn --cwd server build
    rm -f server/.tmp/e8-m4.db*
-   (cd server && DATABASE_FILENAME=.tmp/e8-m4.db yarn -s strapi admin:create-user --email="$(node -p 'require("./.tmp/e8/admin.json").email')" --password="$(node -p 'require("./.tmp/e8/admin.json").password')" --firstname=E8 --lastname=Check)
+   (cd server && DATABASE_FILENAME=.tmp/e8-m4.db PROXY_URL=http://127.0.0.1:9 yarn -s strapi admin:create-user --email="$(node -p 'require("./.tmp/e8/admin.json").email')" --password="$(node -p 'require("./.tmp/e8/admin.json").password')" --firstname=E8 --lastname=Check)
    (cd server && env DATABASE_FILENAME=.tmp/e8-m4.db PROXY_URL=http://127.0.0.1:9 node --experimental-strip-types .tmp/e8/m4-fixtures.mjs) | jq -e '.ok == true'
    (cd server && DATABASE_FILENAME=.tmp/e8-m4.db PROXY_URL=http://127.0.0.1:9 PORT=1341 HOST=127.0.0.1 nohup yarn develop > .tmp/e8/m4-strapi.log 2>&1 &)
    node $K wait http://127.0.0.1:1341/_health 300
@@ -4648,13 +4760,14 @@ No migration. Existing transcripts get `searchIndex` the first time a search too
 
 5. **On a copy of real data** (the lazy write is the only data step). The kit's `backup` reads the owner's DB through SQLite's online backup, without writing to it:
    - `node $K backup server/.tmp/data.db server/.tmp/e8-m4-real.db` → `"integrity": "ok"`; `B4=$(node $K sql server/.tmp/e8-m4-real.db "select count(*) as n from yt_kb_videos where json_extract(transcript_segments,'\$.params.tokenizer')=2" | jq -r '.rows[0].n')`.
-   - Admin and server: `(cd server && DATABASE_FILENAME=.tmp/e8-m4-real.db yarn -s strapi admin:create-user --email="$(node -p 'require("./.tmp/e8/admin.json").email')" --password="$(node -p 'require("./.tmp/e8/admin.json").password')" --firstname=E8 --lastname=Check)`; `(cd server && DATABASE_FILENAME=.tmp/e8-m4-real.db PROXY_URL=http://127.0.0.1:9 PORT=1341 HOST=127.0.0.1 nohup yarn develop > .tmp/e8/m4-real-strapi.log 2>&1 &)`; `node $K wait http://127.0.0.1:1341/_health 300`; `node $K admin-tokens http://127.0.0.1:1341 $A $T plugin::yt-kb.read,plugin::yt-kb.write` (rewrites `$T` for this DB; the tokens exist only in the copy).
+   - Admin and server: `(cd server && DATABASE_FILENAME=.tmp/e8-m4-real.db PROXY_URL=http://127.0.0.1:9 yarn -s strapi admin:create-user --email="$(node -p 'require("./.tmp/e8/admin.json").email')" --password="$(node -p 'require("./.tmp/e8/admin.json").password')" --firstname=E8 --lastname=Check)`; `(cd server && DATABASE_FILENAME=.tmp/e8-m4-real.db PROXY_URL=http://127.0.0.1:9 PORT=1341 HOST=127.0.0.1 nohup yarn develop > .tmp/e8/m4-real-strapi.log 2>&1 &)`; `node $K wait http://127.0.0.1:1341/_health 300`; `node $K admin-tokens http://127.0.0.1:1341 $A $T plugin::yt-kb.read,plugin::yt-kb.write` (rewrites `$T` for this DB; the tokens exist only in the copy).
    - A real app-built index is still current under M4's code: `RV=$(node $K sql server/.tmp/e8-m4-real.db "select youtube_video_id as v from yt_kb_videos where json_extract(transcript_segments,'\$.params.tokenizer')=2 limit 1" | jq -r '.rows[0].v')`; `mcp searchTranscript "{\"videoId\":\"$RV\",\"query\":\"what this video explains\",\"k\":1}" | jq -e '.result.structuredContent.source=="bm25"'`.
    - `mcp crossSearchTranscripts '{"query":"what this video explains","perVideo":1,"maxVideos":100}' | jq -e '(.result.isError // false)==false and .rpcError==null'`.
    - Every index it built is current: `node $K sql server/.tmp/e8-m4-real.db "select count(*) as n from yt_kb_transcripts where search_index is not null and json_extract(search_index,'\$.params.tokenizer') is not 2" | jq -e '.rows[0].n==0'`. The app's indexes were not touched: the `B4` query again → the same number.
    - Clean up: `lsof -ti tcp:1341 -sTCP:LISTEN | xargs kill`; `rm -f server/.tmp/e8-m4*.db* server/.tmp/e8/m4-*`.
 
 - **Done when:** `yarn sync:bm25 --check`, the plugin suite and `yarn test` pass; the drift check fails as expected and is restored; steps 3–5 pass.
+- **Commit:** `M4: Search ownership and grounding` — `server/src/plugins/yt-kb/server/src/services/bm25-core.ts`, `scripts/sync-bm25-core.mjs`, `client/src/lib/services/bm25-core.ts` (regenerated by `yarn sync:bm25`), `client/src/lib/services/bm25-core.sync.test.ts`, `client/src/lib/services/transcript.ts`, `server/src/plugins/yt-kb/server/src/content-types/transcript/schema.json`, the plugin files in steps 6–11 (`services/fetcher.ts`, `services/search-index.ts`, `services/bm25-search.ts`, `mcp/tools/search-transcript.ts`, `mcp/tools/cross-search-transcripts.ts`, `mcp/tools/save-summary.ts`), `CLAUDE.md`, step 13's fixture, tests and `server/src/plugins/yt-kb/server/tsconfig.build.json`, and step 14's `server/types/generated/contentTypes.d.ts` (plus `components.d.ts` if the boot changed it).
 - **Rollback:** `git revert` the M4 commit (the sync script and the generated client copy revert together). `Transcript.searchIndex` values written meanwhile stay in M2's column; the reverted code neither reads nor writes them, so no data step is needed. Summaries saved over MCP while M4 ran keep their grounded timecodes, which is the correct data.
 - **Env / deploy:** no variable changes. Deploy the plugin (rebuild with `yarn --cwd server/src/plugins/yt-kb build`, restart Strapi); no migration runs.
 
@@ -6054,12 +6167,18 @@ All paths under `PSRC` = `server/src/plugins/yt-kb/server/src`.
 
 #### Verify
 
-Run from the repo root with M1's check conventions and the kit as extended in M3 Verify 2. Every check uses a **scratch copy** of the DB, `server/.tmp/e8-m5.db`, on port **1341**; the owner's `server/.tmp/data.db` is only read once, by the kit's online `backup`. No step prints a key: keys live in `server/.tmp/e8/tokens.json` and in the mode-0600 files `create-tokens.cjs` writes under `server/.tmp/e8/`, and reach the kit as a token key or `@<file>`. Run steps 2–9 in **one** shell session (they share `K`, `T`, `A`, `DB`, `SQL`, `TOKQ`, `OLDSITE`, `VID`, `TID`).
+Run from the repo root with M1's check conventions and the kit as extended in M3 Verify 2. Every check uses a **scratch copy** of the DB, `server/.tmp/e8-m5.db`, on port **1341**; the owner's `server/.tmp/data.db` is only read once, by the kit's online `backup`. No step prints a key: keys live in `server/.tmp/e8/tokens.json` and in the mode-0600 files `create-tokens.cjs` writes under `server/.tmp/e8/`, and reach the kit as a token key or `@<file>`. Every Strapi start or load below sets `PROXY_URL=http://127.0.0.1:9` (M1, "Dead proxy").
+
+**Steps 3–8 are scripts.** Run each one as written, `bash -euo pipefail <<'EOF' … EOF`, from the repo root: the first failing command ends that script with a non-zero exit, and the step has failed — STOP there (the calling shell is not affected, so check each script's exit status). The values later steps need are kept in `server/.tmp/e8/m5.env` (mode 0600; it holds paths, SQL text, row ids and `@<file>` token references, never a key): step 3 writes it, step 6 appends to it, and every script from step 4 on starts with `source server/.tmp/e8/m5.env`. In these scripts every check (each `test`, each build) stands on its own line, never as a non-final part of an `&&` list (`set -e` ignores a failure there; `(cd server && cmd)` is fine — `cmd` is last, so its failure fails the subshell). Run each block with the list's three-space indent removed, so the `EOF` and `ENV` terminator lines start in column 1. bash reads the script from the here-document on its stdin, so a command inside that read stdin would swallow the rest of the script; none of these does (nothing prompts, the background `yarn develop` gets `/dev/null`, every `node`/`jq` call reads files or arguments) — keep it that way if a step is extended.
 
 0. **Ports free:** M1 precondition 1's command → `"busy":false` for 1340, 1341 and 3005.
 
 1. **Static gates**
-   - `yarn --cwd server/src/plugins/yt-kb test` → exit 0 (the eight new/updated test files above pass: `names`, `adapter`, `ai-tools`, `legacy-grants`, `users-permissions`, `controllers/importer`, the guard, `bootstrap`).
+   - Plugin tests, parsed as in M3 Verify 1 (the exact total is not fixed by this spec): no failure; every file M1–M5 added ran and passed by name — the eight new/updated M5 files (`names`, `adapter`, `ai-tools`, `legacy-grants`, `users-permissions`, `controllers/importer`, the guard, `bootstrap`) among them; and `passed` is above M4's (`server/.tmp/e8/plugin-passed-m4.txt`). Record `passed` in the E8 log:
+     ```bash
+     yarn --cwd server/src/plugins/yt-kb vitest run --reporter=json --outputFile="$PWD/server/.tmp/e8/m5-plugin-vitest.json"; node -e 'const fs=require("fs");const r=require("./server/.tmp/e8/m5-plugin-vitest.json");const floor=Number(fs.readFileSync("server/.tmp/e8/plugin-passed-m4.txt","utf8"));const want=process.argv.slice(1);const ok=new Set(r.testResults.filter(f=>f.status==="passed"&&f.assertionResults.length>0).map(f=>f.name.split("/server/src/plugins/yt-kb/server/src/")[1]));const missing=want.filter(w=>!ok.has(w));console.log(JSON.stringify({passed:r.numPassedTests,failed:r.numFailedTests,floor,missing}));process.exit(r.numFailedTests===0&&floor>28&&r.numPassedTests>floor&&missing.length===0?0:1)' mcp-official/permissions.guard.test.ts services/db-errors.test.ts document-rules.test.ts services/tags.test.ts mcp/tools/writes.test.ts services/fetcher.test.ts controllers/fetcher.test.ts bootstrap.test.ts services/metadata-backfill.test.ts mcp/tools/fetch-transcript.test.ts services/search-index.test.ts mcp/tools/search-tools.test.ts mcp/tools/save-summary.test.ts mcp-official/names.test.ts mcp-official/adapter.test.ts services/ai-tools.test.ts permission-seeding/legacy-grants.test.ts permission-seeding/users-permissions.test.ts controllers/importer.test.ts
+     ```
+     → `failed: 0`, `missing: []`.
    - `yarn --cwd server/src/plugins/yt-kb test:ts:back` → exit 0.
    - `yarn --cwd server/src/plugins/yt-kb build` → exit 0.
    - `yarn test` → exit 0 (client suite; no client file changed).
@@ -6108,14 +6227,19 @@ Run from the repo root with M1's check conventions and the kit as extended in M3
      })().catch((e) => { console.error('FAILED:', e.message); process.exit(1); });
      ```
 
-3. **Scratch set-up** (before anything boots M5 code on the copy):
+3. **Scratch set-up** (before anything boots M5 code on the copy). Writes `server/.tmp/e8/m5.env`:
    ```bash
-   set -euo pipefail
+   bash -euo pipefail <<'EOF'
+   ( umask 077 && cat > server/.tmp/e8/m5.env <<'ENV'
    K=server/.tmp/e8/e8.mjs; T=server/.tmp/e8/tokens.json; A=server/.tmp/e8/admin.json; DB=server/.tmp/e8-m5.db
    SQL() { node $K sql $DB "$1" | jq -r '.rows[0].n'; }
    TOKQ="FROM admin_permissions p JOIN admin_permissions_api_token_lnk l ON l.permission_id=p.id JOIN strapi_api_tokens t ON t.id=l.api_token_id WHERE t.name='claude-mcp-1782487483515'"
+   ENV
+   )
+   source server/.tmp/e8/m5.env
    node $K backup server/.tmp/data.db $DB
-   yarn --cwd server/src/plugins/yt-kb build && yarn --cwd server build
+   yarn --cwd server/src/plugins/yt-kb build
+   yarn --cwd server build
    test "$(SQL "SELECT COUNT(*) AS n $TOKQ AND p.action IN ('plugin::yt-kb.read','plugin::yt-kb.write','plugin::yt-kb.maintenance')")" = 3
    test "$(SQL "SELECT COUNT(*) AS n $TOKQ AND p.action LIKE 'plugin::yt-kb.tool.%'")" = 0
    # a Public-role yt-kb grant for the U&P cleanup to remove (scratch only)
@@ -6123,14 +6247,20 @@ Run from the repo root with M1's check conventions and the kit as extended in M3
    test "$(SQL "SELECT COUNT(*) AS n FROM up_permissions p JOIN up_permissions_role_lnk l ON l.permission_id=p.id JOIN up_roles r ON r.id=l.role_id WHERE r.type IN ('public','authenticated') AND p.action LIKE 'plugin::yt-kb.%'")" = 1
    # the copy holds the owner's read-only yt-kb-site (Facts 9); step 5 rotates it, as Deployment step 3 does
    OLDSITE=$(SQL "SELECT id AS n FROM strapi_api_tokens WHERE name='yt-kb-site' AND type='read-only'")
-   test -n "$OLDSITE" && test "$OLDSITE" != null
+   test -n "$OLDSITE"
+   test "$OLDSITE" != null
+   echo "OLDSITE=$OLDSITE" >> server/.tmp/e8/m5.env
    test "$(SQL "SELECT COUNT(*) AS n FROM strapi_api_tokens WHERE name='yt-kb-app'")" = 0
+   EOF
    ```
+   → the script exits 0.
 
 4. **First boots on the scratch DB (run the migration and the U&P cleanup), then inspect:**
    ```bash
-   (cd server && DATABASE_FILENAME=.tmp/e8-m5.db yarn -s strapi admin:create-user --email="$(node -p 'require("./.tmp/e8/admin.json").email')" --password="$(node -p 'require("./.tmp/e8/admin.json").password')" --firstname=E8 --lastname=Check)
-   (cd server && DATABASE_FILENAME=.tmp/e8-m5.db PORT=1341 HOST=127.0.0.1 node .tmp/e8/m5-inspect.cjs) > server/.tmp/e8/m5-inspect.json
+   bash -euo pipefail <<'EOF'
+   source server/.tmp/e8/m5.env
+   (cd server && DATABASE_FILENAME=.tmp/e8-m5.db PROXY_URL=http://127.0.0.1:9 yarn -s strapi admin:create-user --email="$(node -p 'require("./.tmp/e8/admin.json").email')" --password="$(node -p 'require("./.tmp/e8/admin.json").password')" --firstname=E8 --lastname=Check)
+   (cd server && DATABASE_FILENAME=.tmp/e8-m5.db PROXY_URL=http://127.0.0.1:9 PORT=1341 HOST=127.0.0.1 node .tmp/e8/m5-inspect.cjs) > server/.tmp/e8/m5-inspect.json
    jq -e '.db=="e8-m5.db" and .toolActions==21 and .aiTools==21 and .aiUsable==true and .aiMeta=="YT Knowledge Base"' server/.tmp/e8/m5-inspect.json
    jq -e '.legacyDisplayNames | all(type=="string" and endswith(" (legacy — migrated at boot)"))' server/.tmp/e8/m5-inspect.json
    test "$(SQL "SELECT COUNT(DISTINCT p.action) AS n $TOKQ AND p.action LIKE 'plugin::yt-kb.tool.%'")" = 21
@@ -6138,11 +6268,15 @@ Run from the repo root with M1's check conventions and the kit as extended in M3
    test "$(SQL "SELECT COUNT(*) AS n $TOKQ AND p.action IN ('plugin::yt-kb.read','plugin::yt-kb.write','plugin::yt-kb.maintenance')")" = 0
    test "$(SQL "SELECT COUNT(*) AS n FROM admin_permissions p JOIN admin_permissions_role_lnk l ON l.permission_id=p.id JOIN admin_roles r ON r.id=l.role_id WHERE r.code='strapi-super-admin' AND p.action LIKE 'plugin::yt-kb.tool.%'")" = 21
    test "$(SQL "SELECT COUNT(*) AS n FROM up_permissions p JOIN up_permissions_role_lnk l ON l.permission_id=p.id JOIN up_roles r ON r.id=l.role_id WHERE r.type IN ('public','authenticated') AND p.action LIKE 'plugin::yt-kb.%'")" = 0
+   EOF
    ```
+   → the script exits 0.
 
 5. **Token script** (scratch Strapi still stopped). The first run is the Deployment step 3 command on the copy: it creates `yt-kb-app` and rotates the existing read-only `yt-kb-site`:
    ```bash
-   (cd server && DATABASE_FILENAME=.tmp/e8-m5.db PORT=1341 node src/plugins/yt-kb/scripts/create-tokens.cjs --out-app .tmp/e8/m5-app.key --out-site .tmp/e8/m5-site.key --rotate yt-kb-site) > server/.tmp/e8/m5-create-tokens.log 2>&1
+   bash -euo pipefail <<'EOF'
+   source server/.tmp/e8/m5.env
+   (cd server && DATABASE_FILENAME=.tmp/e8-m5.db PROXY_URL=http://127.0.0.1:9 PORT=1341 node src/plugins/yt-kb/scripts/create-tokens.cjs --out-app .tmp/e8/m5-app.key --out-site .tmp/e8/m5-site.key --rotate yt-kb-site) > server/.tmp/e8/m5-create-tokens.log 2>&1
    node -e 'const fs=require("fs");const bad=process.argv.slice(1).filter(f=>(fs.statSync(f).mode&0o777)!==0o600);console.log(JSON.stringify({bad}));process.exit(bad.length?1:0)' server/.tmp/e8/m5-app.key server/.tmp/e8/m5-site.key
    test "$(node $K sql $DB "SELECT type AS n FROM strapi_api_tokens WHERE name='yt-kb-app'" | jq -r '.rows[0].n')" = custom
    # rotate: the old read-only row is gone, one custom yt-kb-site replaces it
@@ -6153,23 +6287,29 @@ Run from the repo root with M1's check conventions and the kit as extended in M3
    test "$(SQL "SELECT COUNT(*) AS n FROM strapi_api_token_permissions p JOIN strapi_api_token_permissions_token_lnk l ON l.api_token_permission_id=p.id JOIN strapi_api_tokens t ON t.id=l.api_token_id WHERE t.name='yt-kb-app'")" = 24
    test "$(SQL "SELECT COUNT(*) AS n FROM strapi_api_token_permissions p JOIN strapi_api_token_permissions_token_lnk l ON l.api_token_permission_id=p.id JOIN strapi_api_tokens t ON t.id=l.api_token_id WHERE t.name='yt-kb-site'")" = 2
    # Negative: second run leaves both tokens alone and writes nothing; also boots with MCP off, which must not lose grants
-   (cd server && DATABASE_FILENAME=.tmp/e8-m5.db PORT=1341 MCP_ENABLED=false node src/plugins/yt-kb/scripts/create-tokens.cjs --out-app .tmp/e8/m5-app2.key --out-site .tmp/e8/m5-site2.key)
-   test ! -e server/.tmp/e8/m5-app2.key && test ! -e server/.tmp/e8/m5-site2.key
+   (cd server && DATABASE_FILENAME=.tmp/e8-m5.db PROXY_URL=http://127.0.0.1:9 PORT=1341 MCP_ENABLED=false node src/plugins/yt-kb/scripts/create-tokens.cjs --out-app .tmp/e8/m5-app2.key --out-site .tmp/e8/m5-site2.key)
+   test ! -e server/.tmp/e8/m5-app2.key
+   test ! -e server/.tmp/e8/m5-site2.key
    test "$(SQL "SELECT COUNT(*) AS n FROM strapi_api_tokens WHERE name IN ('yt-kb-app','yt-kb-site')")" = 2
    test "$(SQL "SELECT COUNT(*) AS n $TOKQ AND p.action LIKE 'plugin::yt-kb.tool.%'")" = 21
    # Negative: refuses an existing output file before loading Strapi
-   rc=0; (cd server && DATABASE_FILENAME=.tmp/e8-m5.db PORT=1341 node src/plugins/yt-kb/scripts/create-tokens.cjs --out-app .tmp/e8/m5-app.key --out-site .tmp/e8/m5-x.key) || rc=$?; test "$rc" -eq 2
+   rc=0; (cd server && DATABASE_FILENAME=.tmp/e8-m5.db PROXY_URL=http://127.0.0.1:9 PORT=1341 node src/plugins/yt-kb/scripts/create-tokens.cjs --out-app .tmp/e8/m5-app.key --out-site .tmp/e8/m5-x.key) || rc=$?; test "$rc" -eq 2
    # Negative: --rotate accepts only the script's two names (never yt-kb-client), before loading Strapi
-   rc=0; (cd server && DATABASE_FILENAME=.tmp/e8-m5.db PORT=1341 node src/plugins/yt-kb/scripts/create-tokens.cjs --out-app .tmp/e8/m5-a4.key --out-site .tmp/e8/m5-s4.key --rotate yt-kb-client) || rc=$?; test "$rc" -eq 2
-   test ! -e server/.tmp/e8/m5-a4.key && test ! -e server/.tmp/e8/m5-s4.key
+   rc=0; (cd server && DATABASE_FILENAME=.tmp/e8-m5.db PROXY_URL=http://127.0.0.1:9 PORT=1341 node src/plugins/yt-kb/scripts/create-tokens.cjs --out-app .tmp/e8/m5-a4.key --out-site .tmp/e8/m5-s4.key --rotate yt-kb-client) || rc=$?; test "$rc" -eq 2
+   test ! -e server/.tmp/e8/m5-a4.key
+   test ! -e server/.tmp/e8/m5-s4.key
+   EOF
    ```
+   → the script exits 0.
 
-6. **Start the scratch server, mint the check tokens:**
+6. **Start the scratch server, mint the check tokens.** Appends `APP`, `SITE`, `VID`, `TID` to `m5.env`:
    ```bash
-   (cd server && DATABASE_FILENAME=.tmp/e8-m5.db PORT=1341 HOST=127.0.0.1 nohup yarn develop > .tmp/e8/m5-strapi.log 2>&1 &)
+   bash -euo pipefail <<'EOF'
+   source server/.tmp/e8/m5.env
+   (cd server && DATABASE_FILENAME=.tmp/e8-m5.db PROXY_URL=http://127.0.0.1:9 PORT=1341 HOST=127.0.0.1 nohup yarn develop > .tmp/e8/m5-strapi.log 2>&1 &)
    node $K wait http://127.0.0.1:1341/_health 300
    # Negative: the token script refuses while Strapi runs on SQLite
-   rc=0; (cd server && DATABASE_FILENAME=.tmp/e8-m5.db PORT=1341 node src/plugins/yt-kb/scripts/create-tokens.cjs --out-app .tmp/e8/m5-a3.key --out-site .tmp/e8/m5-s3.key) || rc=$?; test "$rc" -eq 2
+   rc=0; (cd server && DATABASE_FILENAME=.tmp/e8-m5.db PROXY_URL=http://127.0.0.1:9 PORT=1341 node src/plugins/yt-kb/scripts/create-tokens.cjs --out-app .tmp/e8/m5-a3.key --out-site .tmp/e8/m5-s3.key) || rc=$?; test "$rc" -eq 2
    test ! -e server/.tmp/e8/m5-a3.key
    # Idempotent: the later boots changed nothing
    test "$(SQL "SELECT COUNT(*) AS n $TOKQ AND p.action LIKE 'plugin::yt-kb.tool.%'")" = 21
@@ -6180,11 +6320,17 @@ Run from the repo root with M1's check conventions and the kit as extended in M3
    APP=@server/.tmp/e8/m5-app.key; SITE=@server/.tmp/e8/m5-site.key
    VID=$(node $K sql $DB "SELECT youtube_video_id AS n FROM yt_kb_videos ORDER BY id LIMIT 1" | jq -r '.rows[0].n')
    TID=$(node $K sql $DB "SELECT youtube_video_id AS n FROM yt_kb_transcripts ORDER BY id LIMIT 1" | jq -r '.rows[0].n')
+   test -n "$VID"
+   test -n "$TID"
+   printf 'APP=%s\nSITE=%s\nVID=%s\nTID=%s\n' "$APP" "$SITE" "$VID" "$TID" >> server/.tmp/e8/m5.env
+   EOF
    ```
-   The token keys are now: `mcp` (the 21 tool actions), `one` (`plugin::yt-kb.tool.get-video` only), `import` (Content API, `importer.importRecords` only), `rest` (full-access), and the files `$APP` / `$SITE` from `create-tokens.cjs`.
+   → the script exits 0; the scratch Strapi keeps running after it (started with `nohup`, in the background). The token keys are now: `mcp` (the 21 tool actions), `one` (`plugin::yt-kb.tool.get-video` only), `import` (Content API, `importer.importRecords` only), `rest` (full-access), and the files `$APP` / `$SITE` from `create-tokens.cjs` (`m5.env` holds the `@<path>` references, not the keys).
 
 7. **MCP over `POST /mcp`:**
    ```bash
+   bash -euo pipefail <<'EOF'
+   source server/.tmp/e8/m5.env
    EXPECTED='["yt_kb__add_video","yt_kb__aggregate_by_tag","yt_kb__cross_search_transcripts","yt_kb__fetch_transcript","yt_kb__find_transcripts","yt_kb__generate_digest","yt_kb__get_readable_article","yt_kb__get_transcript","yt_kb__get_video","yt_kb__library_stats","yt_kb__list_tags","yt_kb__list_transcripts","yt_kb__list_untagged","yt_kb__list_videos","yt_kb__related_videos","yt_kb__save_note","yt_kb__save_summary","yt_kb__search_transcript","yt_kb__search_videos","yt_kb__tag_video","yt_kb__untag_video"]'
    node $K mcpx $T mcp tools/list | jq -e --argjson want "$EXPECTED" '.httpStatus==200 and ([.result.tools[].name|select(startswith("yt_kb__"))]|sort)==$want'
    # no bare old names, and (M-9) a yt-kb-only token sees nothing but yt-kb's tools: every listed name is yt_kb__* or `log` (@strapi/core's own tool, services/mcp/tools/log.js, dev mode only)
@@ -6200,10 +6346,14 @@ Run from the repo root with M1's check conventions and the kit as extended in M3
    node $K mcpx $T mcp tools/call '{"name":"yt_kb__fetch_transcript","arguments":{"videoId":"not-an-id"}}' | jq -e '.rpcError!=null or .result.isError==true'
    # Negative: a Content API token is not accepted on /mcp
    node $K mcpx $T "$APP" tools/list | jq -e '.initStatus==401'
+   EOF
    ```
+   → the script exits 0.
 
 8. **REST: token scopes, import gate, admin route** (B-5, M-14, M-7; these are the plugin's server handlers the app and site call):
    ```bash
+   bash -euo pipefail <<'EOF'
+   source server/.tmp/e8/m5.env
    node $K rest $T GET '/api/yt-kb/videos?pagination[pageSize]=1&fields[0]=documentId' '' "$APP" | jq -e '.status==200'
    node $K rest $T GET '/api/yt-kb/transcripts?pagination[pageSize]=1&fields[0]=youtubeVideoId' '' "$APP" | jq -e '.status==200'
    node $K rest $T GET "/api/yt-kb/yt-transcript/$TID" '' "$APP" | jq -e --arg tid "$TID" '.status==200 and .body.data.youtubeVideoId==$tid'
@@ -6220,17 +6370,18 @@ Run from the repo root with M1's check conventions and the kit as extended in M3
    # M3's admin route is gated by plugin::yt-kb.tool.fetch-transcript, now from the generated list (stored id → no YouTube call)
    node $K rest $T GET "/yt-kb/yt-transcript/$TID" '' mcp | jq -e '.status==200'
    node $K rest $T GET "/yt-kb/yt-transcript/$TID" '' one | jq -e '.status==403'                                       # negative
+   EOF
    ```
-   207 is covered by `importer.test.ts` (it needs `import: true`, which the test host does not set).
+   → the script exits 0. 207 is covered by `importer.test.ts` (it needs `import: true`, which the test host does not set).
 
-9. **Clean up:** `lsof -ti tcp:1341 -sTCP:LISTEN | xargs kill; rm -f server/.tmp/e8-m5.db* server/.tmp/e8/m5-*`.
+9. **Clean up** (also after a failed script, once the failure is recorded): `lsof -ti tcp:1341 -sTCP:LISTEN | xargs kill; rm -f server/.tmp/e8-m5.db* server/.tmp/e8/m5-* server/.tmp/e8/m5.env`.
 
 10. **Owner's DB:** not booted in E8. Its migration runs at Deployment step 2, which backs it up first (Data, above) and checks the resulting count.
 
-- **Done when:** the plugin tests, typecheck and build pass, and every check in steps 4–8 exits 0 on the scratch copy: `tools/list` returns exactly the 21 `yt_kb__*` names for a token holding the 21 per-tool actions and only `yt_kb__get_video` for a token holding `plugin::yt-kb.tool.get-video`; the migrated `claude-mcp-1782487483515` holds 21 tool rows and 0 legacy rows; `create-tokens.cjs --rotate yt-kb-site` replaces the copy's read-only `yt-kb-site` with the custom one and a run without `--rotate` changes nothing; the import route returns 403 with the gate message under the default config.
+- **Done when:** the plugin tests, typecheck and build pass, and each of the step 3–8 scripts exits 0 on the scratch copy: `tools/list` returns exactly the 21 `yt_kb__*` names for a token holding the 21 per-tool actions and only `yt_kb__get_video` for a token holding `plugin::yt-kb.tool.get-video`; the migrated `claude-mcp-1782487483515` holds 21 tool rows and 0 legacy rows; `create-tokens.cjs --rotate yt-kb-site` replaces the copy's read-only `yt-kb-site` with the custom one and a run without `--rotate` changes nothing; the import route returns 403 with the gate message under the default config.
 - **Rollback:** revert the M5 commit **and** restore the DB from the backup: with Strapi stopped, `cp server/.tmp/data.db.pre-m5-<TS> server/.tmp/data.db` (Postgres host: restore the `pg_dump`). Reverting code alone is not enough: the migration deleted the tokens' legacy rows, and the reverted code does not register `plugin::yt-kb.tool.*`, so admin's cleanup would delete the per-tool rows on the next boot and leave `claude-mcp-1782487483515` with no grants. Without a backup, re-grant `plugin::yt-kb.read`, `.write`, `.maintenance` after the revert, with Strapi stopped, from `server/` (after `yarn plugin:build && yarn --cwd server build`, so the reverted plugin registers the three tier actions). `assignAdminPermissionsToToken(tokenId, permissions, ceilingUser)` (`@strapi/admin/dist/server/server/src/services/api-token.js:310`) replaces the token's grants with `permissions`, clamped to the ceiling user's — here the token's owner, loaded with its roles (`isSuperAdmin` reads `user.roles[].code`, `:39`):
   ```bash
-  (cd server && node -e '
+  (cd server && PROXY_URL=http://127.0.0.1:9 node -e '
   const { createStrapi } = require("@strapi/strapi");
   (async () => {
     const app = createStrapi({ appDir: process.cwd(), distDir: require("path").join(process.cwd(), "dist") });
@@ -6266,6 +6417,11 @@ Run from the repo root with M1's check conventions and the kit as extended in M3
   1. `git log --oneline -6` shows the M1–M5 commits on `egm/yt-kb-any-strapi`.
   2. `node -e "const s=require('./package.json').scripts; process.exit(/plugins\/yt-kb/.test(s['install:all']) ? 0 : 1)"` from the repo root exits 0 (M1 installs the plugin's own `node_modules`; step 6.10 depends on it).
   3. `test -f server/src/plugins/yt-kb/scripts/create-tokens.cjs` exits 0.
+  4. Every stored `documentId` already has the shape 6.1's `DOCUMENT_ID` accepts (24 characters, all in `[a-z0-9]`), so no existing row becomes unreachable once the server functions validate ids. Read-only, with the kit's `sql` on the owner's DB (the Elephant ran it on 2026-11-08: all 0):
+     ```bash
+     node server/.tmp/e8/e8.mjs sql server/.tmp/data.db "SELECT 'yt_kb_videos' AS t, COUNT(*) AS n FROM yt_kb_videos WHERE document_id IS NULL OR length(document_id) <> 24 OR document_id GLOB '*[^a-z0-9]*' UNION ALL SELECT 'yt_kb_notes', COUNT(*) FROM yt_kb_notes WHERE document_id IS NULL OR length(document_id) <> 24 OR document_id GLOB '*[^a-z0-9]*' UNION ALL SELECT 'yt_kb_digests', COUNT(*) FROM yt_kb_digests WHERE document_id IS NULL OR length(document_id) <> 24 OR document_id GLOB '*[^a-z0-9]*' UNION ALL SELECT 'yt_kb_tags', COUNT(*) FROM yt_kb_tags WHERE document_id IS NULL OR length(document_id) <> 24 OR document_id GLOB '*[^a-z0-9]*' UNION ALL SELECT 'yt_kb_transcripts', COUNT(*) FROM yt_kb_transcripts WHERE document_id IS NULL OR length(document_id) <> 24 OR document_id GLOB '*[^a-z0-9]*'" | jq -e '(.rows | length) == 5 and all(.rows[]; .n == 0)'
+     ```
+     → exit 0 (each of the five tables reports `n: 0`; SQLite's `GLOB` is case-sensitive, so an upper-case letter counts). Any `n` above 0: STOP and ask.
 
 #### 6.0 Baseline (run before any M6 edit)
 
@@ -7370,7 +7526,7 @@ M2 already owns the app's race recovery and is not redone here: `isUniqueViolati
   - `buildQueryParams({ pagination: { start: 50, limit: 25, withCount: true } })` → `pagination[start]=50`, `pagination[limit]=25`, `pagination[withCount]=true`.
   - `isUniqueViolation` (6.5's version): true for `{ ok: false, status: 400, error: 'This attribute must be unique' }`, `{ ok: false, status: 400, error: 'A video for this id already exists. documentId=x' }` and `{ ok: false, status: 400, error: 'Duplicate', details: { code: 'YT_KB_UNIQUE' } }`; false for `{ ok: false, status: 500, error: 'Internal Server Error' }`, `{ ok: false, status: 400, error: 'Title is required' }`, `{ ok: false, status: 403, error: 'Forbidden' }`, `{ ok: false, status: 0, error: 'ECONNREFUSED' }` and `{ ok: true, data: null }`.
   - Negative (B-1): `deleteNoteService('../../users/1')` (import from `./notes`) sends exactly one request, and `new URL(fetchMock.mock.calls[0][0]).pathname === '/api/yt-kb/notes/..%2F..%2Fusers%2F1'` — no request to `/api/users`.
-- New `client/src/lib/services/strapi-segments.guard.test.ts` (same file walker as `strapi-paths.guard.test.ts`): (a) no non-test file under `client/src` matches `` /\/api\/yt-kb\/[a-z-]+\/\$\{(?!seg\()/ ``; (b) only `lib/env.ts` and `lib/services/strapi-client.ts` mention `STRAPI_API_TOKEN` (no raw Strapi `fetch` left, M-21); (c) in `client/src/data/server-functions/*.ts`, every match of `` /\b(\w*[dD]ocumentIds?)\s*:\s*(z\.[^\n]*)/ `` has a value starting with `z.array(DOCUMENT_ID)` (a bare `documentId: z.string()` fails it).
+- New `client/src/lib/services/strapi-segments.guard.test.ts` (same file walker as `strapi-paths.guard.test.ts`): (a) no non-test file under `client/src` matches `` /\/api\/yt-kb\/[a-z-]+\/\$\{(?!seg\()/ ``; (b) among non-test files — every `*.test.*` file is excluded, as in (a) (M2's `unique-recovery.live.test.ts` sets `STRAPI_API_TOKEN` for its live run) — only `lib/env.ts` and `lib/services/strapi-client.ts` mention `STRAPI_API_TOKEN` (no raw Strapi `fetch` left, M-21); (c) in `client/src/data/server-functions/*.ts`, every match of `` /\b(\w*[dD]ocumentIds?)\s*:\s*(z\.[^\n]*)/ `` has a value starting with `z.array(DOCUMENT_ID)` (a bare `documentId: z.string()` fails it).
 - New `client/src/lib/validations/post.test.ts`: `DOCUMENT_ID` accepts `k3x9q2m8v7b6n5c4z1a0s2d3`, rejects `../../users/1`, `K3X9Q2M8V7B6N5C4Z1A0S2D3`, a 23-char and a 25-char id, `abc?def`; `VIDEO_REF` accepts `dQw4w9WgXcQ` and the documentId, rejects `../x`, `a/b`, `a.b`, `''`; `normalizeTagName('  C++   Tips ') === 'c++ tips'`; `parseTagInput('AI,  ai , Deep   Learning')` → `['ai', 'deep learning']`.
 - New `client/src/data/server-functions/document-id.schemas.test.ts` (no mocks needed: the modules only define server fns at import; silence `console.warn` for the env warnings): for each exported schema in the 6.1 table, `safeParse` with the documentId field set to `'../../users/1'` fails with an issue on that field, and with `k3x9q2m8v7b6n5c4z1a0s2d3` passes (fill the schema's other required fields with valid values); `SummarizeToNoteSchema`, `LoadDigestSchema`, `GenerateDigestSchema` reject `['../../users/1', 'dQw4w9WgXcQ']` and accept `['dQw4w9WgXcQ', 'k3x9q2m8v7b6n5c4z1a0s2d3']`.
 - `client/src/lib/services/digest-videos.test.ts` — the "falls back to documentId" test uses `'k3x9q2m8v7b6n5c4z1a0s2d3'` instead of `'xyz'`; add: `resolveDigestVideos(['../../users/1'])` returns `{ status: 'missing', missing: ['../../users/1'] }` and `byDocumentId` is never called.
@@ -7476,8 +7632,8 @@ S1, S2 and S4 ran in 6.0. In Verify set S1's variables again without its `rm` (`
 
 - S0 — ports free and builds current: M1 precondition 1's command for ports 1340 1341 1399 3005 → `"busy":false` for each (if one is busy, STOP — do not kill the owner's processes). `yarn --cwd server/src/plugins/yt-kb build && yarn --cwd server build` → exit 0.
 - S1 — scratch folder and database name (M6 uses `M=m6`; M7 sets `M=m7`): `M=m6; K="$PWD/server/.tmp/e8/e8.mjs"; SCRATCH="$PWD/server/.tmp/e8/$M"; mkdir -p "$SCRATCH" && chmod 700 "$SCRATCH"`, and `rm -f server/.tmp/e8-$M.db server/.tmp/e8-$M.db-*` (a file only these checks create). The fresh scratch DB is `server/.tmp/e8-$M.db`.
-- S2 — tokens, with Strapi stopped (M5's `create-tokens.cjs` refuses to run while a SQLite Strapi listens): `(cd server && DATABASE_FILENAME=.tmp/e8-$M.db node src/plugins/yt-kb/scripts/create-tokens.cjs --out-app "$SCRATCH/app.key" --out-site "$SCRATCH/site.key")` → exit 0 (loading Strapi creates the schema in the fresh file); then `node -e "const fs=require('fs'); const bad=process.argv.slice(1).filter(f=>(fs.statSync(f).mode&0o777)!==0o600); console.log({bad}); process.exit(bad.length?1:0)" "$SCRATCH/app.key" "$SCRATCH/site.key"` → `{ bad: [] }` (both key files exist with mode 0600; their contents are never printed).
-- S3 — scratch Strapi: `(cd server && HOST=127.0.0.1 PORT=1341 DATABASE_FILENAME=.tmp/e8-$M.db nohup yarn develop > "$SCRATCH/strapi.log" 2>&1 &)` then `node $K wait http://127.0.0.1:1341/_health 300` → `"status": 204`. Prove it is the empty scratch database: `curl -s -H "Authorization: Bearer $(cat "$SCRATCH/app.key")" 'http://127.0.0.1:1341/api/yt-kb/videos?pagination[pageSize]=1' | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const t=JSON.parse(s).meta.pagination.total;console.log({total:t});process.exit(t===0?0:1)})"` → `{ total: 0 }`.
+- S2 — tokens, with Strapi stopped (M5's `create-tokens.cjs` refuses to run while a SQLite Strapi listens): `(cd server && DATABASE_FILENAME=.tmp/e8-$M.db PROXY_URL=http://127.0.0.1:9 node src/plugins/yt-kb/scripts/create-tokens.cjs --out-app "$SCRATCH/app.key" --out-site "$SCRATCH/site.key")` → exit 0 (loading Strapi creates the schema in the fresh file); then `node -e "const fs=require('fs'); const bad=process.argv.slice(1).filter(f=>(fs.statSync(f).mode&0o777)!==0o600); console.log({bad}); process.exit(bad.length?1:0)" "$SCRATCH/app.key" "$SCRATCH/site.key"` → `{ bad: [] }` (both key files exist with mode 0600; their contents are never printed).
+- S3 — scratch Strapi: `(cd server && HOST=127.0.0.1 PORT=1341 DATABASE_FILENAME=.tmp/e8-$M.db PROXY_URL=http://127.0.0.1:9 nohup yarn develop > "$SCRATCH/strapi.log" 2>&1 &)` then `node $K wait http://127.0.0.1:1341/_health 300` → `"status": 204`. Prove it is the empty scratch database: `curl -s -H "Authorization: Bearer $(cat "$SCRATCH/app.key")" 'http://127.0.0.1:1341/api/yt-kb/videos?pagination[pageSize]=1' | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const t=JSON.parse(s).meta.pagination.total;console.log({total:t});process.exit(t===0?0:1)})"` → `{ total: 0 }`.
 - S4 — synthetic library. Write `$SCRATCH/seed-fixtures.mjs`:
 
   ```js
@@ -7952,14 +8108,16 @@ One place owns the batching and the 413 rule: the new `server/src/plugins/yt-kb/
 
 #### Verify (M7)
 
-Repeat M6's V-setup S0–S4 with `M=m7` (S1 then gives `SCRATCH=$PWD/server/.tmp/e8/m7` and the fresh scratch DB `server/.tmp/e8-m7.db`; scratch Strapi on 1341 with the 16 fixture videos, both tokens). Add port 1398 to S0's port check. Back up the owner's site build first: `test -d site/dist && mv site/dist "$SCRATCH/site-dist-backup"`; restore it at the end (step 9). The builds below also rewrite `site/.astro/`, which the next real build replaces (`store.clear()` in `site/src/content.config.ts`).
+Repeat M6's V-setup S0–S4 with `M=m7` (S1 then gives `SCRATCH=$PWD/server/.tmp/e8/m7` and the fresh scratch DB `server/.tmp/e8-m7.db`; scratch Strapi on 1341 with the 16 fixture videos, both tokens; S2's `create-tokens.cjs` and S3's `yarn develop` carry `PROXY_URL=http://127.0.0.1:9`, M1's "Dead proxy"). Add port 1398 to S0's port check. Back up the owner's site build first: `test -d site/dist && mv site/dist "$SCRATCH/site-dist-backup"`; restore it at the end (step 9). The builds below also rewrite `site/.astro/`, which the next real build replaces (`store.clear()` in `site/src/content.config.ts`).
 
 1. Static: `bash -n publish-site.sh` → exit 0. `node -e "const t=require('fs').readFileSync('publish-site.sh','utf8'); const bad=['curl','python3','GENERATED','STRAPI_URL='].filter(w=>t.includes(w)); console.log({bad}); process.exit(bad.length?1:0)"` → `{ bad: [] }`. `node -e "const d=require('./site/package.json').scripts.deploy; process.exit(d==='yarn build && npx netlify deploy --prod --dir=dist'?0:1)"` → exit 0. `yarn site:test` → exit 0. `yarn --cwd server/src/plugins/yt-kb test` → exit 0, and its output lists `tests/import-batches.test.mjs` with 7 passing tests. `cd site && npx astro sync && npx tsc --noEmit` with `SITE_SKIP_STRAPI_FETCH=1` → exit 0.
 2. **Site token scope (M-14), positive and negative:** `curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $(cat "$SCRATCH/site.key")" <url>` → `http://127.0.0.1:1341/api/yt-kb/videos?pagination[pageSize]=1` `200`; `http://127.0.0.1:1341/api/yt-kb/tags` `200`; `http://127.0.0.1:1341/api/users` `403`; `http://127.0.0.1:1341/api/yt-kb/notes` `403`; `http://127.0.0.1:1341/api/yt-kb/transcripts` `403`.
 3. Site build with the `yt-kb-site` token (env vars override `site/.env`, `site/src/content.config.ts:9-16`): `STRAPI_BASE_URL=http://127.0.0.1:1341/api/yt-kb STRAPI_API_TOKEN="$(cat "$SCRATCH/site.key")" yarn site:build` → exit 0; `node -e "const n=require('fs').readdirSync('site/dist/v',{withFileTypes:true}).filter(d=>d.isDirectory()).length; console.log({videoPages:n}); process.exit(n===16?0:1)"` → `{ videoPages: 16 }`.
    **Negative:** `STRAPI_BASE_URL=http://127.0.0.1:1341/api/yt-kb STRAPI_API_TOKEN= yarn site:build` → non-zero exit, output contains `Strapi answered 403`.
 4. `publish-site.sh` with a recording `npx` (nothing deploys). Create the stub:
-   `mkdir -p "$SCRATCH/bin" && printf '#!/usr/bin/env bash\nprintf "%%s|%%s\\n" "$PWD" "$*" >> "$NPX_LOG"\n' > "$SCRATCH/bin/npx" && chmod +x "$SCRATCH/bin/npx"`, then `export NPX_LOG="$SCRATCH/npx.log"; : > "$NPX_LOG"`. Every run below uses `PATH="$SCRATCH/bin:$PATH" STRAPI_BASE_URL=http://127.0.0.1:1341/api/yt-kb STRAPI_API_TOKEN="$(cat "$SCRATCH/site.key")"` (and needs `site/.netlify/state.json`, which this checkout has; if it is missing, STOP — do not run `netlify link`). Check the log after each run with `node -e "const l=require('fs').readFileSync(process.env.NPX_LOG,'utf8').split('\n').filter(Boolean); console.log(l)"`.
+   `mkdir -p "$SCRATCH/bin" && printf '#!/usr/bin/env bash\nprintf "%%s|%%s\\n" "$PWD" "$*" >> "$NPX_LOG"\n' > "$SCRATCH/bin/npx" && chmod +x "$SCRATCH/bin/npx"`, then `export NPX_LOG="$SCRATCH/npx.log"; : > "$NPX_LOG"`.
+   **Before any run below, prove the stub wins inside yarn** (`yarn site:deploy` runs `npx` from a yarn script, and yarn prepends its own directories to `PATH`): `PATH="$SCRATCH/bin:$PATH" yarn --cwd site exec -- bash -c 'command -v npx'` must print exactly `$SCRATCH/bin/npx` (the expanded path). Anything else: STOP — do not run step 4 or step 7, since a real `npx netlify deploy` could publish.
+   Every run below (each `./publish-site.sh` and `yarn site:deploy` here and in step 7 — every M7 run that could reach Netlify) uses `PATH="$SCRATCH/bin:$PATH" NETLIFY_AUTH_TOKEN=invalid NETLIFY_SITE_ID=00000000-0000-0000-0000-000000000000 STRAPI_BASE_URL=http://127.0.0.1:1341/api/yt-kb STRAPI_API_TOKEN="$(cat "$SCRATCH/site.key")"` — the two Netlify values are deliberately unusable, so a missed shadow fails at Netlify instead of deploying (and needs `site/.netlify/state.json`, which this checkout has; if it is missing, STOP — do not run `netlify link`). Check the log after each run with `node -e "const l=require('fs').readFileSync(process.env.NPX_LOG,'utf8').split('\n').filter(Boolean); console.log(l)"`.
    - `./publish-site.sh --draft` → exit 0, prints a count line containing `(16 videos)`, and the log gains exactly one line, `<repo>/site|netlify deploy --dir=dist` (`<repo>` = the absolute repo path).
    - `./publish-site.sh` → exit 0, log gains exactly `<repo>/site|netlify deploy --prod --dir=dist`.
    - `yarn site:deploy` → exit 0, `site/dist` rebuilt (mtime of `site/dist/index.html` newer than before the command), log gains `<repo>/site|netlify deploy --prod --dir=dist`.
@@ -7998,7 +8156,7 @@ Repeat M6's V-setup S0–S4 with `M=m7` (S1 then gives `SCRATCH=$PWD/server/.tmp
 
    `: > "$SCRATCH/import.log"; nohup node "$SCRATCH/import-stub.mjs" 1398 "$SCRATCH/import.log" 1048576 > /dev/null 2>&1 &` (port 1398 was checked free in S0). Then `cd server/src/plugins/yt-kb/scripts && SOURCE_URL=http://127.0.0.1:1341 DEST_URL=http://127.0.0.1:1398 SOURCE_TOKEN="$(cat "$SCRATCH/app.key")" DEST_TOKEN=stub-not-a-secret node copy-content.mjs > "$SCRATCH/copy.out"; echo "exit $?"` → `exit 1` (the stub keeps nothing, so the check reports missing rows). Then:
    `node -e "const fs=require('fs'); const log=fs.readFileSync(process.argv[1],'utf8').trim().split('\n').map(JSON.parse); const out=fs.readFileSync(process.argv[2],'utf8'); const multiOver=log.filter(e=>e.records>1&&e.bytes>900000); const tooBig=log.filter(e=>e.status===413); const ok=multiOver.length===0 && tooBig.length===1 && tooBig[0].records===1 && tooBig[0].bytes>900000 && out.includes('body too large — raise strapi::body jsonLimit on the destination') && /videos: read 16, created 15, updated 0, failed 1/.test(out); console.log({posts:log.length, multiOver:multiOver.length, tooBig, ok}); process.exit(ok?0:1)" "$SCRATCH/import.log" "$SCRATCH/copy.out"` → `ok: true`: every multi-record body is at most 900 KB, the one ~1.4 MB fixture (row 16) went alone, got a 413 and is reported with the fix. (The `videos: read …` pattern is the script's summary line at `721f210`; M5 and M7 do not change it.) (Before M7, the script sent bodies up to 8 MB and stopped the whole run on the first 413.) Stop the stub: `lsof -ti tcp:1398 -sTCP:LISTEN | xargs kill`.
-7. Strapi down (negative for M-10): `lsof -ti tcp:1341 -sTCP:LISTEN | xargs kill`, then `: > "$NPX_LOG"; PATH="$SCRATCH/bin:$PATH" STRAPI_BASE_URL=http://127.0.0.1:1341/api/yt-kb STRAPI_API_TOKEN="$(cat "$SCRATCH/site.key")" ./publish-site.sh --draft; echo "exit $?"` → non-zero, output contains `Cannot reach Strapi`, and the npx log is empty (nothing deployed).
+7. Strapi down (negative for M-10): `lsof -ti tcp:1341 -sTCP:LISTEN | xargs kill`, then `: > "$NPX_LOG"; PATH="$SCRATCH/bin:$PATH" NETLIFY_AUTH_TOKEN=invalid NETLIFY_SITE_ID=00000000-0000-0000-0000-000000000000 STRAPI_BASE_URL=http://127.0.0.1:1341/api/yt-kb STRAPI_API_TOKEN="$(cat "$SCRATCH/site.key")" ./publish-site.sh --draft; echo "exit $?"` → non-zero, output contains `Cannot reach Strapi`, and the npx log is empty (nothing deployed).
 8. M6's S7 cleanup (ports, scratch DB file).
 9. Restore the owner's site build: `rm -rf site/dist && { test -d "$SCRATCH/site-dist-backup" && mv "$SCRATCH/site-dist-backup" site/dist || true; }`, then `rm -rf "$SCRATCH"`.
 
@@ -8040,10 +8198,14 @@ Repeat M6's V-setup S0–S4 with `M=m7` (S1 then gives `SCRATCH=$PWD/server/.tmp
 - **Data:** none.
 - **Callers updated:** none (docs only).
 - **Verify:**
-  - `grep -rn "TRANSCRIPT_PROXY_URL" --include='*.md' --include='*.ts' --include='*.mjs' --include='*.example' . | grep -v node_modules | grep -v "docs/designs/"` → no output.
-  - `grep -rnE "\b(getVideo|libraryStats|listTags|searchVideos)\b" docs/mcp.md README.md` → only inside sentences that mention the `yt_kb__` name next to them, or no output.
+  - `git grep -n TRANSCRIPT_PROXY_URL -- . ':!docs/designs'` → no output (exit 1).
+  - No old tool name is left on its own: for each of the 21 old camelCase names, count the lines of `docs/mcp.md` and `README.md` that contain the bare name (as a whole word) and do **not** contain `yt_kb__`; the total must be 0. (`yt-kb__getTranscript`, the `tanstack-ai` form, is not a bare name: `\b` finds no word boundary after `__`.)
+    ```bash
+    node -e 'const fs=require("fs");const names="libraryStats,listVideos,searchVideos,getVideo,getTranscript,searchTranscript,findTranscripts,crossSearchTranscripts,listTranscripts,aggregateByTag,listUntagged,listTags,relatedVideos,getReadableArticle,generateDigest,saveSummary,tagVideo,untagVideo,saveNote,addVideo,fetchTranscript".split(",");const hits=[];for(const f of ["docs/mcp.md","README.md"]){fs.readFileSync(f,"utf8").split("\n").forEach((line,i)=>{if(line.includes("yt_kb__"))return;for(const n of names){if(new RegExp("\\b"+n+"\\b").test(line))hits.push(`${f}:${i+1} ${n}`)}})}console.log(JSON.stringify({total:hits.length,hits}));process.exit(hits.length?1:0)'
+    ```
+    → `{"total":0,"hits":[]}`, exit 0.
   - `node -e "const s=require('fs').readFileSync('docs/mcp.md','utf8'); const n=(s.match(/plugin::yt-kb\.tool\.[a-z-]+/g)||[]); console.log(new Set(n).size)"` → `21`.
-- **Done when:** the three greps above give the stated results and the plugin README has all nine sections.
+- **Done when:** the three checks above give the stated results and the plugin README has all nine sections.
 - **Rollback:** revert the commit.
 
 ## Environment variables
@@ -8062,15 +8224,28 @@ No variable changes for any other environment: nothing is deployed by this spec.
 Local only (the test host `server/`, the app and the site on the owner's Mac). Order:
 
 1. Implement and verify M1–M8 on the branch against scratch databases.
-2. **Owner's data:** stop Strapi. Back up with the check kit: `TS=$(date +%s); node server/.tmp/e8/e8.mjs backup server/.tmp/data.db server/.tmp/data.db.pre-yt-kb-any-strapi-$TS` → `"integrity": "ok"` (E8 never booted `data.db`, so M1's internal migrations, M2's schema sync and M5's grant migration all first run on it in this step; M1's and M2's earlier backups were taken too, and this is the backup M5's Data section asks for). Duplicate check: `node server/.tmp/e8/e8.mjs dupcheck server/.tmp/data.db` → `{"duplicates": []}` (if not, stop and ask). Start Strapi once (`yarn server`) so schema sync adds the new columns and unique indexes and the plugin bootstrap migrates the grants; confirm with `node server/.tmp/e8/e8.mjs sql server/.tmp/data.db "select name from sqlite_master where type='index' and name like 'yt_kb_%_uq' order by name"` → the five `_uq` indexes M2 lists, and `node server/.tmp/e8/e8.mjs sql server/.tmp/data.db "SELECT COUNT(*) AS n FROM admin_permissions p JOIN admin_permissions_api_token_lnk l ON l.permission_id=p.id JOIN strapi_api_tokens t ON t.id=l.api_token_id WHERE t.name='claude-mcp-1782487483515' AND p.action LIKE 'plugin::yt-kb.tool.%'"` → `n: 21`. The Strapi log shows `[yt-kb] legacy MCP grant migration: 6 legacy row(s), 3 migrated, 21 per-tool grant(s) added, 3 super-admin and 0 orphan row(s) left to Strapi` (M5 Facts 9). Rollback for this step: stop Strapi and `cp server/.tmp/data.db.pre-yt-kb-any-strapi-$TS server/.tmp/data.db`.
-3. **Tokens:** stop Strapi. `data.db` already has a read-only `yt-kb-site` (M5 Facts 9), so the script rotates it; `yt-kb-app` does not exist yet and is created. `KEYS` is a new folder in the implementing session's scratchpad directory (the one its system prompt names, e.g. `/private/tmp/claude-501/-Users-paul-projects-yt-knowledge-base/<session>/scratchpad`), never inside the repo:
+2. **Owner's data** — the one boot on `server/.tmp/data.db`, on purpose (E8 never booted it, so M1's internal migrations, M2's schema sync and M5's grant migration all first run on it in this step). Run from the repo root, in order, with M1's check conventions:
+   - **Strapi must be stopped, by the owner.** `lsof -nP -iTCP:1340 -sTCP:LISTEN` → exit 1 (nothing listens). If a process listens, STOP and ask the owner to stop their Strapi; never kill the owner's process.
+   - **Backup** with the check kit: `TS=$(date +%s); node server/.tmp/e8/e8.mjs backup server/.tmp/data.db server/.tmp/data.db.pre-yt-kb-any-strapi-$TS` → `"integrity": "ok"` (M1's and M2's earlier backups were taken too; this is the backup M5's Data section asks for).
+   - **Duplicate check:** `node server/.tmp/e8/e8.mjs dupcheck server/.tmp/data.db` → `{"duplicates": []}` (if not, STOP and ask).
+   - **Start Strapi once**, so schema sync adds the new columns and unique indexes and the plugin bootstrap migrates the grants. This verification boot uses the dead proxy like every E8 boot (M1, "Dead proxy"); the owner's real `PROXY_URL` applies only to normal use afterwards (step 3):
+     ```bash
+     (cd server && PROXY_URL=http://127.0.0.1:9 nohup yarn develop > .tmp/e8/deploy-strapi.log 2>&1 &)
+     node server/.tmp/e8/e8.mjs wait http://127.0.0.1:1340/_health 300
+     grep -cF '[yt-kb] legacy MCP grant migration: 6 legacy row(s), 3 migrated, 21 per-tool grant(s) added, 3 super-admin and 0 orphan row(s) left to Strapi' server/.tmp/e8/deploy-strapi.log
+     ```
+     → wait prints `"status": 204`; the `grep -c` prints `1` (structured output is not available for a log line; this is the exact message M5's `seedPermissions` writes, with M5 Facts 9's counts). Any other count: STOP and ask.
+   - **Confirm the data:** `node server/.tmp/e8/e8.mjs sql server/.tmp/data.db "SELECT name FROM sqlite_master WHERE type='index' AND name IN ('yt_kb_videos_youtube_video_id_uq','yt_kb_transcripts_youtube_video_id_uq','yt_kb_tags_name_uq','yt_kb_tags_slug_uq','yt_kb_digests_video_set_key_uq') ORDER BY name" | jq -e '(.rows | length) == 5'` (the five unique indexes M2 lists, by name — a `LIKE '…_uq'` pattern would also catch Strapi's own link-table indexes), and `node server/.tmp/e8/e8.mjs sql server/.tmp/data.db "SELECT COUNT(*) AS n FROM admin_permissions p JOIN admin_permissions_api_token_lnk l ON l.permission_id=p.id JOIN strapi_api_tokens t ON t.id=l.api_token_id WHERE t.name='claude-mcp-1782487483515' AND p.action LIKE 'plugin::yt-kb.tool.%'" | jq -e '.rows[0].n == 21'` → both exit 0.
+   - **Stop it before step 3** (this is the process the agent started in this step, the only one it may stop): `lsof -ti tcp:1340 -sTCP:LISTEN | xargs kill`, then `lsof -nP -iTCP:1340 -sTCP:LISTEN` → exit 1.
+   - Rollback for this step: with Strapi stopped (as above), `cp server/.tmp/data.db.pre-yt-kb-any-strapi-$TS server/.tmp/data.db`.
+3. **Tokens:** Strapi must be stopped (step 2 stopped the one it started): `lsof -nP -iTCP:1340 -sTCP:LISTEN` → exit 1; if a process listens, STOP and ask the owner to stop their Strapi — never kill the owner's process. `data.db` already has a read-only `yt-kb-site` (M5 Facts 9), so the script rotates it; `yt-kb-app` does not exist yet and is created. `KEYS` is a new folder in the implementing session's scratchpad directory (the one its system prompt names, e.g. `/private/tmp/claude-501/-Users-paul-projects-yt-knowledge-base/<session>/scratchpad`), never inside the repo. The script loads Strapi in-process, so it also gets the dead proxy:
    ```bash
    KEYS="<scratchpad>/yt-kb-keys"; mkdir -p "$KEYS" && chmod 700 "$KEYS"
-   (cd server && node src/plugins/yt-kb/scripts/create-tokens.cjs --out-app "$KEYS/yt-kb-app.key" --out-site "$KEYS/yt-kb-site.key" --rotate yt-kb-site)
+   (cd server && PROXY_URL=http://127.0.0.1:9 node src/plugins/yt-kb/scripts/create-tokens.cjs --out-app "$KEYS/yt-kb-app.key" --out-site "$KEYS/yt-kb-site.key" --rotate yt-kb-site)
    node -e 'const fs=require("fs");const bad=process.argv.slice(1).filter(f=>(fs.statSync(f).mode&0o777)!==0o600);console.log(JSON.stringify({bad}));process.exit(bad.length?1:0)' "$KEYS/yt-kb-app.key" "$KEYS/yt-kb-site.key"
    ```
    → exit 0; the script logs `created yt-kb-app`, `revoked yt-kb-site` and `created yt-kb-site`; `bad: []`. Never pass `--rotate yt-kb-client` (the script refuses it anyway, exit 2): the old full-access `yt-kb-client` stays in place until the owner revokes it in the admin panel once the app works — say so in the final report; don't revoke it yourself. From here the site's old read-only key no longer works.
-   Then **STOP and hand over to the owner** (the agent never opens, prints or edits a `.env`): tell the owner the two absolute file paths, `$KEYS/yt-kb-app.key` and `$KEYS/yt-kb-site.key`; the **owner** pastes the first file's contents into `client/.env` and the second's into `site/.env`, each as `STRAPI_API_TOKEN=<key>`, and says when it is done. Only then start Strapi and the app. After the owner confirms, offer to delete `$KEYS` (`rm -rf "$KEYS"`).
+   Then **STOP and hand over to the owner** (the agent never opens, prints or edits a `.env`): tell the owner the two absolute file paths, `$KEYS/yt-kb-app.key` and `$KEYS/yt-kb-site.key`; the **owner** pastes the first file's contents into `client/.env` and the second's into `site/.env`, each as `STRAPI_API_TOKEN=<key>`, and says when it is done. Only then does the owner start Strapi and the app for normal use (`yarn start` or `yarn dev`, without the dead proxy): from here the owner's own `PROXY_URL` in `server/.env` applies — `PROXY_URL=http://127.0.0.1:9` was only for step 2's verification boot and this token script. After the owner confirms, offer to delete `$KEYS` (`rm -rf "$KEYS"`).
 4. **MCP client:** the owner's MCP server `yt-knowledge-base` keeps using admin token `claude-mcp-1782487483515`; after step 2 it holds the 21 per-tool actions. Tool names change to `yt_kb__*`, so Claude sessions must reconnect.
 5. Migrations: none in `database/migrations`; schema changes apply through Strapi's schema sync on first boot; the grant migration and the Public/Authenticated cleanup run in the plugin's `bootstrap()` on every boot (idempotent).
 
@@ -8081,7 +8256,7 @@ Only what is still open after the owner's and the Elephant's 2026-11-08 resoluti
 Resolved by the Elephant on 2026-11-08 (recorded here so the implementer does not re-ask):
 
 - **OQ-1 — `strapi-plugin verify` fails:** fix what it reports inside M1. If the fix needs a structural change to the plugin package (entry points, exports, folder layout), stop and ask.
-- **OQ-2 — browser-level race check:** not added. Service-level tests plus live REST races are the check.
+- **OQ-2 — browser-level race check:** not added. Driving `shareVideo` and `saveDigest` only at the service level, not through the frontend, is a **recorded deviation from standard §7, accepted by the Elephant** (2026-11-08). The check is: the mocked service tests (`unique-recovery.test.ts`), the live REST races (M2 Verify 6), and a live service-level run of `createVideoService` and `upsertDigestService` through the real `strapiFetch` against the M2 scratch Strapi (`unique-recovery.live.test.ts`, M2 Verify 10).
 - **OQ-3 — `rawSegments` inside `searchIndex`:** kept, as the contract builds it (the field is private and stored once per transcript).
 - **OQ-4 — tool descriptions:** unchanged. The same description is shown under two naming schemes (`yt_kb__get_transcript` on MCP, `yt-kb__getTranscript` in `tanstack-ai`), as in `strapi-plugin-youtube-transcripts`.
 - **OQ-5 — one oEmbed request in M3 Verify step 8 (and one in M6 Verify V1 step 3, test 4):** acceptable; it is existing app behaviour.
