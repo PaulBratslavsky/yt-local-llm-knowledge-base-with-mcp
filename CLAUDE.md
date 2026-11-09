@@ -28,7 +28,7 @@ All run from the **repo root** unless noted.
 | `yarn client` | Client only (assumes Strapi is up). |
 | `yarn seed` | Imports `server/seed-data/seed.tar.gz`. **Run before starting Strapi** — needs exclusive write to SQLite. |
 | `yarn export` | Exports current Strapi DB to `server/seed-data/seed.tar.gz`. |
-| `yarn test` | Full vitest suite via `client/`, 430 tests: 428 pass, 2 skip (Strapi + Ollama down). Also runs as CI's `Test` step. |
+| `yarn test` | Full vitest suite via `client/`, 436 tests: 434 pass, 2 skip (Strapi + Ollama down). Also runs as CI's `Test` step. |
 | `yarn site` | Astro dev server on **4330** (not 4321 — another project on this machine holds it). Needs Strapi up. |
 | `yarn site:build` | Static build + output guard. Fails loudly if Strapi is unreachable or returns nothing. |
 | `yarn site:test` | The site's 107 vitest tests. **Not** covered by `yarn test`, which is the client's suite. |
@@ -36,7 +36,7 @@ All run from the **repo root** unless noted.
 | `yarn site:deploy` | `yarn build`, then `netlify deploy --prod --dir=dist` from `site/` — rebuilds first, but has no draft option and no link check. Prefer `site:publish`. |
 | `yarn install:all` | `yarn install --frozen-lockfile` for the root, `server/`, the plugin, `client/` and `site/` package.json's. What CI runs to install everything. |
 | `yarn plugin:build` | Builds strapi-plugin-yt-kb to its gitignored `dist/` (`strapi-plugin build`). Restart Strapi afterwards. |
-| `yarn plugin:test` | The plugin's 121 vitest tests (`yarn --cwd server/src/plugins/yt-kb test`). **Not** covered by `yarn test`. |
+| `yarn plugin:test` | The plugin's 141 vitest tests (`yarn --cwd server/src/plugins/yt-kb test`). **Not** covered by `yarn test`. |
 | `yarn sync:bm25` | Copies the plugin's `bm25-core.ts` into the client; `--check` exits 1 if the copy is out of date. |
 
 Strapi's own upgrade codemod is run from `server/`, not the root:
@@ -49,12 +49,12 @@ the Strapi codemod. Do not rename it back.
 ### Tests
 
 ```bash
-yarn test                                      # from repo root — full vitest suite, 430 tests (2 skipped)
+yarn test                                      # from repo root — full vitest suite, 436 tests (2 skipped)
 yarn --cwd client test                         # same suite, run from client/
 yarn --cwd client test path/to/file.test.ts    # single file
 yarn --cwd client test -t "name fragment"      # filter by test name
 yarn --cwd client test:e2e                     # Playwright smoke (needs stack up)
-yarn plugin:test                               # strapi-plugin-yt-kb's suite, 121 tests
+yarn plugin:test                               # strapi-plugin-yt-kb's suite, 141 tests
 yarn site:test                                 # the site's suite, 107 tests
 ```
 
@@ -85,7 +85,7 @@ exists as one obvious entry point and for CI symmetry with `yarn install:all`
 (also at the repo root, `yarn install --frozen-lockfile` for each of the
 five `package.json`s — root, `server/`, the plugin, `client/`, `site/`).
 
-**430 (428 passed + 2 skipped) is measured with Strapi and Ollama both
+**436 (434 passed + 2 skipped) is measured with Strapi and Ollama both
 down — and is the same with them up.** `videos.smoke.test.ts` and
 `embeddings.ranking.test.ts` skip by returning early inside each `it` rather
 than failing, so their tests still count as passed and the total doesn't

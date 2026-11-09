@@ -292,8 +292,8 @@ Transcripts over ~15K estimated tokens split into 2500-word windows (50-word ove
 yarn dev            # Strapi + client only (skip the Ollama env setup)
 yarn client         # Client only (expects Strapi already running)
 yarn server         # Strapi only
-yarn test           # Client vitest suite (430 tests, 2 of them skipped live checks)
-yarn plugin:test    # strapi-plugin-yt-kb's vitest suite (121 tests)
+yarn test           # Client vitest suite (436 tests, 2 of them skipped live checks)
+yarn plugin:test    # strapi-plugin-yt-kb's vitest suite (141 tests)
 yarn site:test      # Static site's vitest suite (107 tests)
 ```
 
