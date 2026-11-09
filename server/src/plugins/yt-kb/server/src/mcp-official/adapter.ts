@@ -6,11 +6,11 @@
 //   - FROM the tool: its `execute(args, { strapi })` body and its
 //     human-facing `name` + `description`. These operate on plain parsed
 //     args, so they're host-agnostic.
-//   - ADDED here, per tool: the input/output schemas, declared with
-//     @strapi/utils z (zod 3) because the tool's own schemas use the app's
-//     zod 4 and the two are not interchangeable across the MCP SDK's
-//     schema conversion. Plus a `title` and an `access` tier
-//     (read|write|maintenance) mapping to a custom admin permission.
+//   - ADDED here, per tool: the output schema, declared with the zod 4
+//     API from `@strapi/utils` (the input schema is the tool's own, in
+//     the same z, passed straight through). Plus a `title` and an
+//     `access` tier (read|write|maintenance) mapping to a custom admin
+//     permission.
 import { z } from '@strapi/utils';
 import type { Core } from '@strapi/strapi';
 import type { ToolDef } from '../mcp/registry';
@@ -42,7 +42,7 @@ export type DomainTool = {
   /** What the body does; the admin action that gates the tool follows from it. */
   sideEffects: SideEffects;
   /**
-   * Output schema in zod 3. Defaults to a permissive object (any shape) —
+   * Output schema, in the zod 4 API from @strapi/utils. Defaults to a permissive object (any shape) —
    * the migration starts loose and tightens per tool later. structuredContent
    * is always normalized to an object so this validates.
    */
@@ -90,8 +90,8 @@ export function registerDomainTool(
   const output = def.output ?? LOOSE_OUTPUT;
   const action = ACCESS_BY_SIDE_EFFECTS[sideEffects];
   // The tool's own schema, not a restatement of it. These used to be
-  // declared twice — zod 4 on the body, zod 3 here — and only this one was
-  // enforced, so adding a field to a body and forgetting the copy left the
+  // declared twice — the app's own zod on the body, @strapi/utils' here —
+  // and only this one was enforced, so adding a field to a body and forgetting the copy left the
   // body destructuring undefined with nothing to catch it.
   const input = tool.schema as z.ZodObject<z.ZodRawShape> | undefined;
 

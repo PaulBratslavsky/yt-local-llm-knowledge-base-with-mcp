@@ -29,20 +29,22 @@
     "build": "strapi-plugin build",
     "watch": "strapi-plugin watch",
     "verify": "strapi-plugin verify",
-    "test:ts:back": "tsc -p server/tsconfig.json --noEmit"
+    "test": "vitest run",
+    "test:ts:back": "tsc -p server/tsconfig.json --noEmit --incremental false"
   },
   "dependencies": {
-    "undici": "6.28.0",
+    "undici": "6.29.1",
     "youtubei.js": "17.2.0"
   },
   "devDependencies": {
     "@strapi/sdk-plugin": "6.1.1",
-    "@types/node": "^20.0.0",
-    "typescript": "5.9.3"
+    "@types/node": "^22.0.0",
+    "typescript": "5.9.3",
+    "vitest": "3.2.6"
   },
   "peerDependencies": {
-    "@strapi/strapi": "^5.47.0",
-    "@strapi/utils": "^5.47.0"
+    "@strapi/strapi": "^5.61.0",
+    "@strapi/utils": "^5.61.0"
   },
   "strapi": {
     "kind": "plugin",

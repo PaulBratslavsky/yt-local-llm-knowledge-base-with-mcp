@@ -1,12 +1,15 @@
-# Minimal CI — the static gates from CLAUDE.md: typecheck both packages and
-# run the vitest suite. Both live-backend test families self-skip headless:
-# embeddings.ranking.test.ts probes Ollama and videos.smoke.test.ts probes
-# Strapi, so neither needs services here.
+# Minimal CI — the static gates from CLAUDE.md: typecheck every package,
+# build and verify strapi-plugin-yt-kb, and run the vitest suites. Both
+# live-backend test families self-skip headless: embeddings.ranking.test.ts
+# probes Ollama and videos.smoke.test.ts probes Strapi, so neither needs
+# services here.
 #
-# One job, four installs (root + client + server + site). Each package owns its
-# dependencies — there is no workspace and no hoisting. Keeping Strapi's
-# React 18 unreachable from the React 19 client is deliberate: sharing a
-# root lets the two majors meet, which breaks SSR.
+# One job, five installs (root + server + the plugin + client + site). Each
+# package owns its dependencies — there is no workspace and no hoisting.
+# Keeping Strapi's React 18 unreachable from the React 19 client is
+# deliberate: sharing a root lets the two majors meet, which breaks SSR.
+# The plugin installs after server/: its build and tests resolve @strapi/*
+# from server/node_modules.
 #
 # Caching keys on every lockfile, so a change in any package busts it.
 name: ci
@@ -28,6 +31,7 @@ jobs:
           cache-dependency-path: |
             yarn.lock
             server/yarn.lock
+            server/src/plugins/yt-kb/yarn.lock
             client/yarn.lock
             site/yarn.lock
 
@@ -35,15 +39,34 @@ jobs:
         run: yarn install:all
 
       # Typecheck is per-package: each has its own tsconfig and there is no
-      # project-wide script. The client is the one with real coverage; the
-      # server's is thinner but catches Strapi API drift across upgrades.
+      # project-wide script.
       - name: Typecheck client
         run: npx tsc --noEmit
         working-directory: client
 
+      # server/tsconfig.json excludes src/plugins/, so this covers the host
+      # app only. The plugin has its own steps below.
       - name: Typecheck server
         run: npx tsc --noEmit
         working-directory: server
+
+      # test:ts:back is `tsc -p server/tsconfig.json --noEmit --incremental false`.
+      - name: Typecheck plugin
+        run: yarn test:ts:back
+        working-directory: server/src/plugins/yt-kb
+
+      - name: Build plugin
+        run: yarn build
+        working-directory: server/src/plugins/yt-kb
+
+      # strapi-plugin verify checks the built package (exports, dist) — after build.
+      - name: Verify plugin
+        run: yarn verify
+        working-directory: server/src/plugins/yt-kb
+
+      - name: Test plugin
+        run: yarn test
+        working-directory: server/src/plugins/yt-kb
 
       # `astro sync` first: tsconfig includes .astro/types.d.ts, which is
       # generated and gitignored, so tsc alone fails on a clean checkout.

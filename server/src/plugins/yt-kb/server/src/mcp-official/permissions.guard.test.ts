@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-// Guards an ordering in the Strapi server that nothing else can catch.
+// Guards an ordering that nothing else can catch.
 //
 // Strapi admin's bootstrap runs cleanPermissionsInDatabase(), which deletes
 // every `admin::permission` row whose action is not registered in the
@@ -12,15 +12,10 @@ import { join } from 'node:path';
 // and turning MCP back on does not bring them back. Measured on a copy of
 // the real database: six grant rows went to zero on a single boot.
 //
-// The server has no test suite (CLAUDE.md), and the failure leaves no trace
-// until someone finds their MCP client has stopped authenticating. This
-// test lives here because `yarn test` is the only suite that runs in CI.
-//
-// Same pattern as bm25-core.sync.test.ts: the client cannot import from the
-// server, so the guard reads the file.
-const REPO_ROOT = join(__dirname, '..', '..', '..', '..');
-const PLUGIN = join(REPO_ROOT, 'server', 'src', 'plugins', 'yt-kb', 'server', 'src');
-const ENTRY = join(PLUGIN, 'mcp-official', 'index.ts');
+// The guard reads the source rather than importing it: the ordering is
+// the thing under test, and importing would need a running Strapi.
+const ENTRY = join(__dirname, 'index.ts');
+const PERMISSIONS = join(__dirname, 'permissions.ts');
 
 describe('MCP admin permission registration', () => {
   const source = readFileSync(ENTRY, 'utf8');
@@ -53,10 +48,7 @@ describe('MCP admin permission registration', () => {
   // one has the same effect as not registering it: the old rows no longer
   // match a registered action and the next boot deletes them.
   it('still registers the three action ids tokens are granted', () => {
-    const permissions = readFileSync(
-      join(PLUGIN, 'mcp-official', 'permissions.ts'),
-      'utf8',
-    );
+    const permissions = readFileSync(PERMISSIONS, 'utf8');
 
     // Registered as plugin::yt-kb.<uid>.
     expect(permissions).toContain("pluginName: 'yt-kb'");

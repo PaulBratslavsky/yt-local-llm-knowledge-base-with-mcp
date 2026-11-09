@@ -5,10 +5,11 @@ import type { Core } from '@strapi/strapi';
 // belongs to Strapi's official MCP server — see ../mcp-official/adapter.ts,
 // which reads these defs and calls `strapi.ai.mcp.registerTool`.
 //
-// The schema is zod 3, from @strapi/utils — the same zod the MCP SDK's
-// schema conversion needs. It used to be zod 4 here and was re-declared in
-// zod 3 in ../mcp-official/tools.ts, which meant every tool had two schemas
-// and only the restated one was enforced at runtime (see docs/mcp.md).
+// The schema uses the zod 4 API from `@strapi/utils` — the same zod the
+// MCP SDK's schema conversion needs. It used to be the app's own zod here
+// and was re-declared with `@strapi/utils`' zod in ../mcp-official/tools.ts,
+// which meant every tool had two schemas and only the restated one was
+// enforced at runtime (see docs/mcp.md).
 //
 // This file used to also hold a `Map` with registerTool/getTools/getTool:
 // the lookup table the retired hand-rolled `/api/mcp` dispatch used to find
