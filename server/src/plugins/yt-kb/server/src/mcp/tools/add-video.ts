@@ -14,8 +14,7 @@
 
 import { z } from '@strapi/utils';
 import type { ToolDef } from '../registry';
-import { findOrCreateTag } from '../../services/tags';
-import { isUniqueViolation, withUniqueRetry } from '../../services/db-errors';
+import { createVideoCard } from '../../services/video-card';
 import { extractYouTubeId } from '../../services/fetcher';
 import { TranscriptFetchError } from '../../services/fetch-errors';
 
@@ -70,48 +69,14 @@ export const addVideoTool: ToolDef<z.infer<typeof schema>> = {
       throw err;
     }
 
-    // Tags and the Video are written together or not at all (M-18). The
-    // YouTube fetch above stays outside: a slow network call must not
-    // hold a transaction open (and on SQLite, the only connection).
-    const createVideo = async () =>
-      (await strapi.db.transaction(async () => {
-        const tagDocumentIds: string[] = [];
-        for (const raw of tags ?? []) {
-          const tag = await findOrCreateTag(strapi, raw);
-          if (tag && !tagDocumentIds.includes(tag.documentId)) tagDocumentIds.push(tag.documentId);
-        }
-        return strapi.documents('plugin::yt-kb.video').create({
-          data: {
-            youtubeVideoId: videoId,
-            url,
-            videoTitle: transcriptRow.title ?? null,
-            videoAuthor: transcriptRow.author ?? null,
-            videoThumbnailUrl: transcriptRow.thumbnailUrl ?? null,
-            caption: caption ?? null,
-            summaryStatus: 'pending',
-            transcript: transcriptRow.documentId,
-            tags: tagDocumentIds,
-          } as never,
-        });
-      })) as { documentId: string };
-
-    let video: { documentId: string };
-    try {
-      video = await withUniqueRetry(createVideo);
-    } catch (err) {
+    // Tags and the Video are written together or not at all (M-18); the
+    // YouTube fetch above stays outside the transaction.
+    const card = await createVideoCard(strapi, { videoId, url, transcript: transcriptRow, caption, tags });
+    if (card.action === 'exists') {
       // Another caller added the same video while this one fetched.
-      if (!isUniqueViolation(err)) throw err;
-      const raced = (await strapi.documents('plugin::yt-kb.video').findFirst({
-        filters: { youtubeVideoId: { $eq: videoId } },
-      })) as { documentId: string } | null;
-      if (!raced) throw err;
-      return {
-        videoId,
-        action: 'exists',
-        videoDocumentId: raced.documentId,
-        message: 'Video already in knowledge base.',
-      };
+      return { videoId, action: 'exists', videoDocumentId: card.documentId, message: 'Video already in knowledge base.' };
     }
+    const video = { documentId: card.documentId };
 
     return {
       videoId,

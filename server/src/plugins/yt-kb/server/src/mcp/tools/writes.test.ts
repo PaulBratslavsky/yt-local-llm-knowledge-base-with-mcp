@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest';
 import type { Core } from '@strapi/strapi';
 import { addVideoTool } from './add-video';
 import { tagVideoTool } from './tags';
+import { fetchTranscriptTool } from './fetch-transcript';
 
 const unique = () => Object.assign(new Error('UNIQUE constraint failed'), { code: 'SQLITE_CONSTRAINT_UNIQUE' });
 
 function fake(opts: { videoCreate?: () => unknown; videoFinds?: Array<unknown> } = {}) {
   const log: string[] = [];
+  const created: unknown[] = [];
   let depth = 0;
   const finds = [...(opts.videoFinds ?? [])];
   const strapi = {
@@ -38,11 +40,11 @@ function fake(opts: { videoCreate?: () => unknown; videoFinds?: Array<unknown> }
         : {
             findFirst: async () => { log.push('video:find'); return finds.shift() ?? null; },
             findOne: async () => null,
-            create: async () => { log.push(`video:create:inTx=${depth > 0}`); return opts.videoCreate ? opts.videoCreate() : { documentId: 'v1' }; },
+            create: async ({ data }: { data: unknown }) => { log.push(`video:create:inTx=${depth > 0}`); created.push(data); return opts.videoCreate ? opts.videoCreate() : { documentId: 'v1' }; },
             update: async ({ data }: { data: unknown }) => { log.push(`video:update:inTx=${depth > 0}:${JSON.stringify(data)}`); return {}; },
           },
   } as unknown as Core.Strapi;
-  return { strapi, log };
+  return { strapi, log, created };
 }
 
 describe('addVideo', () => {
@@ -85,5 +87,42 @@ describe('tagVideo', () => {
       'video:update:inTx=true:{"tags":["t-old","tag-c++","tag-old"]}',
       'tx:end',
     ]);
+  });
+});
+
+describe('fetchTranscript creates the video card', () => {
+  const args = { videoId: 'abcdefghijk', force: false };
+
+  it('creates a pending video linked to the transcript when none exists', async () => {
+    const { strapi, log, created } = fake({ videoFinds: [null] });
+    const out = await fetchTranscriptTool.execute(args, { strapi });
+    expect(out).toMatchObject({ action: 'created', transcriptDocumentId: 't1', videoAction: 'created', videoDocumentId: 'v1' });
+    expect(log).toEqual(['fetch:inTx=false', 'video:find', 'tx:start', 'video:create:inTx=true', 'tx:end']);
+    expect(created[0]).toMatchObject({
+      youtubeVideoId: 'abcdefghijk',
+      url: 'https://www.youtube.com/watch?v=abcdefghijk',
+      videoTitle: 'T',
+      videoAuthor: 'A',
+      summaryStatus: 'pending',
+      transcript: 't1',
+    });
+  });
+
+  it('leaves an existing video alone', async () => {
+    const { strapi, log } = fake({ videoFinds: [{ documentId: 'v-stored' }] });
+    const out = await fetchTranscriptTool.execute(args, { strapi });
+    expect(out).toMatchObject({ videoAction: 'exists', videoDocumentId: 'v-stored' });
+    expect(log.filter((l) => l.startsWith('video:create'))).toHaveLength(0);
+  });
+
+  it('returns exists when another caller created the video meanwhile', async () => {
+    const unique = () => Object.assign(new Error('UNIQUE constraint failed'), { code: 'SQLITE_CONSTRAINT_UNIQUE' });
+    const { strapi } = fake({ videoCreate: () => { throw unique(); }, videoFinds: [null, { documentId: 'v-other' }] });
+    const out = await fetchTranscriptTool.execute(args, { strapi });
+    expect(out).toMatchObject({ videoAction: 'exists', videoDocumentId: 'v-other' });
+  });
+
+  it('says in its description that it adds the video card', () => {
+    expect(fetchTranscriptTool.description).toContain('pending video card');
   });
 });

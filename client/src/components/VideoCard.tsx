@@ -6,6 +6,7 @@ import {
   regenerateVideoSignals,
 } from '#/data/server-functions/videos';
 import { MATCH_TIER_LABEL, type MatchTier } from '#/lib/services/embeddings';
+import { PendingSummary } from './PendingSummary';
 
 const VERDICT_META: Record<
   WatchVerdict,
@@ -29,22 +30,11 @@ const VERDICT_META: Record<
 };
 
 function VerdictBlock({ video }: Readonly<{ video: StrapiVideo }>) {
-  // Pending generation: render a faint placeholder so the card body
-  // doesn't collapse into empty space below the caption while the LLM
-  // works. Cheap visual anchor — disappears the moment the verdict
-  // lands and the real chips render.
+  // No summary yet: a placeholder with a Generate summary link. The card
+  // may be generating (shared in the app) or added from outside it (MCP),
+  // where nothing runs until /learn is opened.
   if (video.summaryStatus === 'pending') {
-    return (
-      <div
-        className="mt-3 flex items-center gap-2 rounded-lg border border-dashed border-[var(--line)] bg-[var(--bg-subtle)]/50 px-3 py-2"
-        aria-hidden="true"
-      >
-        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--ink-muted)]" />
-        <span className="text-xs italic text-[var(--ink-muted)]">
-          Verdict &amp; score appear here once the summary lands.
-        </span>
-      </div>
-    );
+    return <PendingSummary youtubeVideoId={video.youtubeVideoId} />;
   }
   if (!video.watchVerdict || !video.verdictSummary) return null;
   const meta = VERDICT_META[video.watchVerdict];

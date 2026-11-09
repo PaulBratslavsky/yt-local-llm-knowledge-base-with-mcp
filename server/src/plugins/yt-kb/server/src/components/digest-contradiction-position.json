@@ -2,12 +2,12 @@
   "collectionName": "components_ytkb_digest_contradiction_positions",
   "info": {
     "displayName": "Digest Contradiction Position",
-    "description": "One video's stance on a contested topic. Nested under a contradiction component (\u22652 positions per topic)."
+    "description": "One video's stance on a contested topic. Nested under a contradiction component (≥2 positions per topic)."
   },
   "options": {},
   "attributes": {
     "videoTitle": {
-      "type": "string",
+      "type": "text",
       "required": true,
       "maxLength": 300
     },

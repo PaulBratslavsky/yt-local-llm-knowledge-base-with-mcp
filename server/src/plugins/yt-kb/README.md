@@ -194,7 +194,7 @@ token sees and can call only the tools whose permission it holds.
 | `yt_kb__untag_video` | `plugin::yt-kb.tool.untag-video` | Remove tags from a video |
 | `yt_kb__save_note` | `plugin::yt-kb.tool.save-note` | Attach a note to a video |
 | `yt_kb__add_video` | `plugin::yt-kb.tool.add-video` | Add a YouTube URL: creates the video and fetches its transcript (calls YouTube) |
-| `yt_kb__fetch_transcript` | `plugin::yt-kb.tool.fetch-transcript` | Fetch a transcript from YouTube and store it; `force: true` re-fetches (calls YouTube) |
+| `yt_kb__fetch_transcript` | `plugin::yt-kb.tool.fetch-transcript` | Fetch a transcript from YouTube and store it, and add a pending video card to the library if the video isn't there yet (the app generates its summary); `force: true` re-fetches (calls YouTube) |
 
 In the admin panel the permissions are under the plugin's **AI tools**
 group, one per tool (for example "Get video").

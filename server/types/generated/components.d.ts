@@ -58,7 +58,7 @@ export interface YtkbDigestContradictionPosition
       Schema.Attribute.SetMinMaxLength<{
         maxLength: 400;
       }>;
-    videoTitle: Schema.Attribute.String &
+    videoTitle: Schema.Attribute.Text &
       Schema.Attribute.Required &
       Schema.Attribute.SetMinMaxLength<{
         maxLength: 300;
@@ -99,7 +99,7 @@ export interface YtkbDigestUniqueInsight extends Struct.ComponentSchema {
       Schema.Attribute.SetMinMaxLength<{
         maxLength: 600;
       }>;
-    videoTitle: Schema.Attribute.String &
+    videoTitle: Schema.Attribute.Text &
       Schema.Attribute.Required &
       Schema.Attribute.SetMinMaxLength<{
         maxLength: 300;
@@ -114,7 +114,7 @@ export interface YtkbDigestVideoTitle extends Struct.ComponentSchema {
     displayName: 'Digest Video Title';
   };
   attributes: {
-    title: Schema.Attribute.String &
+    title: Schema.Attribute.Text &
       Schema.Attribute.Required &
       Schema.Attribute.SetMinMaxLength<{
         maxLength: 300;
@@ -129,7 +129,7 @@ export interface YtkbDigestViewingOrder extends Struct.ComponentSchema {
     displayName: 'Digest Viewing Order';
   };
   attributes: {
-    videoTitle: Schema.Attribute.String &
+    videoTitle: Schema.Attribute.Text &
       Schema.Attribute.Required &
       Schema.Attribute.SetMinMaxLength<{
         maxLength: 300;
@@ -176,7 +176,7 @@ export interface YtkbTakeaway extends Struct.ComponentSchema {
     displayName: 'Takeaway';
   };
   attributes: {
-    text: Schema.Attribute.String &
+    text: Schema.Attribute.Text &
       Schema.Attribute.Required &
       Schema.Attribute.SetMinMaxLength<{
         maxLength: 280;

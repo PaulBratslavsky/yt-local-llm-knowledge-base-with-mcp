@@ -152,7 +152,7 @@ migration maps it from.
 | `yt_kb__untag_video` | `plugin::yt-kb.tool.untag-video` | write | Remove tags from a video |
 | `yt_kb__save_note` | `plugin::yt-kb.tool.save-note` | write | Attach a short note to a video |
 | `yt_kb__add_video` | `plugin::yt-kb.tool.add-video` | maintenance | Ingest a YouTube URL (creates Video + fetches transcript) |
-| `yt_kb__fetch_transcript` | `plugin::yt-kb.tool.fetch-transcript` | maintenance | Fetch from YouTube + upsert; acts as "regenerate" with `force=true`. A failed fetch returns `{ error, reason }` (`invalid_id`, `unavailable`, `no_captions`, `blocked`, `rate_limited`, `network`) |
+| `yt_kb__fetch_transcript` | `plugin::yt-kb.tool.fetch-transcript` | maintenance | Fetch from YouTube + upsert, and add a pending video card if the video isn't in the library yet (the app's Generate summary button, or opening `/learn/<id>`, writes the summary); acts as "regenerate" with `force=true`. A failed fetch returns `{ error, reason }` (`invalid_id`, `unavailable`, `no_captions`, `blocked`, `rate_limited`, `network`) |
 
 Titles follow the same scheme, e.g. `YT Knowledge Base: Get Video`. The tool
 descriptions still mention each other by their camelCase base names (the

@@ -7,7 +7,7 @@
   "options": {},
   "attributes": {
     "videoTitle": {
-      "type": "string",
+      "type": "text",
       "required": true,
       "maxLength": 300
     },
