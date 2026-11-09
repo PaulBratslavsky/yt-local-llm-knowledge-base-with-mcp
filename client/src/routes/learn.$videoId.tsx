@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createFileRoute, useRouter } from '@tanstack/react-router';
 import { BackendErrorPanel } from '#/components/BackendErrorPanel';
 import { Button } from '#/components/ui/button';
@@ -17,6 +17,8 @@ import { TranscriptPane } from '#/components/TranscriptPane';
 import { PlayerProvider, YouTubePlayer } from '#/components/player';
 import { RelatedVideos } from '#/components/RelatedVideos';
 import { GenerationModeSelect } from '#/components/GenerationModeSelect';
+import { usePollingInvalidation } from '#/lib/hooks/use-polling-invalidation';
+import { useAsyncAction } from '#/lib/hooks/use-async-action';
 import {
   clearSummaryFailure,
   getEmbeddingStatus,
@@ -87,6 +89,8 @@ const LearnSearchSchema = z.object({
 
 export const Route = createFileRoute('/learn/$videoId')({
   validateSearch: LearnSearchSchema,
+  // Loader starts Ollama work (generation trigger / digest synthesis): never on hover (M-15).
+  preload: false,
   loader: async ({ params }): Promise<LoaderData> => {
     const lookup = await getVideoByVideoId({ data: { videoId: params.videoId } });
     if (lookup.error) return { status: 'backend-error', error: lookup.error };
@@ -123,58 +127,11 @@ export const Route = createFileRoute('/learn/$videoId')({
   },
 });
 
-// Poll the loader while generation is pending. Long videos doing
-// map-reduce summaries can run 5–10 min, so the cap has to exceed that or
-// the UI freezes mid-run as polling dies. Also invalidates when the tab
-// regains focus — tabbing back triggers an immediate refresh instead of
-// waiting for the next interval tick.
-function usePollingInvalidation(active: boolean) {
-  const router = useRouter();
-  const attemptsRef = useRef(0);
-
-  useEffect(() => {
-    if (!active) {
-      attemptsRef.current = 0;
-      return;
-    }
-
-    // 200 attempts × 3s = 10 min. Beyond that something is genuinely
-    // wrong and the user should use "Force retry" rather than wait.
-    const MAX_ATTEMPTS = 200;
-
-    const id = window.setInterval(() => {
-      attemptsRef.current += 1;
-      if (attemptsRef.current > MAX_ATTEMPTS) {
-        window.clearInterval(id);
-        return;
-      }
-      void router.invalidate();
-    }, 3000);
-
-    const onVisibility = () => {
-      if (document.visibilityState === 'visible') {
-        void router.invalidate();
-      }
-    };
-    const onFocus = () => {
-      void router.invalidate();
-    };
-    document.addEventListener('visibilitychange', onVisibility);
-    window.addEventListener('focus', onFocus);
-
-    return () => {
-      window.clearInterval(id);
-      document.removeEventListener('visibilitychange', onVisibility);
-      window.removeEventListener('focus', onFocus);
-    };
-  }, [active, router]);
-}
-
 function LearnPage() {
   const data = Route.useLoaderData();
   const { videoId } = Route.useParams();
 
-  usePollingInvalidation(data.status === 'pending');
+  const { capReached } = usePollingInvalidation(data.status === 'pending', { refreshOnFocus: true });
 
   if (data.status === 'backend-error') {
     return (
@@ -185,7 +142,7 @@ function LearnPage() {
   }
   if (data.status === 'unshared') return <UnsharedState videoId={videoId} />;
   if (data.status === 'pending')
-    return <PendingState videoId={videoId} progress={data.progress} />;
+    return <PendingState videoId={videoId} progress={data.progress} pollStopped={capReached} />;
   if (data.status === 'failed') return <FailedState video={data.video} error={data.error} />;
   return <SummaryView video={data.video} videoId={videoId} />;
 }
@@ -581,18 +538,18 @@ function VerdictBlock({ video }: Readonly<{ video: StrapiVideo }>) {
 function PendingState({
   videoId,
   progress,
-}: Readonly<{ videoId: string; progress: GenerationProgress }>) {
+  pollStopped,
+}: Readonly<{ videoId: string; progress: GenerationProgress; pollStopped: boolean }>) {
   const router = useRouter();
-  const [retrying, setRetrying] = useState(false);
   const [retryMode, setRetryMode] = useState<GenerationMode>('auto');
 
-  const handleForceRetry = async () => {
-    setRetrying(true);
-    await clearSummaryFailure({ data: { videoId } });
-    await triggerSummaryGeneration({ data: { videoId, mode: retryMode } });
-    await router.invalidate();
-    setRetrying(false);
-  };
+  const retry = useAsyncAction();
+  const handleForceRetry = () =>
+    retry.run(async () => {
+      await clearSummaryFailure({ data: { videoId } });
+      await triggerSummaryGeneration({ data: { videoId, mode: retryMode } });
+      await router.invalidate();
+    });
 
   const currentIndex = progress.step
     ? STEPS.findIndex((s) => s.key === progress.step)
@@ -686,6 +643,16 @@ function PendingState({
           })}
         </ol>
 
+        {pollStopped && (
+          <p
+            role="status"
+            className="mt-6 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400"
+          >
+            Still generating after 10 minutes, so this page has stopped checking. Use
+            Force retry below if the job is stuck, or reload the page to check again.
+          </p>
+        )}
+
         <div className="mt-6 border-t border-[var(--line)] pt-4">
           <p className="text-xs text-[var(--ink-muted)]">
             Stuck? The background job may have crashed.
@@ -693,7 +660,7 @@ function PendingState({
           <GenerationModeSelect
             value={retryMode}
             onChange={setRetryMode}
-            disabled={retrying}
+            disabled={retry.running}
             id="force-retry-mode"
             className="mt-3 sm:max-w-sm"
             trailing={
@@ -702,13 +669,14 @@ function PendingState({
                 size="pill"
                 variant="outline"
                 onClick={handleForceRetry}
-                disabled={retrying}
+                disabled={retry.running}
                 className="shrink-0"
               >
-                {retrying ? 'Retrying…' : 'Force retry'}
+                {retry.running ? 'Retrying…' : 'Force retry'}
               </Button>
             }
           />
+          {retry.error && <p role="alert" className="mt-2 text-xs text-destructive">{retry.error}</p>}
         </div>
       </div>
     </main>
@@ -756,22 +724,21 @@ function FailedState({
   error,
 }: Readonly<{ video: StrapiVideo; error?: string }>) {
   const router = useRouter();
-  const [retrying, setRetrying] = useState(false);
 
-  const handleRetry = async () => {
-    setRetrying(true);
-    // Use `regenerateSummary` (not `triggerSummaryGeneration`) here — the
-    // latter doesn't flip the DB row from `failed` → `pending`, so the
-    // loader keeps seeing `failed` on `router.invalidate()` and re-renders
-    // this same FailedState screen indefinitely (background job runs but
-    // the UI never sees it because FailedState doesn't poll). Regenerate
-    // does the flip in its `beforeStart` hook + clears the recent-failure
-    // marker, so the next loader run sees `pending` and the polling UI
-    // takes over correctly.
-    await regenerateSummary({ data: { videoId: video.youtubeVideoId } });
-    await router.invalidate();
-    setRetrying(false);
-  };
+  const retry = useAsyncAction();
+  const handleRetry = () =>
+    retry.run(async () => {
+      // Use `regenerateSummary` (not `triggerSummaryGeneration`) here — the
+      // latter doesn't flip the DB row from `failed` → `pending`, so the
+      // loader keeps seeing `failed` on `router.invalidate()` and re-renders
+      // this same FailedState screen indefinitely (background job runs but
+      // the UI never sees it because FailedState doesn't poll). Regenerate
+      // does the flip in its `beforeStart` hook + clears the recent-failure
+      // marker, so the next loader run sees `pending` and the polling UI
+      // takes over correctly.
+      await regenerateSummary({ data: { videoId: video.youtubeVideoId } });
+      await router.invalidate();
+    });
 
   return (
     <main className="page-wrap flex min-h-[60vh] items-center justify-center px-4 py-14">
@@ -787,10 +754,11 @@ function FailedState({
           </p>
         )}
         <div className="mt-6 flex justify-center gap-2">
-          <Button type="button" size="pill" onClick={handleRetry} disabled={retrying}>
-            {retrying ? 'Retrying…' : 'Retry'}
+          <Button type="button" size="pill" onClick={handleRetry} disabled={retry.running}>
+            {retry.running ? 'Retrying…' : 'Retry'}
           </Button>
         </div>
+        {retry.error && <p role="alert" className="mt-3 text-xs text-destructive">{retry.error}</p>}
       </div>
     </main>
   );
@@ -822,9 +790,7 @@ function UnsharedState({ videoId }: Readonly<{ videoId: string }>) {
   );
 }
 
-// Topical embedding status + regenerate affordance. Uses `summaryEmbedding`/
-// `embeddingModel`/`embeddingVersion` from the already-loaded Video row — no
-// separate fetch needed to decide which label to show.
+// Topical embedding status + regenerate affordance. Reads embeddingModel / embeddingVersion / embeddingGeneratedAt from the loaded row; the vector itself never reaches the browser (M-8).
 function EmbeddingPanel({ video }: Readonly<{ video: StrapiVideo }>) {
   const router = useRouter();
   const [running, setRunning] = useState(false);
@@ -852,7 +818,7 @@ function EmbeddingPanel({ video }: Readonly<{ video: StrapiVideo }>) {
   const status: VideoEmbeddingStatus =
     remote && remote.status !== 'error'
       ? remote.status
-      : video.summaryEmbedding && video.summaryEmbedding.length > 0
+      : video.embeddingGeneratedAt
         ? 'current'
         : 'missing';
 

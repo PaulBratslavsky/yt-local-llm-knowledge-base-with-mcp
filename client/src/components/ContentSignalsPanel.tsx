@@ -36,6 +36,7 @@ export function ContentSignalsPanel() {
   const router = useRouter();
 
   const [missing, setMissing] = useState<number | null>(null);
+  const [countError, setCountError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshMessage, setRefreshMessage] = useState<string | null>(null);
 
@@ -44,6 +45,7 @@ export function ContentSignalsPanel() {
     | { kind: 'running'; current: number; total: number; lastVideo: string | null }
     | { kind: 'done'; ok: number; failed: number; total: number }
     | { kind: 'cancelled'; ok: number; failed: number; total: number }
+    | { kind: 'error'; message: string }
   >({ kind: 'idle' });
   // Two halves of the same flag, deliberately. The state drives the button
   // label; the ref is what the running loop reads. State alone cannot work:
@@ -59,13 +61,16 @@ export function ContentSignalsPanel() {
   const [aiVisible, setAiVisible] = useState(false);
 
   const refresh = async () => {
-    // "Missing" = at least one of the two inputs to finalScore is
-    // unfilled. After clicking Refresh, the count drops to 0.
-    const [s, f] = await Promise.all([
-      countMissingSignalScores(),
-      countMissingFinalScores(),
-    ]);
-    setMissing((s.missing ?? 0) + (f.missing ?? 0));
+    setCountError(null);
+    const [s, f] = await Promise.all([countMissingSignalScores(), countMissingFinalScores()]);
+    const error = s.error ?? f.error ?? null;
+    if (error) {
+      // M-13: an unreadable library used to read as "All videos have current scores."
+      setMissing(null);
+      setCountError(error);
+      return;
+    }
+    setMissing(s.missing + f.missing);
   };
 
   useEffect(() => {
@@ -79,18 +84,29 @@ export function ContentSignalsPanel() {
     try {
       const sig = await backfillSignalScores();
       const fin = await backfillFinalScores();
+      const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
       const parts: string[] = [];
-      if (sig.updated > 0) {
-        parts.push(`${sig.updated} signal${sig.updated === 1 ? '' : 's'}`);
+      if (sig.updated > 0) parts.push(`${sig.updated} ${plural(sig.updated, 'signal score', 'signal scores')}`);
+      if (fin.updated > 0) parts.push(`${fin.updated} ${plural(fin.updated, 'final score', 'final scores')}`);
+      const notes: string[] = [];
+      if (sig.skipped > 0) {
+        notes.push(
+          `${sig.skipped} ${plural(sig.skipped, 'video', 'videos')} skipped — no cached transcript; run a full Regenerate on ${plural(sig.skipped, 'it', 'them')}.`,
+        );
       }
-      if (fin.updated > 0) {
-        parts.push(`${fin.updated} final score${fin.updated === 1 ? '' : 's'}`);
+      const failed = sig.failed + fin.failed;
+      if (failed > 0) {
+        notes.push(`${failed} ${plural(failed, 'write', 'writes')} failed (first: ${[...sig.errors, ...fin.errors][0]}).`);
       }
-      setRefreshMessage(
-        parts.length === 0
-          ? 'Nothing to update — every video already has scores.'
-          : `Updated ${parts.join(' + ')}.`,
-      );
+      if (sig.status === 'error') notes.push(`Signal scores stopped early: ${sig.error}`);
+      if (fin.status === 'error') notes.push(`Final scores stopped early: ${fin.error}`);
+      const head =
+        parts.length > 0
+          ? `Updated ${parts.join(' + ')}.`
+          : notes.length > 0
+            ? 'Nothing was updated.'
+            : 'Nothing to update — every video already has scores.';
+      setRefreshMessage([head, ...notes].join(' '));
       await refresh();
       await router.invalidate();
     } catch (err) {
@@ -105,7 +121,13 @@ export function ContentSignalsPanel() {
     aiCancelRef.current = false;
     setAiCancelRequested(false);
 
-    const videos = await listRegenerableVideos();
+    const listed = await listRegenerableVideos();
+    if (listed.status === 'error') {
+      // M-13: a failed read used to start a re-rate over part of the library.
+      setAiState({ kind: 'error', message: listed.error });
+      return;
+    }
+    const videos = listed.videos;
     if (videos.length === 0) {
       setAiState({ kind: 'done', ok: 0, failed: 0, total: 0 });
       return;
@@ -165,10 +187,18 @@ export function ContentSignalsPanel() {
             Recomputes scores for every video that&apos;s missing one. Fast
             (~50ms per video), no AI calls.
           </p>
-          {missing === null && (
+          {missing === null && !countError && (
             <p className="mt-1 text-xs italic text-[var(--ink-muted)]">
               Checking library…
             </p>
+          )}
+          {countError && (
+            <div role="alert" className="mt-1 flex flex-wrap items-center gap-2 text-xs text-amber-700 dark:text-amber-400">
+              <span>Couldn&apos;t check the library: {countError}</span>
+              <button type="button" onClick={() => void refresh()} className="underline underline-offset-2">
+                Retry
+              </button>
+            </div>
           )}
           {missing !== null && missing > 0 && (
             <p className="mt-1 text-xs text-[var(--ink)]">
@@ -239,6 +269,11 @@ export function ContentSignalsPanel() {
                   <p className="mt-1 text-xs text-[var(--ink-muted)]">
                     Cancelled. {aiState.ok} updated, {aiState.failed} failed
                     before stop.
+                  </p>
+                )}
+                {aiState.kind === 'error' && (
+                  <p role="alert" className="mt-1 text-xs text-destructive">
+                    Couldn&apos;t list the videos to re-rate: {aiState.message}
                   </p>
                 )}
               </div>

@@ -1,9 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   buildQueryParams,
+  isUniqueViolation,
+  seg,
   strapiFetch,
   type StrapiQuery,
+  type StrapiResult,
 } from './strapi-client';
+import { deleteNoteService } from './notes';
 
 // Helper: decode a URLSearchParams-built string into a sorted, decoded
 // list of `key=value` lines so test assertions can match the actual
@@ -310,5 +314,103 @@ describe('strapiFetch', () => {
     );
     const result = await strapiFetch('POST', '/api/yt-kb/transcripts/fetch', { body: {} });
     expect(result).toEqual({ ok: false, status: 404, error: 'm', details: { reason: 'no_captions' } });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M6 — path segments (B-1), timeouts (M-4), offset pagination (M-13),
+// duplicate detection (B-2)
+// ---------------------------------------------------------------------------
+
+describe('seg', () => {
+  it('encodes separators so an id cannot leave its path segment', () => {
+    expect(seg('../../users/1')).toBe('..%2F..%2Fusers%2F1');
+    expect(seg('a/b?c#d')).toBe('a%2Fb%3Fc%23d');
+    expect(seg('k3x9q2m8v7b6n5c4z1a0s2d3')).toBe('k3x9q2m8v7b6n5c4z1a0s2d3');
+  });
+
+  it('refuses the dot segments and the empty segment', () => {
+    expect(() => seg('..')).toThrow();
+    expect(() => seg('.')).toThrow();
+    expect(() => seg('')).toThrow();
+  });
+
+  it('keeps a traversal id inside the path once a URL resolves it', () => {
+    expect(new URL('http://h/api/yt-kb/notes/' + seg('../../users/1')).pathname).toBe(
+      '/api/yt-kb/notes/..%2F..%2Fusers%2F1',
+    );
+  });
+});
+
+describe('strapiFetch timeouts', () => {
+  it('passes a 30 s timeout signal by default', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { data: [] }));
+    await strapiFetch('GET', '/api/videos');
+    expect(timeout).toHaveBeenCalledWith(30000);
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('honours timeoutMs', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { data: [] }));
+    await strapiFetch('GET', '/api/videos', { timeoutMs: 5 });
+    expect(timeout).toHaveBeenCalledWith(5);
+  });
+
+  it('reports a timeout as a network failure with a readable message', async () => {
+    fetchMock.mockRejectedValueOnce(
+      new DOMException('The operation was aborted due to timeout', 'TimeoutError'),
+    );
+    const result = await strapiFetch('GET', '/api/videos');
+    expect(result).toEqual({ ok: false, status: 0, error: 'Strapi did not respond within 30 s.' });
+  });
+
+  it('returns ok:false instead of throwing when a 200 body fails to stream', async () => {
+    const body = new ReadableStream({
+      start(controller) {
+        controller.error(new Error('body aborted'));
+      },
+    });
+    fetchMock.mockResolvedValueOnce(new Response(body, { status: 200 }));
+    const result = await strapiFetch('GET', '/api/videos');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.status).toBe(0);
+  });
+});
+
+describe('buildQueryParams offset pagination', () => {
+  it('emits start, limit and withCount', () => {
+    expect(
+      decode(buildQueryParams({ pagination: { start: 50, limit: 25, withCount: true } })),
+    ).toEqual(['pagination[limit]=25', 'pagination[start]=50', 'pagination[withCount]=true']);
+  });
+});
+
+describe('isUniqueViolation', () => {
+  const cases: Array<[StrapiResult<unknown>, boolean]> = [
+    [{ ok: false, status: 400, error: 'This attribute must be unique' }, true],
+    [{ ok: false, status: 400, error: 'A video for this id already exists. documentId=x' }, true],
+    [{ ok: false, status: 400, error: 'Duplicate', details: { code: 'YT_KB_UNIQUE' } }, true],
+    [{ ok: false, status: 500, error: 'Internal Server Error' }, false],
+    [{ ok: false, status: 400, error: 'Title is required' }, false],
+    [{ ok: false, status: 403, error: 'Forbidden' }, false],
+    [{ ok: false, status: 0, error: 'ECONNREFUSED' }, false],
+    [{ ok: true, data: null }, false],
+  ];
+  it.each(cases)('%j → %s', (result, expected) => {
+    expect(isUniqueViolation(result)).toBe(expected);
+  });
+});
+
+describe('B-1 negative: a traversal documentId stays on its route', () => {
+  it('deleteNoteService sends one request to the notes route, none to /api/users', async () => {
+    fetchMock.mockResolvedValue(emptyResponse(404));
+    await deleteNoteService('../../users/1');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const url = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(url.pathname).toBe('/api/yt-kb/notes/..%2F..%2Fusers%2F1');
+    expect(url.pathname.startsWith('/api/users')).toBe(false);
   });
 });

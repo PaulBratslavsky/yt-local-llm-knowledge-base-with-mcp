@@ -48,6 +48,22 @@ export const CreateVideoInputSchema = z.object({
 export type CreateVideoInput = z.infer<typeof CreateVideoInputSchema>;
 
 // =============================================================================
+// Identifiers that reach Strapi paths
+// =============================================================================
+
+/** A Strapi 5 documentId: 24 lowercase letters and digits (cuid2, as
+ *  `@strapi/core` generates it). Every documentId a server function accepts
+ *  is validated with this before it can reach a Strapi path (B-1). */
+export const DOCUMENT_ID = z.string().regex(/^[a-z0-9]{24}$/, 'Invalid documentId');
+
+/** An id that may be either a YouTube video id or a documentId — the digest
+ *  and chat-to-note paths accept both and try the YouTube id first. Letters,
+ *  digits, `_` and `-` only, so it can never carry a path separator or a dot
+ *  segment. A documentId inside it is still checked with DOCUMENT_ID before
+ *  it is used in a path. */
+export const VIDEO_REF = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/, 'Invalid video id');
+
+// =============================================================================
 // URL helpers
 // =============================================================================
 
@@ -87,12 +103,19 @@ export function extractYouTubeVideoId(input: string): string | null {
   }
 }
 
+/** Same rule as the plugin's normalizeTagName (PSRC/document-rules.ts):
+ *  trim, lowercase, collapse whitespace. Every tag lookup and create in the
+ *  app goes through it, so a lookup finds what a create stored (M-12). */
+export function normalizeTagName(name: string): string {
+  return name.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
 // Normalize a comma-separated tag input into an array of lowercase-trimmed
 // unique tag names. Drops empties. Caps at 8 to keep UIs sane.
 export function parseTagInput(raw: string): string[] {
   const parts = raw
     .split(',')
-    .map((s) => s.trim().toLowerCase().replace(/\s+/g, ' '))
+    .map((s) => normalizeTagName(s))
     .filter((s) => s.length > 0 && s.length <= 40);
   const seen = new Set<string>();
   const out: string[] = [];

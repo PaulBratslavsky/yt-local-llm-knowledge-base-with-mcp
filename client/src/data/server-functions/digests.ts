@@ -23,6 +23,7 @@ import {
   stripVideoForClient,
   type StrapiVideo,
 } from '#/lib/services/videos';
+import { DOCUMENT_ID, VIDEO_REF } from '#/lib/validations/post';
 
 // =============================================================================
 // Save a digest — persists the structured data + optional article variant.
@@ -92,8 +93,8 @@ export const saveDigest = createServerFn({ method: 'POST' })
 // that called `generateDigest` unconditionally.
 // =============================================================================
 
-const LoadDigestSchema = z.object({
-  videoIds: z.array(z.string().min(1).max(64)).min(2).max(5),
+export const LoadDigestSchema = z.object({
+  videoIds: z.array(VIDEO_REF).min(2).max(5),
 });
 
 export type LoadDigestResult =
@@ -121,6 +122,7 @@ async function resolveVideo(id: string): Promise<VideoResolution> {
   if (byVid.error) return { kind: 'backend-error', error: byVid.error };
   if (byVid.video) return { kind: 'found', video: byVid.video };
 
+  if (!DOCUMENT_ID.safeParse(id).success) return { kind: 'missing' };
   const byDoc = await fetchVideoByDocumentIdWithStatusService(id);
   if (byDoc.error) return { kind: 'backend-error', error: byDoc.error };
   if (byDoc.video) return { kind: 'found', video: byDoc.video };
@@ -233,8 +235,8 @@ export const listSavedDigests = createServerFn({ method: 'GET' })
 // Fetch a single saved digest by documentId — hydrates the structured view.
 // =============================================================================
 
-const FetchSavedDigestSchema = z.object({
-  documentId: z.string().min(1).max(64),
+export const FetchSavedDigestSchema = z.object({
+  documentId: DOCUMENT_ID,
 });
 
 export type FetchSavedDigestResult =
@@ -255,8 +257,8 @@ export const fetchSavedDigest = createServerFn({ method: 'GET' })
 // Delete a saved digest. No undo — Strapi doesn't preserve tombstones.
 // =============================================================================
 
-const DeleteSavedDigestSchema = z.object({
-  documentId: z.string().min(1).max(64),
+export const DeleteSavedDigestSchema = z.object({
+  documentId: DOCUMENT_ID,
 });
 
 export const deleteSavedDigest = createServerFn({ method: 'POST' })

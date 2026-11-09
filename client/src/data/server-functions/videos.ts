@@ -42,6 +42,8 @@ import {
   videoIndexStatus,
 } from '#/lib/services/transcript-index';
 import { strapiFetch } from '#/lib/services/strapi-client';
+import { runBackfill, type BackfillRunResult } from '#/lib/services/backfill';
+import { friendlyBackendError } from '#/lib/services/backend-errors';
 import {
   capPerVideo,
   flattenPassages,
@@ -84,6 +86,7 @@ import {
 } from '#/lib/services/transcript';
 import {
   CreateVideoInputSchema,
+  DOCUMENT_ID,
   GenerationModeSchema,
   extractYouTubeVideoId,
   parseTagInput,
@@ -121,7 +124,7 @@ const VideoIdSchema = z.object({
     .regex(/^[\w-]+$/, 'Invalid video id'),
 });
 
-const DocumentIdSchema = z.object({ documentId: z.string().min(1) });
+export const DocumentIdSchema = z.object({ documentId: DOCUMENT_ID });
 
 // Route loaders need to distinguish "video doesn't exist" from "backend
 // is down" so they can render distinct UI. The two `*WithStatus`
@@ -277,8 +280,8 @@ export const triggerSummaryGeneration = createServerFn({ method: 'POST' })
 // Manually override a section's timecode — the escape hatch for AI drift
 // that BM25 grounding doesn't fix. Scoped to the single section so edits
 // don't race against other summary updates.
-const UpdateSectionTimecodeSchema = z.object({
-  documentId: z.string().min(1),
+export const UpdateSectionTimecodeSchema = z.object({
+  documentId: DOCUMENT_ID,
   sectionId: z.number().int().nonnegative(),
   timeSec: z.number().int().min(0).max(24 * 3600), // sanity: <= 24h
 });
@@ -1033,15 +1036,7 @@ export const semanticSearchVideos = createServerFn({ method: 'GET' })
       .filter((x) => x.cosineScore >= minScore)
       .slice(0, limit)
       .map(({ index, cosineScore }) => ({
-        // Strip server-only heavy fields before crossing the seroval
-        // boundary: the BM25 token tables (transcriptSegments) and the
-        // 768-d vectors (summaryEmbedding) are pure server retrieval
-        // state and never read by the UI.
-        video: {
-          ...candidates[index],
-          summaryEmbedding: null,
-          transcriptSegments: null,
-        },
+        video: stripVideoForClient(candidates[index])!,
         score: cosineScore,
       }));
 
@@ -1410,16 +1405,14 @@ export const searchTags = createServerFn({ method: 'GET' })
 // rows generated before the `valueScore` field existed.
 // =============================================================================
 
-export type BackfillValueScoresResult = {
-  status: 'ok';
-  /** How many rows were updated this run. */
-  updated: number;
-  /** How many rows were eligible (had watchVerdict, no valueScore). */
-  total: number;
-};
+export type BackfillValueScoresResult = BackfillRunResult;
+
+/** A missing-row count, or why it couldn't be read. `missing` is 0 when
+ *  `error` is set and must not be shown as "all done" (M-13). */
+export type MissingCount = { missing: number; error?: string };
 
 export const countMissingValueScores = createServerFn({ method: 'GET' })
-  .handler(async (): Promise<{ missing: number }> => {
+  .handler(async (): Promise<MissingCount> => {
     const result = await strapiFetch<StrapiVideo[]>('GET', '/api/yt-kb/videos', {
       query: {
         filters: {
@@ -1431,51 +1424,40 @@ export const countMissingValueScores = createServerFn({ method: 'GET' })
         pagination: { page: 1, pageSize: 1, withCount: true },
       },
     });
-    if (!result.ok) return { missing: 0 };
+    if (!result.ok) return { missing: 0, error: friendlyBackendError(result.status, result.error) };
     return { missing: result.meta?.pagination?.total ?? 0 };
   });
 
 export const backfillValueScores = createServerFn({ method: 'POST' })
-  .handler(async (): Promise<BackfillValueScoresResult> => {
-    let updated = 0;
-    let total = 0;
-    // Page through all eligible rows. Cap at 50 pages × 100 rows = 5,000
-    // videos as a safety belt against an unbounded loop.
-    const PAGE_SIZE = 100;
-    for (let page = 1; page <= 50; page += 1) {
-      const result = await strapiFetch<StrapiVideo[]>('GET', '/api/yt-kb/videos', {
-        query: {
-          filters: {
-            watchVerdict: { $notNull: true },
-            valueScore: { $null: true },
+  .handler(async (): Promise<BackfillRunResult> =>
+    runBackfill<StrapiVideo>({
+      pageSize: 100,
+      readPage: (start, limit) =>
+        strapiFetch<StrapiVideo[]>('GET', '/api/yt-kb/videos', {
+          query: {
+            filters: { watchVerdict: { $notNull: true }, valueScore: { $null: true } },
+            // signalScore too: finalScore blends it (it was missing here, so
+            // the backfilled finalScore ignored the signal score).
+            fields: ['watchVerdict', 'signalScore'],
+            sort: 'id:asc',
+            pagination: { start, limit, withCount: true },
           },
-          fields: ['documentId', 'watchVerdict'],
-          pagination: { page, pageSize: PAGE_SIZE, withCount: true },
-        },
-      });
-      if (!result.ok) break;
-      const rows = result.data ?? [];
-      total = result.meta?.pagination?.total ?? total;
-      if (rows.length === 0) break;
-      for (const row of rows) {
-        if (!row.watchVerdict || !row.documentId) continue;
+        }),
+      process: async (row) => {
+        if (!row.watchVerdict) return 'skipped';
         const score = backfillScoreFromVerdict(row.watchVerdict);
         const finalScore = computeFinalScore(score, row.signalScore) ?? score;
-        // Tagged 'derived' so UI surfaces can treat this as a "needs
-        // upgrade" placeholder rather than a real model score.
+        // 'derived' so UI surfaces can treat it as a placeholder.
         const write = await updateVideoValueScoreService({
           documentId: row.documentId,
           valueScore: score,
           valueScoreSource: 'derived',
           finalScore,
         });
-        if (write.success) updated += 1;
-      }
-      const pageCount = result.meta?.pagination?.pageCount ?? 1;
-      if (page >= pageCount) break;
-    }
-    return { status: 'ok', updated, total };
-  });
+        return write.success ? 'updated' : { failed: write.error };
+      },
+    }),
+  );
 
 // =============================================================================
 // AI verdict regeneration
@@ -1546,8 +1528,14 @@ export type RegenerableVideo = {
   videoTitle: string | null;
 };
 
+/** Every generated video, or why the list could not be read. Never a
+ *  partial list (M-13). */
+export type RegenerableVideosResult =
+  | { status: 'ok'; videos: RegenerableVideo[] }
+  | { status: 'error'; error: string };
+
 export const listRegenerableVideos = createServerFn({ method: 'GET' })
-  .handler(async (): Promise<RegenerableVideo[]> => {
+  .handler(async (): Promise<RegenerableVideosResult> => {
     const out: RegenerableVideo[] = [];
     const PAGE_SIZE = 100;
     for (let page = 1; page <= 50; page += 1) {
@@ -1559,21 +1547,20 @@ export const listRegenerableVideos = createServerFn({ method: 'GET' })
           pagination: { page, pageSize: PAGE_SIZE, withCount: true },
         },
       });
-      if (!result.ok) break;
+      if (!result.ok) {
+        return { status: 'error', error: friendlyBackendError(result.status, result.error) };
+      }
       const rows = result.data ?? [];
       if (rows.length === 0) break;
       for (const row of rows) {
         if (row.youtubeVideoId) {
-          out.push({
-            videoId: row.youtubeVideoId,
-            videoTitle: row.videoTitle ?? null,
-          });
+          out.push({ videoId: row.youtubeVideoId, videoTitle: row.videoTitle ?? null });
         }
       }
       const pageCount = result.meta?.pagination?.pageCount ?? 1;
       if (page >= pageCount) break;
     }
-    return out;
+    return { status: 'ok', videos: out };
   });
 
 // =============================================================================
@@ -1596,7 +1583,7 @@ type StrapiVideoWithTranscript = StrapiVideo & {
 };
 
 export const countMissingSignalScores = createServerFn({ method: 'GET' })
-  .handler(async (): Promise<{ missing: number }> => {
+  .handler(async (): Promise<MissingCount> => {
     const result = await strapiFetch<StrapiVideo[]>('GET', '/api/yt-kb/videos', {
       query: {
         filters: {
@@ -1607,16 +1594,11 @@ export const countMissingSignalScores = createServerFn({ method: 'GET' })
         pagination: { page: 1, pageSize: 1, withCount: true },
       },
     });
-    if (!result.ok) return { missing: 0 };
+    if (!result.ok) return { missing: 0, error: friendlyBackendError(result.status, result.error) };
     return { missing: result.meta?.pagination?.total ?? 0 };
   });
 
-export type BackfillSignalScoresResult = {
-  status: 'ok';
-  updated: number;
-  skipped: number;
-  total: number;
-};
+export type BackfillSignalScoresResult = BackfillRunResult;
 
 // Single-video signal regenerate. Used by the "Generate score" button on
 // the VideoCard — the bulk backfill is overkill for one row, and the
@@ -1682,38 +1664,24 @@ export const regenerateVideoSignals = createServerFn({ method: 'POST' })
   });
 
 export const backfillSignalScores = createServerFn({ method: 'POST' })
-  .handler(async (): Promise<BackfillSignalScoresResult> => {
-    let updated = 0;
-    let skipped = 0;
-    let total = 0;
-    const PAGE_SIZE = 50;
-    for (let page = 1; page <= 50; page += 1) {
-      const result = await strapiFetch<StrapiVideoWithTranscript[]>(
-        'GET',
-        '/api/yt-kb/videos',
-        {
+  .handler(async (): Promise<BackfillRunResult> =>
+    runBackfill<StrapiVideoWithTranscript>({
+      pageSize: 50,
+      readPage: (start, limit) =>
+        strapiFetch<StrapiVideoWithTranscript[]>('GET', '/api/yt-kb/videos', {
           query: {
-            filters: {
-              summaryStatus: { $eq: 'generated' },
-              signalScore: { $null: true },
-            },
-            // We need transcript.rawText for the actual signal computation
-            // and durationSec from the transcript row for speaking pace.
-            populate: { transcript: true },
-            pagination: { page, pageSize: PAGE_SIZE, withCount: true },
+            filters: { summaryStatus: { $eq: 'generated' }, signalScore: { $null: true } },
+            fields: ['valueScore'],
+            // Only the two transcript fields the signals need — not the
+            // plugin's searchIndex (M4).
+            populate: { transcript: { fields: ['rawText', 'durationSec'] } },
+            sort: 'id:asc',
+            pagination: { start, limit, withCount: true },
           },
-        },
-      );
-      if (!result.ok) break;
-      const rows = result.data ?? [];
-      total = result.meta?.pagination?.total ?? total;
-      if (rows.length === 0) break;
-      for (const row of rows) {
+        }),
+      process: async (row) => {
         const rawText = row.transcript?.rawText;
-        if (!row.documentId || !rawText) {
-          skipped += 1;
-          continue;
-        }
+        if (!rawText) return 'skipped';
         const durationSec =
           (row.transcript as { durationSec?: number | null } | null | undefined)
             ?.durationSec ?? null;
@@ -1725,22 +1693,17 @@ export const backfillSignalScores = createServerFn({ method: 'POST' })
           durationSec,
         });
         const composite = aggregateSignalScore(scores);
-        const finalScore =
-          computeFinalScore(row.valueScore, composite) ?? composite;
+        const finalScore = computeFinalScore(row.valueScore, composite) ?? composite;
         const write = await updateVideoSignalScoresService({
           documentId: row.documentId,
           signalScores: scores,
           signalScore: composite,
           finalScore,
         });
-        if (write.success) updated += 1;
-        else skipped += 1;
-      }
-      const pageCount = result.meta?.pagination?.pageCount ?? 1;
-      if (page >= pageCount) break;
-    }
-    return { status: 'ok', updated, skipped, total };
-  });
+        return write.success ? 'updated' : { failed: write.error };
+      },
+    }),
+  );
 
 // =============================================================================
 // Final-score backfill
@@ -1756,14 +1719,10 @@ export const backfillSignalScores = createServerFn({ method: 'POST' })
 // signalScore but never had a finalScore field to write into.
 // =============================================================================
 
-export type BackfillFinalScoresResult = {
-  status: 'ok';
-  updated: number;
-  total: number;
-};
+export type BackfillFinalScoresResult = BackfillRunResult;
 
 export const countMissingFinalScores = createServerFn({ method: 'GET' })
-  .handler(async (): Promise<{ missing: number }> => {
+  .handler(async (): Promise<MissingCount> => {
     const result = await strapiFetch<StrapiVideo[]>('GET', '/api/yt-kb/videos', {
       query: {
         filters: {
@@ -1778,45 +1737,31 @@ export const countMissingFinalScores = createServerFn({ method: 'GET' })
         pagination: { page: 1, pageSize: 1, withCount: true },
       },
     });
-    if (!result.ok) return { missing: 0 };
+    if (!result.ok) return { missing: 0, error: friendlyBackendError(result.status, result.error) };
     return { missing: result.meta?.pagination?.total ?? 0 };
   });
 
 export const backfillFinalScores = createServerFn({ method: 'POST' })
-  .handler(async (): Promise<BackfillFinalScoresResult> => {
-    let updated = 0;
-    let total = 0;
-    const PAGE_SIZE = 100;
-    for (let page = 1; page <= 50; page += 1) {
-      const result = await strapiFetch<StrapiVideo[]>('GET', '/api/yt-kb/videos', {
-        query: {
-          filters: {
-            $or: [
-              { valueScore: { $notNull: true } },
-              { signalScore: { $notNull: true } },
-            ],
-            finalScore: { $null: true },
+  .handler(async (): Promise<BackfillRunResult> =>
+    runBackfill<StrapiVideo>({
+      pageSize: 100,
+      readPage: (start, limit) =>
+        strapiFetch<StrapiVideo[]>('GET', '/api/yt-kb/videos', {
+          query: {
+            filters: {
+              $or: [{ valueScore: { $notNull: true } }, { signalScore: { $notNull: true } }],
+              finalScore: { $null: true },
+            },
+            fields: ['valueScore', 'signalScore'],
+            sort: 'id:asc',
+            pagination: { start, limit, withCount: true },
           },
-          fields: ['documentId', 'valueScore', 'signalScore'],
-          pagination: { page, pageSize: PAGE_SIZE, withCount: true },
-        },
-      });
-      if (!result.ok) break;
-      const rows = result.data ?? [];
-      total = result.meta?.pagination?.total ?? total;
-      if (rows.length === 0) break;
-      for (const row of rows) {
-        if (!row.documentId) continue;
+        }),
+      process: async (row) => {
         const finalScore = computeFinalScore(row.valueScore, row.signalScore);
-        if (finalScore === null) continue;
-        const write = await updateVideoFinalScoreService({
-          documentId: row.documentId,
-          finalScore,
-        });
-        if (write.success) updated += 1;
-      }
-      const pageCount = result.meta?.pagination?.pageCount ?? 1;
-      if (page >= pageCount) break;
-    }
-    return { status: 'ok', updated, total };
-  });
+        if (finalScore === null) return 'skipped';
+        const write = await updateVideoFinalScoreService({ documentId: row.documentId, finalScore });
+        return write.success ? 'updated' : { failed: write.error };
+      },
+    }),
+  );

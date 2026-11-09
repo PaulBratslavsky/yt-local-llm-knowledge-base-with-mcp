@@ -9,6 +9,7 @@ import { GenerationModeSelect } from '#/components/GenerationModeSelect';
 import {
   shareVideo,
   suggestTagsForUrl,
+  type ShareVideoResult,
 } from '#/data/server-functions/videos';
 import {
   ShareVideoFormSchema,
@@ -43,15 +44,28 @@ export function NewPostForm() {
         return;
       }
 
-      const result = await shareVideo({
-        data: {
-          url: parsed.data.url,
-          caption: parsed.data.caption || undefined,
-          tags: parsed.data.tags || undefined,
-          mode: parsed.data.mode,
-        },
-      });
+      let result: ShareVideoResult;
+      try {
+        result = await shareVideo({
+          data: {
+            url: parsed.data.url,
+            caption: parsed.data.caption || undefined,
+            tags: parsed.data.tags || undefined,
+            mode: parsed.data.mode,
+          },
+        });
+      } catch (err) {
+        // M-15: a thrown server fn (app server down, network) used to leave
+        // the form with no message at all.
+        setServerError(
+          err instanceof Error && err.message
+            ? `Couldn't share the video: ${err.message}`
+            : "Couldn't share the video. Check that the app is running, then try again.",
+        );
+        return;
+      }
 
+      // Includes M2's "Could not create tag …" (M-12).
       if (result.status === 'error') {
         setServerError(result.error);
         return;
@@ -161,7 +175,7 @@ export function NewPostForm() {
       </form.Field>
 
       {serverError && (
-        <p className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+        <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
           {serverError}
         </p>
       )}

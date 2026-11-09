@@ -35,6 +35,8 @@ const DigestSearchSchema = z.object({
 
 export const Route = createFileRoute('/digest')({
   validateSearch: DigestSearchSchema,
+  // Loader starts Ollama work (generation trigger / digest synthesis): never on hover (M-15).
+  preload: false,
   loaderDeps: ({ search }) => ({ videos: search.videos }),
   loader: async ({ deps }): Promise<LoadDigestResult> => {
     const videoIds = deps.videos

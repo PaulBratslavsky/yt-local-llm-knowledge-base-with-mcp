@@ -26,6 +26,8 @@ import {
   type TimedTextSegment,
 } from '#/lib/services/transcript';
 import { withRetry } from '#/lib/retry';
+import { seg, strapiFetch } from '#/lib/services/strapi-client';
+import { friendlyBackendError } from '#/lib/services/backend-errors';
 import { MAP_CONCURRENCY, OLLAMA_HOST, OLLAMA_MODEL as MODEL } from '#/lib/env';
 
 const adapter = createOllamaChat(MODEL, OLLAMA_HOST);
@@ -353,31 +355,23 @@ async function persistArticle(
   article: string,
 ): Promise<ServiceResult<ReadableArticleResult>> {
   const now = new Date().toISOString();
-  const { STRAPI_URL, STRAPI_API_TOKEN } = await import('#/lib/env');
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (STRAPI_API_TOKEN) headers.Authorization = `Bearer ${STRAPI_API_TOKEN}`;
-
-  const res = await fetch(`${STRAPI_URL}/api/yt-kb/videos/${documentId}`, {
-    method: 'PUT',
-    headers,
-    body: JSON.stringify({
+  const result = await strapiFetch<unknown>('PUT', `/api/yt-kb/videos/${seg(documentId)}`, {
+    body: {
       data: {
         readableArticle: article,
         readableArticleGeneratedAt: now,
         readableArticleModel: MODEL,
       },
-    }),
+    },
   });
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    // eslint-disable-next-line no-console
-    console.error('[reader] save failed', { status: res.status, body: body.slice(0, 500) });
-    return { success: false, error: `Strapi save failed (${res.status})` };
+  if (!result.ok) {
+    // strapiFetch has already logged the status and body.
+    return {
+      success: false,
+      error: `Strapi save failed: ${friendlyBackendError(result.status, result.error)}`,
+    };
   }
-  return {
-    success: true,
-    data: { article, generatedAt: now, model: MODEL },
-  };
+  return { success: true, data: { article, generatedAt: now, model: MODEL } };
 }
 
 export async function generateReadableArticleForVideo(

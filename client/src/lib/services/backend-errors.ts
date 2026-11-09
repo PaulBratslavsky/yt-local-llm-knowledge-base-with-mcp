@@ -13,6 +13,7 @@
  * the raw message is usually the most informative thing available. */
 export function friendlyBackendError(status: number, raw: string): string {
   if (status === 0) {
+    if (raw.startsWith('Strapi did not respond')) return raw;
     return 'Backend unreachable. Check that Strapi is running on port 1340.';
   }
   if (status >= 500) {

@@ -7,9 +7,8 @@ const config = ({ env }: Core.Config.Shared.ConfigParams): Core.Config.Server =>
   // TRANSFER_TOKEN_SALT), so a loopback default here would bind inside the
   // container and leave the platform unable to reach the server.
   //
-  // For local use, set HOST=127.0.0.1 in server/.env (.env.example does).
-  // With the Public role now read-only the LAN exposure is reads only, but
-  // loopback is still the right local setting.
+  // For local use, set HOST=127.0.0.1 in server/.env (.env.example does):
+  // the admin panel and /mcp should not listen on the LAN.
   host: env('HOST', '0.0.0.0'),
   port: env.int('PORT', 1340),
   app: {

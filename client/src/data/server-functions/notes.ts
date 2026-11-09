@@ -9,13 +9,14 @@ import {
   type StrapiNote,
 } from '#/lib/services/notes';
 import { fetchVideoByVideoIdService, fetchVideoByDocumentIdService, type StrapiVideo } from '#/lib/services/videos';
+import { DOCUMENT_ID, VIDEO_REF } from '#/lib/validations/post';
 
 // =============================================================================
 // List notes for a video — used by the Notes tab on the learn route.
 // =============================================================================
 
-const ListNotesSchema = z.object({
-  videoDocumentId: z.string().min(1).max(64),
+export const ListNotesSchema = z.object({
+  videoDocumentId: DOCUMENT_ID,
 });
 
 export type ListNotesResult =
@@ -38,12 +39,12 @@ export const listNotesForVideo = createServerFn({ method: 'GET' })
 
 const NoteSourceSchema = z.enum(['chat', 'digest-chat', 'mcp', 'manual']);
 
-const CreateNoteSchema = z.object({
+export const CreateNoteSchema = z.object({
   title: z.string().max(200).optional(),
   body: z.string().min(1).max(50_000),
   source: NoteSourceSchema.default('manual'),
   author: z.string().max(120).optional(),
-  videoDocumentIds: z.array(z.string().min(1).max(64)).min(1).max(10),
+  videoDocumentIds: z.array(DOCUMENT_ID).min(1).max(10),
 });
 
 export type CreateNoteResult =
@@ -66,8 +67,8 @@ export const createNote = createServerFn({ method: 'POST' })
     return { status: 'ok', note: result.data };
   });
 
-const UpdateNoteSchema = z.object({
-  documentId: z.string().min(1).max(64),
+export const UpdateNoteSchema = z.object({
+  documentId: DOCUMENT_ID,
   title: z.string().max(200).nullable().optional(),
   body: z.string().min(1).max(50_000).optional(),
 });
@@ -92,8 +93,8 @@ export const updateNote = createServerFn({ method: 'POST' })
     },
   );
 
-const DeleteNoteSchema = z.object({
-  documentId: z.string().min(1).max(64),
+export const DeleteNoteSchema = z.object({
+  documentId: DOCUMENT_ID,
 });
 
 export const deleteNote = createServerFn({ method: 'POST' })
@@ -121,8 +122,8 @@ const ConversationMessageSchema = z.object({
   content: z.string(),
 });
 
-const SummarizeToNoteSchema = z.object({
-  videoIds: z.array(z.string().min(1).max(64)).min(1).max(10),
+export const SummarizeToNoteSchema = z.object({
+  videoIds: z.array(VIDEO_REF).min(1).max(10),
   messages: z.array(ConversationMessageSchema).min(2).max(100),
   source: z.enum(['chat', 'digest-chat']).default('chat'),
   /** Active chat skill at save time — threaded into the summarizer so
@@ -146,8 +147,9 @@ export type SummarizeToNoteResult =
 async function resolveVideoById(id: string): Promise<StrapiVideo | null> {
   const byVid = await fetchVideoByVideoIdService(id).catch(() => null);
   if (byVid) return byVid;
-  const byDoc = await fetchVideoByDocumentIdService(id).catch(() => null);
-  return byDoc;
+  // Only a well-formed documentId may reach a Strapi path (B-1).
+  if (!DOCUMENT_ID.safeParse(id).success) return null;
+  return await fetchVideoByDocumentIdService(id).catch(() => null);
 }
 
 export const summarizeToNote = createServerFn({ method: 'POST' })

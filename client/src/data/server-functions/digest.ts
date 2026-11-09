@@ -8,16 +8,14 @@ import {
   type Digest,
 } from '#/lib/services/digest';
 import { stripVideoForClient, type StrapiVideo } from '#/lib/services/videos';
+import { VIDEO_REF } from '#/lib/validations/post';
 
 // =============================================================================
 // Generate digest (ephemeral — no DB row)
 // =============================================================================
 
-const GenerateDigestSchema = z.object({
-  videoIds: z
-    .array(z.string().min(1).max(64))
-    .min(DIGEST_MIN_VIDEOS)
-    .max(DIGEST_MAX_VIDEOS),
+export const GenerateDigestSchema = z.object({
+  videoIds: z.array(VIDEO_REF).min(DIGEST_MIN_VIDEOS).max(DIGEST_MAX_VIDEOS),
 });
 
 export type GenerateDigestResult =

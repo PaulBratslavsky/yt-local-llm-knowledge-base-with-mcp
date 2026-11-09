@@ -48,11 +48,22 @@ describe('resolveDigestVideos', () => {
 
   it('falls back to documentId when the youtubeVideoId misses', async () => {
     byVideoId.mockResolvedValue(notFound);
-    byDocumentId.mockResolvedValue(found('xyz'));
+    byDocumentId.mockResolvedValue(found('k3x9q2m8v7b6n5c4z1a0s2d3'));
 
-    const res = await resolveDigestVideos(['xyz']);
+    const res = await resolveDigestVideos(['k3x9q2m8v7b6n5c4z1a0s2d3']);
 
     expect(res.status).toBe('ok');
+  });
+
+  // B-1: an id that is not a well-formed documentId never reaches the
+  // documentId fetcher, so it can never reach a Strapi path.
+  it('never looks up a malformed id as a documentId', async () => {
+    byVideoId.mockResolvedValue(notFound);
+
+    const res = await resolveDigestVideos(['../../users/1']);
+
+    expect(res).toEqual({ status: 'missing', missing: ['../../users/1'] });
+    expect(byDocumentId).not.toHaveBeenCalled();
   });
 
   it('reports genuinely missing ids by name', async () => {

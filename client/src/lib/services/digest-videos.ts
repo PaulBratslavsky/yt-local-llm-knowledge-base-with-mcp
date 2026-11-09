@@ -18,6 +18,7 @@ import {
   fetchVideoByVideoIdWithStatusService,
 } from './videos';
 import type { StrapiVideo } from './videos';
+import { DOCUMENT_ID } from '#/lib/validations/post';
 
 export type DigestVideoResolution =
   | { status: 'ok'; videos: StrapiVideo[] }
@@ -43,6 +44,7 @@ export async function resolveDigestVideos(
       if (byVid.error) return { kind: 'error', error: byVid.error };
       if (byVid.video) return { kind: 'found', video: byVid.video };
 
+      if (!DOCUMENT_ID.safeParse(id).success) return { kind: 'missing', id };
       const byDoc = await fetchVideoByDocumentIdWithStatusService(id);
       if (byDoc.error) return { kind: 'error', error: byDoc.error };
       if (byDoc.video) return { kind: 'found', video: byDoc.video };

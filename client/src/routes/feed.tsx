@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { createFileRoute, Link, useNavigate, useRouter } from '@tanstack/react-router';
+import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { z } from 'zod';
 import { VideoCard } from '#/components/VideoCard';
 import { BackendErrorPanel } from '#/components/BackendErrorPanel';
 import { friendlyOllamaError } from '#/lib/services/ollama-errors';
 import { Button } from '#/components/ui/button';
+import { usePollingInvalidation } from '#/lib/hooks/use-polling-invalidation';
 import {
   getFeed,
   semanticSearchVideos,
@@ -131,7 +132,6 @@ function FeedPage() {
   const loaderData = Route.useLoaderData();
   const search = Route.useSearch();
   const navigate = useNavigate();
-  const router = useRouter();
 
   // Backend dead → render the error panel and bail out before any
   // derived state reads `loaderData.result` / `loaderData.hits`. Keep
@@ -192,19 +192,11 @@ function FeedPage() {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  // Poll the loader while any card is `pending` so summaries flip to
-  // "generated" on the feed without a manual refresh. Only relevant in
-  // keyword mode — semantic-search results always have generated summaries
-  // (the loader requires it).
-  useEffect(() => {
-    if (loaderData.kind !== 'keyword') return;
-    const anyPending = videos.some((v) => v.summaryStatus === 'pending');
-    if (!anyPending) return;
-    const id = globalThis.setInterval(() => {
-      void router.invalidate();
-    }, 3000);
-    return () => globalThis.clearInterval(id);
-  }, [loaderData.kind, videos, router]);
+  // Re-run the loader while any card is `pending`, capped like /learn
+  // (M-15). Keyword mode only: semantic results are always generated.
+  const anyPending =
+    loaderData.kind === 'keyword' && videos.some((v) => v.summaryStatus === 'pending');
+  const { capReached: pollStopped } = usePollingInvalidation(anyPending);
 
   // Escape cancels selection mode, matching the intuitive pattern.
   useEffect(() => {
@@ -294,6 +286,16 @@ function FeedPage() {
           message={`Semantic search is unavailable, so these are keyword results. ${loaderData.degradedFrom}`}
           variant="banner"
         />
+      )}
+
+      {pollStopped && (
+        <p
+          role="status"
+          className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400"
+        >
+          Some summaries are still generating. This page stopped refreshing itself
+          after 10 minutes — reload it to check again.
+        </p>
       )}
 
       {videos.length === 0 ? (

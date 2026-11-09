@@ -7,14 +7,8 @@ const config: Core.Config.Middlewares = [
   // Explicit origin list. A bare 'strapi::cors' inherits the installed
   // defaults — origin '*' WITH credentials: true — and @strapi/core's
   // matchOrigin() echoes the caller's own Origin back whenever the list
-  // contains '*', so the browser permits the read. Combined with the
-  // Public-role grants seeded in src/index.ts (create/update on video,
-  // transcript, tag; delete on note and digest, no credential required),
-  // any page the owner happened to visit could read the whole library and
-  // delete notes and digests. Verified against the running instance before
-  // this change: Access-Control-Allow-Origin echoed an arbitrary origin
-  // with Access-Control-Allow-Credentials: true, and a DELETE preflight
-  // returned 204.
+  // contains '*', so any page the owner visited could make credentialed
+  // cross-origin requests to this Strapi (admin session included).
   //
   // Nothing in this product calls Strapi from a browser: the client calls
   // it from its own server via strapi-client.ts, and the site calls it only

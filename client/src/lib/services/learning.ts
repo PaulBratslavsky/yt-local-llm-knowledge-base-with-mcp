@@ -207,12 +207,14 @@ export type VideoMeta = {
   thumbnailUrl?: string;
 };
 
+const OEMBED_TIMEOUT_MS = 5_000;
+
 export async function fetchYouTubeMeta(videoId: string): Promise<VideoMeta> {
   try {
     const url = `https://www.youtube.com/oembed?url=${encodeURIComponent(
       `https://www.youtube.com/watch?v=${videoId}`,
     )}&format=json`;
-    const res = await fetch(url);
+    const res = await fetch(url, { signal: AbortSignal.timeout(OEMBED_TIMEOUT_MS) });
     if (!res.ok) return {};
     const json = (await res.json()) as OEmbedResponse;
     return {

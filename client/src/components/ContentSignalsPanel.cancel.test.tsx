@@ -44,7 +44,7 @@ describe('batch AI re-rate', () => {
   // The button said "Stopping…" while every remaining video kept running,
   // about ten minutes of local inference on a 50-video library.
   it('stops the batch when Cancel is clicked mid-run', async () => {
-    listRegenerableVideosMock.mockResolvedValue(videos(20));
+    listRegenerableVideosMock.mockResolvedValue({ status: 'ok', videos: videos(20) });
 
     // Each re-rate waits for a release, so the run is held open at a known
     // point rather than racing the test.
@@ -74,7 +74,7 @@ describe('batch AI re-rate', () => {
   });
 
   it('reports what it managed to finish before stopping', async () => {
-    listRegenerableVideosMock.mockResolvedValue(videos(5));
+    listRegenerableVideosMock.mockResolvedValue({ status: 'ok', videos: videos(5) });
 
     let releaseCurrent: (() => void) | null = null;
     const processed: string[] = [];
@@ -101,7 +101,7 @@ describe('batch AI re-rate', () => {
   });
 
   it('runs the whole batch when nobody cancels', async () => {
-    listRegenerableVideosMock.mockResolvedValue(videos(3));
+    listRegenerableVideosMock.mockResolvedValue({ status: 'ok', videos: videos(3) });
     regenerateVideoVerdictMock.mockResolvedValue({ status: 'ok' });
 
     openAiPanel();

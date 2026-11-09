@@ -44,6 +44,8 @@ function unwrapDdgUrl(href: string): string {
   return href.startsWith('//') ? `https:${href}` : href;
 }
 
+const DDG_TIMEOUT_MS = 8_000;
+
 async function ddgSearch(
   query: string,
   maxResults: number,
@@ -56,6 +58,7 @@ async function ddgSearch(
         'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       'Accept-Language': 'en-US,en;q=0.9',
     },
+    signal: AbortSignal.timeout(DDG_TIMEOUT_MS),
   });
   if (!res.ok) {
     throw new Error(`DDG search failed: ${res.status}`);

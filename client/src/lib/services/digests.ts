@@ -1,4 +1,4 @@
-// Digest CRUD against `api::digest.digest`. Persists the structured data
+// Digest CRUD against `plugin::yt-kb.digest`. Persists the structured data
 // as Strapi components (matching how Video stores sections/takeaways/etc.)
 // rather than a single JSON blob — so digests are first-class editable
 // content in the admin panel and queryable by sub-field.
@@ -7,7 +7,7 @@
 // type (what the UI consumes) and the decomposed Strapi row + components.
 // Callers never see the raw component arrays; they get a `Digest`.
 
-import { isUniqueViolation, strapiFetch, type StrapiQuery } from './strapi-client';
+import { isUniqueViolation, seg, strapiFetch, type StrapiQuery } from './strapi-client';
 import type { Digest } from './digest';
 import { friendlyBackendError } from './backend-errors';
 
@@ -249,7 +249,7 @@ export async function fetchDigestByDocumentIdService(
 ): Promise<StrapiDigest | null> {
   const result = await strapiFetch<StrapiDigest>(
     'GET',
-    `/api/yt-kb/digests/${documentId}`,
+    `/api/yt-kb/digests/${seg(documentId)}`,
     { query: digestQuery },
   );
   if (!result.ok) return null;
@@ -276,7 +276,7 @@ export async function updateDigestService(input: {
   if (input.model !== undefined) data.model = input.model;
   const result = await strapiFetch<StrapiDigest>(
     'PUT',
-    `/api/yt-kb/digests/${input.documentId}`,
+    `/api/yt-kb/digests/${seg(input.documentId)}`,
     { query: digestQuery, body: { data } },
   );
   return result.ok
@@ -357,7 +357,7 @@ export async function upsertDigestService(
 export async function deleteDigestService(
   documentId: string,
 ): Promise<ServiceResult<void>> {
-  const result = await strapiFetch<unknown>('DELETE', `/api/yt-kb/digests/${documentId}`);
+  const result = await strapiFetch<unknown>('DELETE', `/api/yt-kb/digests/${seg(documentId)}`);
   if (!result.ok && result.status !== 404) {
     return {
       success: false,

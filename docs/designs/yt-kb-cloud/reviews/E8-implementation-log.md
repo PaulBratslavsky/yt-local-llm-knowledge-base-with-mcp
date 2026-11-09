@@ -408,3 +408,147 @@ These are Deployment steps 2–3; the agent did not run them:
 3. Reconnect MCP clients, so they pick up the `yt_kb__*` names.
 4. With Strapi stopped, run `create-tokens.cjs --out-app … --out-site … --rotate yt-kb-site`.
 5. Put the two keys into `client/.env` and `site/.env`.
+
+## M6
+
+**Milestone:** M6 — App: security, network and UI states, backfills, dead weight. Started from HEAD `0a4a1b5` (M5), clean working tree. As with M1–M5, the commit hash is reported in the hand-off, not written here.
+
+**Run history:** the first run stopped at Verify V1.3, because the spec's e2e test 4 raced hydration. After rulings R-E8-4 and the accompanying rulings (below), the run continued from V1.3. Every V-step passed, and S7 cleaned up. Ports 1340, 1341, 1399 and 3005 were free before the checks and after them. No `strapi develop`, `vite dev` or stub process is left.
+
+### Rulings in this milestone
+
+- **R-E8-4 (test 4 of `client/e2e/core-loop-states.spec.ts`):** fix the test, not the app. The ruling's first choice was `await page.waitForLoadState('networkidle')`. On the dev server it **never resolves**: TanStack devtools (`devtools()` in `vite.config.ts`) keep an SSE request open at `/__tsd/console-pipe/sse`. All three runs timed out in "Wait for load state networkidle" (60 s), and test 4 sent nothing to the stub. Keeping it would fail every run, so the smallest wait that works replaces it: `page.waitForFunction` until the `input#url` element carries React's `__reactProps…` key, which means React has hydrated the form. The ruling's example check ("type, blur, no `?url=`") cannot detect hydration, because typing never reloads the page; only a click submits the form. With the new wait, test 4 passed 3 runs in a row. No other test in the spec fills or clicks right after `goto`. The settings test clicks only after "6 videos need updating" appears, which is rendered by a client effect, so the page has hydrated by then.
+- **oEmbed disclosure (spec error 2, accepted):** test 4 makes **two** oEmbed requests for `zzzzzzzzzz0` per run, not one. `SuggestedTagsRow` calls `suggestTagsForUrl`, and so `fetchYouTubeMeta`, 600 ms after the URL is typed; `shareVideo` makes the second call. The three passing runs made at most six requests to youtube.com, all for `zzzzzzzzzz0`. The first run's three failing attempts made none (no hydration); the second run's three `networkidle` attempts made none (they timed out before `fill`). No other request left the machine.
+- **`curl -g` (spec error 3, accepted):** used for every bracketed URL: S3, V2.5 and V3.
+- **Pre-hydration native GET submit on `/new-post`:** deferred as a pre-existing problem. `NewPostForm` is not changed for it.
+- **Spec errors 4–6:** accepted as handled.
+- **Earlier rulings:**
+  - R-E8-3: no client field list names `searchIndex`, and `videos.fields.test.ts` asserts that.
+  - R-E8-1 and R-E8-2: not needed. No plugin code changed, and the client is `strict`.
+
+### Pre-checks
+
+| # | Check | Result |
+|---|---|---|
+| 1 | `git log --oneline -6` | M1–M5 present (`f9e2347`, `acf9dd6`, `a6750e6`, `e5321b3`, `5a208c3`, `0a4a1b5`) |
+| 2 | `install:all` installs the plugin | exit 0 |
+| 3 | `create-tokens.cjs` exists | exit 0 |
+| 4 | documentId shapes on the owner DB | all five tables `n: 0`, `jq -e` true. Read with the kit's `sql`, which opens the file `readonly: true`. Nothing was booted on `data.db`. |
+
+### 6.0 Baseline (before any edit)
+
+- S0: ports 1340, 1341, 1399 and 3005 were free. Plugin build and server build exit 0.
+- S1: `M=m6`, `SCRATCH=server/.tmp/e8/m6` (mode 700), a fresh `e8-m6.db`.
+- S2: `create-tokens.cjs` exit 0. It wrote `yt-kb-app` and `yt-kb-site`. Both key files are mode 0600 (`{ bad: [] }`).
+- S3: `/_health` 204, `{ total: 0 }` (with `curl -g`).
+- S4: `seeded 16 videos`.
+- S6: the M5 client, `wait http://localhost:3005/about` → 200. It listened on `[::1]:3005` only.
+- **Baseline: `feedBeforeBytes: 3033238`, exit 0.**
+
+### Steps
+
+- **6.1 B-1:**
+  - `seg()` was added after `buildQueryParams`, and the header comment was replaced.
+  - `DOCUMENT_ID` and `VIDEO_REF` were added to `validations/post.ts`.
+  - All 20 path sites were wrapped in `seg(…)`: 15 in `videos.ts`, 3 in `digests.ts` and 2 in `notes.ts`. Each function was checked against the table; only the line numbers had drifted.
+  - `reader.ts` `persistArticle` was replaced verbatim. It now goes through `strapiFetch`, so `reader.ts` no longer reads `STRAPI_URL` or `STRAPI_API_TOKEN`.
+  - The 11 schemas are exported and use `DOCUMENT_ID` or `VIDEO_REF`.
+  - The three resolvers were guarded.
+  - `server-functions/notes.ts` and `digest.ts` had no import from `#/lib/validations/post`, so one was added to each.
+- **6.2 B-5:**
+  - `vite.config.ts` gets `server: { host: '127.0.0.1', port: 3005, strictPort: true }`. Vite 8.3.6's `CommonServerOptions` has `host`, `port` and `strictPort` (`vite/dist/node/index.d.ts`).
+  - The Playwright `baseURL` was changed as specified.
+  - `client/.env.example` was replaced verbatim (whole file).
+  - The `env.ts` warning was replaced.
+  - No `.env` file was opened.
+- **6.3 M-4:**
+  - `strapiFetch` uses `AbortSignal.timeout`, catches body-read failures and has `networkErrorMessage`.
+  - `backend-errors.ts` passes a timeout message through.
+  - `TRANSCRIPT_FETCH_TIMEOUT_MS = 120_000` sits above `requestTranscriptFetchService`'s doc comment, so the comment still documents the function.
+  - oEmbed has a 5 s timeout and DuckDuckGo an 8 s one.
+- **6.4 M-8:**
+  - `FEED_FIELDS` was added.
+  - `detailQuery` is now the allowlist; it includes `createdAt` and the transcript `fields`, and never names `searchIndex`.
+  - `internalDetailQuery` was added for the two non-status fetchers.
+  - The corpus no longer strips its rows.
+  - The new `stripVideoForClient` nulls all three heavy fields, and `semanticSearchVideos` uses it.
+  - The `EmbeddingPanel` fallback reads `embeddingGeneratedAt`.
+- **6.4a B-6:**
+  - `fetchVideoByVideoIdForServerWithStatusService` was added.
+  - `api.chat.tsx` and `api.digest-chat.tsx` switched to it.
+- **6.5:**
+  - New `isUniqueViolation` (`details.code === 'YT_KB_UNIQUE'` first).
+  - `normalizeTagName` is used in `parseTagInput`, `findTagByNameService` and `searchTagsService`.
+  - The `digests.ts` and `notes.ts` header comments now name `plugin::yt-kb.*`.
+  - `NewPostForm`: try/catch around `shareVideo`, and `role="alert"`.
+- **6.6 M-15:**
+  - `RouteStates.tsx` and both hooks were copied verbatim from the spec.
+  - `router.tsx` gets the two defaults.
+  - `preload: false` was added on `/learn/$videoId` and `/digest`.
+  - On `/learn`: the local poller was removed, `PendingState`/`FailedState` use `useAsyncAction`, and the `pollStopped` note was added.
+  - On `/feed`: the capped poller and its note; `useRouter` was dropped.
+- **6.7 M-13:**
+  - `backfill.ts` was copied verbatim.
+  - Offset pagination was added.
+  - `MissingCount`, the three result aliases, the counters, the three backfills and `listRegenerableVideos` are spliced verbatim from the spec blocks.
+  - `ContentSignalsPanel` edits.
+  - The cancel test's three mocks were updated.
+- **6.8:** the `server/.env.example` HOST comment, the CORS comment in `middlewares.ts`, the `server.ts` comment and the `notes.ts` header.
+- **6.9 M-21:**
+  - `git rm` of `server/scripts/seed.mjs`, `server/scripts/verify-mcp-tools.cjs`, `client/package-lock.json` and `client/pnpm-lock.yaml`.
+  - The `verify:mcp` script and the `pnpm` block were removed.
+  - `yarn --cwd client remove @strapi/client ky` and `yarn --cwd server remove youtubei.js` (both exit 0, with Strapi stopped).
+- **6.10 Tests:** every listed file was written, plus `e2e/core-loop-states.spec.ts` verbatim with R-E8-4's change.
+
+### Verify results
+
+| # | Check | Result | What it proved / did not prove |
+|---|---|---|---|
+| Static | `client tsc` 0, `server tsc` 0, `yarn test` 0, client build 0. Client tsc and `yarn test` were re-run after the R-E8-4 edit. | **Client 430 = 428 passed + 2 skipped** (52 files; was 335 = 333 + 2). **Plugin 114/114**, unchanged. | **Extra mutation check:** unwrapping one `seg(` in `notes.ts` and loosening `videoDocumentIds` to `z.array(z.string())` made `strapi-segments.guard.test.ts` fail 2 of 3. Restored afterwards. |
+| M-21 | `{ bad: [] }` exit 0; `git ls-files` lists nothing; `youtubei.js` resolves from `plugins/yt-kb/node_modules` | pass | — |
+| S0/S3 | ports free; both builds 0; Strapi on the existing scratch DB, `/_health` 204, total 16 | pass | S0's builds were run in the first Verify pass. No plugin or server source changed before the resume, which only restarted Strapi (S3). |
+| V1.2 | wiring proof | `{ lines: 1, ok: true }` (both passes) | The app read the stub with the stub token, not `client/.env`. |
+| V1.3 | e2e against the stub | **3 runs in a row: `expected: 4, unexpected: 0, skipped: 3`** (4.8 s, 4.4 s, 3.9 s) | Proves the four states: malformed id → route error; traversal id → route error or 404; unknown `/learn` → unshared state; a failed write → inline `Not Found` alert with the button enabled again. Earlier attempts: 2 runs without a wait (test 4 clicked before hydration and submitted the form natively), then 3 runs with `networkidle` (timed out); see R-E8-4. |
+| **V1.4** | **B-1 negative test** on the stub log covering the 3 passing runs | `{ requests: 12, bad: [] }` exit 0 = 9 × `GET /api/yt-kb/videos` + 3 × `POST /api/yt-kb/videos`, all `auth=true` | No request reached `/api/users` or `/api/yt-kb/videos/<malformed or ..>`. The `/video/…` tests made no Strapi request at all, because the documentId is refused before a path is built. |
+| **V2.2** | **listen address** | `[ '127.0.0.1:3005' ]` exit 0 | The 127.0.0.1 pin works: the M5 baseline listened on `[::1]:3005`, M6 only on `127.0.0.1:3005`. |
+| V2.3 | positive | `200` | — |
+| V2.4 | LAN (negative) | the machine has a LAN IPv4 address (not recorded); `000`, `curl exit 7` | The dev server refuses connections from the LAN address. |
+| V2.5 | token scope (negative) | videos `200`, `/api/users` `403`, import `{ status: 403, message: 'Forbidden' }` exit 0 | `yt-kb-app` is refused outside yt-kb, and by its scope before the import gate. |
+| V3 | e2e on the fixture library + `nullFinal` | `expected: 4, unexpected: 0, skipped: 3`; `{ nullFinal: 0 }` | The signal backfill finishes, skipping the 3 rows without a transcript, and the final backfill fixes them, through the real Settings UI and Strapi with offset pagination. |
+| **V4** | **feed payload** | `{ before: 3033238, after: 68670, ok: true }` (2.3% of the baseline). The page has `Fixture video 16`. | **Extra:** in `feed-after.html`, `summaryEmbedding`, `passageEmbeddings` and `transcriptSegments` each appear 9 times, always as `null`, and none of the fixture `transcriptSegments` placeholder is in the page. |
+| **V4b** | **B-6 chat retrieval** | fixture `{"status":201,"chunks":16}`; `/api/chat` on `fxchat00001` → `retrievedChunks: 3`; on `fx000000001` (placeholder) → `0`; `/api/digest-chat` on both → `3`. All `jq -e` true. | Both chat routes now retrieve transcript passages from the stored index through the running app, and the check distinguishes an index from no index. The model call then failed against the closed Ollama port, as intended, so no model ran. |
+| V5 | Strapi down | `expected: 2, unexpected: 0` | `/learn` shows "Can't reach Strapi."; `/settings` shows "Couldn't check the library". |
+| S7 | cleanup | 1341, 1399 and 3005 stopped (all started here); `e8-m6.db*` and `server/.tmp/e8/m6/` removed; `client/test-results/` (Playwright artifacts from these runs, gitignored) removed. 1340/1341/1399/3005 free. | The app log had no `Strapi did not respond within 30 s.` (`/search` was not exercised). A status tally over the Strapi log matched no lines, probably because of the log's ANSI colour codes, and the log has since been deleted, so the absence of 5xx is **not** established by it. |
+
+### Stubs and mocks
+
+- **Client unit tests:** `fetch` is stubbed at the HTTP boundary (`strapi-client`, `videos.fields`, `digests`, `network-timeouts`, `chat-index`).
+  - `chat-index` mocks `@tanstack/ai` (`chat` throws) and `@tanstack/ai-ollama`.
+  - The jsdom tests mock `@tanstack/react-router`, the server-function modules and `GenerationModeSelect`, as the spec lists.
+  - `document-id.schemas.test.ts` imports the real server-function modules and silences `console.warn` only.
+  - `backfill.test.ts` uses an in-memory eligible set.
+- **V1:** the spec's recording stub on 1399.
+- **V2–V5:** a real Strapi 5.61.0 on `e8-m6.db` (synthetic fixtures only), `PROXY_URL=http://127.0.0.1:9`.
+- **The app:** started with `OLLAMA_BASE_URL=http://127.0.0.1:9/v1`. No model ran.
+
+### Pre-existing problems found (not fixed)
+
+- **Deferred (ruling): `NewPostForm` before hydration.** A click on "Share video" does a native `GET` form submission, which puts the pasted URL into the query string (`/new-post?url=…&tags=`).
+- **`FeedPage` (`routes/feed.tsx`):** it returns early for `backend-error` before its `useState`/`useEffect` calls, which breaks React's rules of hooks. M6's `usePollingInvalidation` sits where the old effect was. This was already the case at `0a4a1b5`.
+- **Unit tests and the env warning:** vitest does not load `client/.env` into `process.env`, so tests that import `env.ts` print the `STRAPI_API_TOKEN is empty` warning. Harmless.
+- **Leftover directory:** `client/src/lib/hooks/__tmp__/` is an empty untracked directory from 22 Aug 2026. This run did not create it, so it is left alone.
+- **`networkidle` on the dev server:** it never settles while TanStack devtools are on (the open SSE request). Any future e2e test should not rely on it.
+
+### Spec errors / discrepancies
+
+1. **V1.3 test 4:** it filled and clicked before the client hydrated on the dev server. Fixed per R-E8-4 with a hydration wait. `networkidle`, the ruling's first choice, never resolves here.
+2. **V1.3, the disclosure:** test 4 makes two oEmbed requests per run, not one (accepted).
+3. **`curl` globbing:** a bracketed URL needs `curl -g` (S3, V2.5, V3). Without it curl prints nothing and exits 3 (accepted).
+4. **Section reference:** 6.1 refers to "the test in 6.11"; the tests are in 6.10.
+5. **Imports:** `server-functions/notes.ts` and `digest.ts` had no import from `#/lib/validations/post` to extend; one was added to each.
+6. **zsh glob:** `rm -f …db-*` aborts under zsh when nothing matches, as in M4. S7 ran in `bash`.
+7. **Commit message:** as instructed, the first line is the `### M6 — …` title. This log is included in the commit.
+
+### Owner action (Deployment step 3, not done here)
+
+`client/.env`'s `STRAPI_API_TOKEN` must hold the `yt-kb-app` key written by M5's `create-tokens.cjs --out-app` against the owner's Strapi. Open the app at `http://127.0.0.1:3005` (or `localhost:3005`). The agent opened no `.env` file.

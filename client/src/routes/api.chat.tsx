@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { chat, toServerSentEventsResponse } from '@tanstack/ai';
 import { createOllamaChat } from '@tanstack/ai-ollama';
-import { fetchVideoByVideoIdWithStatusService } from '#/lib/services/videos';
+import { fetchVideoByVideoIdForServerWithStatusService } from '#/lib/services/videos';
 import { getSkill } from '#/lib/skills';
 import { prepareChatPrompt } from '#/lib/services/learning';
 import { webSearchTool } from '#/lib/services/chat-tools';
@@ -121,7 +121,8 @@ export const Route = createFileRoute('/api/chat')({
         // and "Strapi unreachable", which surfaced a dead backend to the
         // chat UI as `chat (404): Video not found` — for a video the user
         // is looking at. The WithStatus sibling separates them (ADR-0007).
-        const lookup = await fetchVideoByVideoIdWithStatusService(body.videoId);
+        // The ForServer variant keeps transcriptSegments: retrieval reads it, and this route never returns the row (B-6).
+        const lookup = await fetchVideoByVideoIdForServerWithStatusService(body.videoId);
         if (lookup.error) {
           return new Response(lookup.error, { status: 503 });
         }

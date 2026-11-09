@@ -1,6 +1,6 @@
 // Note CRUD + chat-to-note summarizer.
 //
-// Notes are markdown rows on api::note.note, related many-to-many with
+// Notes are markdown rows on plugin::yt-kb.note, related many-to-many with
 // Video. Four sources:
 //   - 'chat'        — summarized from a single-video in-app conversation
 //   - 'digest-chat' — summarized from a /digest cross-video conversation
@@ -18,7 +18,7 @@ import { chat } from '@tanstack/ai';
 import { createOllamaChat } from '@tanstack/ai-ollama';
 import { OLLAMA_HOST, OLLAMA_MODEL } from '#/lib/env';
 import { withRetry } from '#/lib/retry';
-import { strapiFetch, type StrapiQuery } from './strapi-client';
+import { seg, strapiFetch, type StrapiQuery } from './strapi-client';
 import {
   cleanTranscript,
   prepareSegmentedTranscript,
@@ -114,7 +114,7 @@ export async function updateNoteService(input: {
   if (input.body !== undefined) data.body = input.body;
   const result = await strapiFetch<StrapiNote>(
     'PUT',
-    `/api/yt-kb/notes/${input.documentId}`,
+    `/api/yt-kb/notes/${seg(input.documentId)}`,
     { query: noteQuery, body: { data } },
   );
   return result.ok
@@ -125,7 +125,7 @@ export async function updateNoteService(input: {
 export async function deleteNoteService(
   documentId: string,
 ): Promise<ServiceResult<void>> {
-  const result = await strapiFetch<unknown>('DELETE', `/api/yt-kb/notes/${documentId}`);
+  const result = await strapiFetch<unknown>('DELETE', `/api/yt-kb/notes/${seg(documentId)}`);
   if (!result.ok && result.status !== 404) {
     return { success: false, error: result.error };
   }

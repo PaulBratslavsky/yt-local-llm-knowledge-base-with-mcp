@@ -110,16 +110,14 @@ export function envWarnings(env: ValidatableEnv): string[] {
     out.push('STRAPI_URL resolved to empty — Strapi calls will fail.');
   }
   if (!env.STRAPI_API_TOKEN) {
-    // Worth naming the consequence, because the symptom is confusing: an
-    // empty token means strapiFetch sends no Authorization header at all
+    // An empty token means strapiFetch sends no Authorization header at all
     // (buildHeaders guards on truthiness), so every request lands as the
-    // Public role. Today that role still holds write grants, so writes
-    // silently succeed as an anonymous caller. Once the Public role is
-    // reduced to reads, the same requests start failing with 403.
+    // Public role — and strapi-plugin-yt-kb grants the Public role nothing,
+    // so every read and write fails with 403.
     out.push(
-      'STRAPI_API_TOKEN is empty — requests carry no Authorization header and act as the Public role. ' +
-        'Writes will fail with 403 once the Public role is read-only. Create an API token in Strapi ' +
-        'admin (Settings -> API Tokens) and set it in client/.env.',
+      'STRAPI_API_TOKEN is empty — requests carry no Authorization header, act as the Public role ' +
+        "and fail with 403. Set it in client/.env to the yt-kb-app token written by the plugin's " +
+        'create-tokens.cjs (--out-app).',
     );
   }
   return out;

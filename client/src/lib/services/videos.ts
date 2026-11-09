@@ -1,7 +1,8 @@
 import { STRAPI_URL } from '#/lib/env';
-import { isUniqueViolation, strapiFetch, type StrapiQuery } from './strapi-client';
+import { isUniqueViolation, seg, strapiFetch, type StrapiQuery } from './strapi-client';
 import type { StoredTranscriptIndex } from './transcript';
 import { friendlyBackendError } from './backend-errors';
+import { normalizeTagName } from '#/lib/validations/post';
 
 // `STRAPI_URL` is kept here only for `strapiAssetUrl` (asset URL composition
 // for uploaded media). Every REST call goes through `strapi-client` instead.
@@ -243,6 +244,14 @@ const SORT_BY: Record<FeedSort, string[]> = {
   score: ['finalScore:desc', 'createdAt:desc'],
 };
 
+// Fields a feed card renders (VideoCard, /feed, digest selection). `id` and
+// `documentId` always come back. Leaves out the summary bodies and the three
+// heavy JSON fields — about 9 MB of embeddings per page before M-8.
+const FEED_FIELDS = [
+  'youtubeVideoId', 'videoTitle', 'videoAuthor', 'caption', 'createdAt',
+  'summaryStatus', 'watchVerdict', 'verdictSummary', 'finalScore',
+];
+
 function feedQuery({
   page = 1,
   pageSize = 20,
@@ -272,6 +281,7 @@ function feedQuery({
     filters.finalScore = { $gte: minScore };
   }
   return {
+    fields: FEED_FIELDS,
     populate: ['tags'],
     sort: SORT_BY[sort],
     pagination: { page, pageSize, withCount: true },
@@ -308,12 +318,6 @@ export async function fetchFeedService(query: FeedQuery): Promise<PaginatedVideo
 // =============================================================================
 // Single-video lookups
 // =============================================================================
-
-// Populate strategy for the detail page — everything, including the heavy
-// components that the summary view needs.
-const detailQuery: StrapiQuery = {
-  populate: ['tags', 'keyTakeaways', 'sections', 'actionSteps', 'transcript'],
-};
 
 /** The whole eligible library, or the reason it couldn't be read.
  *
@@ -354,6 +358,7 @@ export type CorpusField = 'summaryEmbedding' | 'passageEmbeddings';
 // attribute has to be added here to reach these callers, which is the safer
 // direction to fail in.
 const CORPUS_BASE_FIELDS = [
+  'createdAt',
   'youtubeVideoId', 'url', 'videoTitle', 'videoAuthor', 'videoThumbnailUrl',
   'caption', 'summaryStatus', 'summaryTitle', 'summaryDescription',
   'summaryOverview', 'readableArticle', 'readableArticleGeneratedAt',
@@ -363,6 +368,35 @@ const CORPUS_BASE_FIELDS = [
   'embeddingVersion', 'embeddingGeneratedAt',
 ];
 
+// The Transcript fields the detail views read: TranscriptPane renders
+// rawSegments, /api/notes/compose quotes rawText. Leaves out the plugin's
+// searchIndex (M4) and the YouTube metadata nothing here renders.
+const TRANSCRIPT_DETAIL_FIELDS = [
+  'youtubeVideoId', 'title', 'author', 'thumbnailUrl', 'language',
+  'durationSec', 'rawSegments', 'rawText', 'fetchedAt',
+];
+
+// Detail rows that cross to the browser (/learn, /video, digests, and the
+// chat and compose API routes): every light scalar, the components and the
+// transcript — never the embeddings or the stored BM25 index (M-8).
+const detailQuery: StrapiQuery = {
+  fields: CORPUS_BASE_FIELDS,
+  populate: {
+    tags: true,
+    keyTakeaways: true,
+    sections: true,
+    actionSteps: true,
+    transcript: { fields: TRANSCRIPT_DETAIL_FIELDS },
+  },
+};
+
+// Server-internal rows: every field, including transcriptSegments and both
+// embeddings, for chat evidence, related videos, embedding status and
+// generation. Never return one to the client without stripVideoForClient.
+const internalDetailQuery: StrapiQuery = {
+  populate: ['tags', 'keyTakeaways', 'sections', 'actionSteps', 'transcript'],
+};
+
 /**
  * Walks every generated video.
  *
@@ -370,8 +404,7 @@ const CORPUS_BASE_FIELDS = [
  * a new call site silently pull 80 MB it does not use, and the compiler
  * naming each caller is what forced the audit that introduced it.
  *
- * `transcriptSegments` is never requested. `stripVideoForClient` nulls it on
- * arrival, so fetching it was 33 MB of pure waste on every call site.
+ * `transcriptSegments` is never requested: no corpus caller reads it.
  */
 export async function listAllVideosForEmbeddingService(
   include: CorpusField[],
@@ -395,10 +428,10 @@ export async function listAllVideosForEmbeddingService(
         error: friendlyBackendError(result.status, result.error),
       };
     }
-    for (const v of result.data ?? []) {
-      const cleaned = stripVideoForClient(v);
-      if (cleaned) all.push(cleaned);
-    }
+    // No strip here: the corpus is server-internal (ranking, coverage) and the
+    // caller asked for its embedding field by name. Callers that send rows to
+    // the browser strip them.
+    for (const v of result.data ?? []) all.push(v);
     const pageCount = result.meta?.pagination?.pageCount ?? 1;
     if (page >= pageCount) break;
   }
@@ -445,7 +478,7 @@ export async function updateVideoIndexService(
   documentId: string,
   transcriptSegments: StoredTranscriptIndex,
 ): Promise<{ success: true } | { success: false; error: string }> {
-  const result = await strapiFetch<StrapiVideo>('PUT', `/api/yt-kb/videos/${documentId}`, {
+  const result = await strapiFetch<StrapiVideo>('PUT', `/api/yt-kb/videos/${seg(documentId)}`, {
     body: { data: { transcriptSegments } },
   });
   if (!result.ok) {
@@ -465,8 +498,8 @@ export async function fetchVideoByDocumentIdService(
 ): Promise<StrapiVideo | null> {
   const result = await strapiFetch<StrapiVideo>(
     'GET',
-    `/api/yt-kb/videos/${documentId}`,
-    { query: detailQuery },
+    `/api/yt-kb/videos/${seg(documentId)}`,
+    { query: internalDetailQuery },
   );
   return result.ok ? (result.data ?? null) : null;
 }
@@ -476,7 +509,7 @@ export async function fetchVideoByVideoIdService(
 ): Promise<StrapiVideo | null> {
   const result = await strapiFetch<StrapiVideo[]>('GET', '/api/yt-kb/videos', {
     query: {
-      ...detailQuery,
+      ...internalDetailQuery,
       filters: { youtubeVideoId: { $eq: videoId } },
       pagination: { pageSize: 1 },
     },
@@ -495,23 +528,16 @@ export async function fetchVideoByVideoIdService(
 // fetchVideoByVideoIdService directly are unaffected.
 export type VideoLookup = { video: StrapiVideo | null; error: string | null };
 
-// Strip `transcriptSegments` from any video that's about to cross the
-// server→client serialization boundary. `transcriptSegments` is a large,
-// server-only BM25 token table (chat retrieval / evidence extraction
-// cache) that the UI never reads, so stripping it at the boundary is both
-// payload hygiene and a bandwidth win. It's also defense in depth: through
-// seroval 1.5.x, a BM25 token table containing a reserved Object.prototype
-// name as an own key (e.g. a transcript that says "constructor") crashed
-// the loader stream outright. seroval 1.6.2 (pulled in by the 2026-08-22
-// TanStack router/Start bump) fixed that — reserved-name own properties now
-// round-trip with full fidelity (see seroval-safety.test.ts) — so the strip
-// is no longer load-bearing for correctness, just good hygiene against a
-// field the client has no business receiving. Internal callers that need
-// the BM25 data (chat / evidence / digest retrieval) use the non-stripping
-// fetchers below.
+// Null the three heavy server-only fields on any video about to cross the
+// server→client boundary: the stored BM25 index (`transcriptSegments`) and
+// both embeddings. The UI reads none of them (M-8); together they were ~9 MB
+// per feed page. The allowlisted queries above no longer fetch them, so this
+// is the backstop for rows that came from an internal query. seroval 1.6.2+
+// round-trips reserved-name keys (seroval-safety.test.ts), so this is
+// payload hygiene, not a crash workaround.
 export function stripVideoForClient(video: StrapiVideo | null): StrapiVideo | null {
   if (!video) return video;
-  return { ...video, transcriptSegments: null };
+  return { ...video, transcriptSegments: null, summaryEmbedding: null, passageEmbeddings: null };
 }
 
 export async function fetchVideoByDocumentIdWithStatusService(
@@ -519,7 +545,7 @@ export async function fetchVideoByDocumentIdWithStatusService(
 ): Promise<VideoLookup> {
   const result = await strapiFetch<StrapiVideo>(
     'GET',
-    `/api/yt-kb/videos/${documentId}`,
+    `/api/yt-kb/videos/${seg(documentId)}`,
     { query: detailQuery },
   );
   if (result.ok) {
@@ -544,6 +570,28 @@ export async function fetchVideoByVideoIdWithStatusService(
   }
   // The list endpoint never 404s — an unknown id returns `data: []`.
   // So any non-OK is a real backend failure.
+  return { video: null, error: friendlyBackendError(result.status, result.error) };
+}
+
+/** Server-only: the full row for a youtubeVideoId — the stored BM25 index
+ *  (`transcriptSegments`) and the embeddings included — with the same
+ *  "no such row" vs "backend down" split as
+ *  fetchVideoByVideoIdWithStatusService (ADR-0007). For the chat API
+ *  routes, which retrieve passages from the index and never send the row
+ *  to the browser (B-6). Never return its row to a client without
+ *  stripVideoForClient. */
+export async function fetchVideoByVideoIdForServerWithStatusService(
+  videoId: string,
+): Promise<VideoLookup> {
+  const result = await strapiFetch<StrapiVideo[]>('GET', '/api/yt-kb/videos', {
+    query: {
+      ...internalDetailQuery,
+      filters: { youtubeVideoId: { $eq: videoId } },
+      pagination: { pageSize: 1 },
+    },
+  });
+  if (result.ok) return { video: result.data?.[0] ?? null, error: null };
+  // The list endpoint never 404s — an unknown id returns `data: []`.
   return { video: null, error: friendlyBackendError(result.status, result.error) };
 }
 
@@ -659,7 +707,7 @@ export async function updateVideoSummaryService(
   const { documentId, ...rest } = input;
   const result = await strapiFetch<StrapiVideo>(
     'PUT',
-    `/api/yt-kb/videos/${documentId}`,
+    `/api/yt-kb/videos/${seg(documentId)}`,
     {
       body: {
         data: {
@@ -687,7 +735,7 @@ export async function updateVideoEmbeddingService(input: {
 }): Promise<{ success: true } | { success: false; error: string }> {
   const result = await strapiFetch<StrapiVideo>(
     'PUT',
-    `/api/yt-kb/videos/${input.documentId}`,
+    `/api/yt-kb/videos/${seg(input.documentId)}`,
     {
       body: {
         data: {
@@ -709,7 +757,7 @@ export async function updateVideoPassagesService(input: {
 }): Promise<{ success: true } | { success: false; error: string }> {
   const result = await strapiFetch<StrapiVideo>(
     'PUT',
-    `/api/yt-kb/videos/${input.documentId}`,
+    `/api/yt-kb/videos/${seg(input.documentId)}`,
     { body: { data: { passageEmbeddings: input.passageEmbeddings } } },
   );
   return result.ok ? { success: true } : { success: false, error: result.error };
@@ -723,7 +771,7 @@ export async function updateVideoPassagesService(input: {
 export async function markSummaryFailedService(
   documentId: string,
 ): Promise<{ success: true } | { success: false; error: string }> {
-  const result = await strapiFetch('PUT', `/api/yt-kb/videos/${documentId}`, {
+  const result = await strapiFetch('PUT', `/api/yt-kb/videos/${seg(documentId)}`, {
     body: { data: { summaryStatus: 'failed' } },
   });
   if (!result.ok) {
@@ -750,7 +798,7 @@ export async function updateVideoVerdictService(input: {
 }): Promise<{ success: true } | { success: false; error: string }> {
   const result = await strapiFetch<StrapiVideo>(
     'PUT',
-    `/api/yt-kb/videos/${input.documentId}`,
+    `/api/yt-kb/videos/${seg(input.documentId)}`,
     {
       body: {
         data: {
@@ -782,7 +830,7 @@ export async function updateVideoSignalScoresService(input: {
 }): Promise<{ success: true } | { success: false; error: string }> {
   const result = await strapiFetch<StrapiVideo>(
     'PUT',
-    `/api/yt-kb/videos/${input.documentId}`,
+    `/api/yt-kb/videos/${seg(input.documentId)}`,
     {
       body: {
         data: {
@@ -813,7 +861,7 @@ export async function updateVideoValueScoreService(input: {
 }): Promise<{ success: true } | { success: false; error: string }> {
   const result = await strapiFetch<StrapiVideo>(
     'PUT',
-    `/api/yt-kb/videos/${input.documentId}`,
+    `/api/yt-kb/videos/${seg(input.documentId)}`,
     {
       body: {
         data: {
@@ -835,7 +883,7 @@ export async function updateVideoFinalScoreService(input: {
 }): Promise<{ success: true } | { success: false; error: string }> {
   const result = await strapiFetch<StrapiVideo>(
     'PUT',
-    `/api/yt-kb/videos/${input.documentId}`,
+    `/api/yt-kb/videos/${seg(input.documentId)}`,
     { body: { data: { finalScore: input.finalScore } } },
   );
   return result.ok ? { success: true } : { success: false, error: result.error };
@@ -852,7 +900,7 @@ export async function updateSectionTimecodeService(input: {
   // Fetch current sections so we can resend the array with one edit.
   const read = await strapiFetch<StrapiVideo>(
     'GET',
-    `/api/yt-kb/videos/${input.documentId}`,
+    `/api/yt-kb/videos/${seg(input.documentId)}`,
     { query: detailQuery },
   );
   if (!read.ok) return { success: false, error: read.error };
@@ -870,7 +918,7 @@ export async function updateSectionTimecodeService(input: {
 
   const write = await strapiFetch<StrapiVideo>(
     'PUT',
-    `/api/yt-kb/videos/${input.documentId}`,
+    `/api/yt-kb/videos/${seg(input.documentId)}`,
     { body: { data: { sections: nextSections } } },
   );
   return write.ok ? { success: true } : { success: false, error: write.error };
@@ -883,7 +931,7 @@ export async function updateSectionTimecodeService(input: {
 export async function markSummaryPendingService(
   documentId: string,
 ): Promise<{ success: true } | { success: false; error: string }> {
-  const result = await strapiFetch<StrapiVideo>('PUT', `/api/yt-kb/videos/${documentId}`, {
+  const result = await strapiFetch<StrapiVideo>('PUT', `/api/yt-kb/videos/${seg(documentId)}`, {
     body: { data: { summaryStatus: 'pending' } },
   });
   return result.ok ? { success: true } : { success: false, error: result.error };
@@ -931,6 +979,8 @@ const TRANSCRIPT_FETCH_REASONS: ReadonlySet<string> = new Set<TranscriptFetchRea
   'network',
 ]);
 
+export const TRANSCRIPT_FETCH_TIMEOUT_MS = 120_000;
+
 /** Ask Strapi to fetch a transcript from YouTube and store it.
  *
  *  The app never talks to YouTube itself: strapi-plugin-yt-kb does the fetch
@@ -951,6 +1001,7 @@ export async function requestTranscriptFetchService(
 > {
   const result = await strapiFetch<StrapiTranscript>('POST', '/api/yt-kb/transcripts/fetch', {
     body: { data: { videoId, force } },
+    timeoutMs: TRANSCRIPT_FETCH_TIMEOUT_MS,
   });
   if (result.ok && result.data) {
     const action = (result.meta as { action?: TranscriptFetchAction } | undefined)?.action;
@@ -981,7 +1032,7 @@ export async function linkVideoToTranscriptService(
 ): Promise<{ success: true } | { success: false; error: string }> {
   const result = await strapiFetch<StrapiVideo>(
     'PUT',
-    `/api/yt-kb/videos/${videoDocumentId}`,
+    `/api/yt-kb/videos/${seg(videoDocumentId)}`,
     { body: { data: { transcript: transcriptDocumentId } } },
   );
   return result.ok ? { success: true } : { success: false, error: result.error };
@@ -992,7 +1043,7 @@ export async function linkVideoToTranscriptService(
 // =============================================================================
 
 export async function findTagByNameService(rawName: string): Promise<StrapiTag | null> {
-  const name = rawName.trim().toLowerCase().replace(/\s+/g, ' ');
+  const name = normalizeTagName(rawName);
   if (!name) return null;
   const result = await strapiFetch<StrapiTag[]>('GET', '/api/yt-kb/tags', {
     query: {
@@ -1004,7 +1055,7 @@ export async function findTagByNameService(rawName: string): Promise<StrapiTag |
 }
 
 export async function searchTagsService(query: string, limit = 8): Promise<StrapiTag[]> {
-  const q = query.trim().toLowerCase();
+  const q = normalizeTagName(query);
   const result = await strapiFetch<StrapiTag[]>('GET', '/api/yt-kb/tags', {
     query: {
       ...(q ? { filters: { name: { $containsi: q } } } : {}),
