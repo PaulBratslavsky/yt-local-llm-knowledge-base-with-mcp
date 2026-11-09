@@ -7,7 +7,7 @@
 // type (what the UI consumes) and the decomposed Strapi row + components.
 // Callers never see the raw component arrays; they get a `Digest`.
 
-import { strapiFetch, type StrapiQuery } from './strapi-client';
+import { isUniqueViolation, strapiFetch, type StrapiQuery } from './strapi-client';
 import type { Digest } from './digest';
 import { friendlyBackendError } from './backend-errors';
 
@@ -177,7 +177,7 @@ export async function createDigestService(input: {
   videoDocumentIds: string[];
   videoSetKey: string;
   model?: string | null;
-}): Promise<ServiceResult<StrapiDigest>> {
+}): Promise<ServiceResult<StrapiDigest> | { success: false; error: string; duplicate: true }> {
   const componentPayload = digestToComponentPayload(input.digest);
   const result = await strapiFetch<StrapiDigest>('POST', '/api/yt-kb/digests', {
     query: digestQuery,
@@ -193,9 +193,9 @@ export async function createDigestService(input: {
       },
     },
   });
-  return result.ok
-    ? { success: true, data: result.data }
-    : { success: false, error: result.error };
+  if (result.ok) return { success: true, data: result.data };
+  if (isUniqueViolation(result)) return { success: false, error: result.error, duplicate: true };
+  return { success: false, error: result.error };
 }
 
 export type PaginatedDigests = {
@@ -297,6 +297,61 @@ export async function findDigestByVideoSetKeyService(
   return result.ok
     ? { success: true, data: result.data?.[0] ?? null }
     : { success: false, error: result.error };
+}
+
+export type UpsertDigestInput = {
+  videoSetKey: string;
+  title: string;
+  description?: string | null;
+  digest: Digest;
+  /** undefined keeps a saved article; null clears it. */
+  articleMarkdown?: string | null;
+  videoDocumentIds: string[];
+  model?: string | null;
+};
+
+/** Save the digest for a video set: update the row with this
+ *  videoSetKey, else create it. A create that loses a race (two saves of
+ *  the same set at once) re-reads and updates the winner's row. */
+export async function upsertDigestService(
+  input: UpsertDigestInput,
+): Promise<ServiceResult<{ documentId: string; created: boolean }>> {
+  const updateExisting = async (
+    row: StrapiDigest,
+  ): Promise<ServiceResult<{ documentId: string; created: boolean }>> => {
+    const updated = await updateDigestService({
+      documentId: row.documentId,
+      title: input.title,
+      description: input.description,
+      digest: input.digest,
+      articleMarkdown: input.articleMarkdown !== undefined ? input.articleMarkdown : row.articleMarkdown,
+      videoDocumentIds: input.videoDocumentIds,
+      model: input.model,
+    });
+    return updated.success
+      ? { success: true, data: { documentId: updated.data.documentId, created: false } }
+      : { success: false, error: updated.error };
+  };
+
+  const existing = await findDigestByVideoSetKeyService(input.videoSetKey);
+  if (!existing.success) return { success: false, error: existing.error };
+  if (existing.data) return updateExisting(existing.data);
+
+  const created = await createDigestService({
+    title: input.title,
+    description: input.description,
+    digest: input.digest,
+    articleMarkdown: input.articleMarkdown ?? null,
+    videoDocumentIds: input.videoDocumentIds,
+    videoSetKey: input.videoSetKey,
+    model: input.model,
+  });
+  if (created.success) return { success: true, data: { documentId: created.data.documentId, created: true } };
+  if ('duplicate' in created) {
+    const raced = await findDigestByVideoSetKeyService(input.videoSetKey);
+    if (raced.success && raced.data) return updateExisting(raced.data);
+  }
+  return { success: false, error: created.error };
 }
 
 export async function deleteDigestService(

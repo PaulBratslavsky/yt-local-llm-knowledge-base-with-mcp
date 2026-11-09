@@ -1,5 +1,5 @@
 import { STRAPI_URL } from '#/lib/env';
-import { strapiFetch, type StrapiQuery } from './strapi-client';
+import { isUniqueViolation, strapiFetch, type StrapiQuery } from './strapi-client';
 import type { StoredTranscriptIndex } from './transcript';
 import { friendlyBackendError } from './backend-errors';
 
@@ -569,9 +569,9 @@ export type CreateVideoServiceResult =
 export async function createVideoService(
   input: CreateVideoServiceInput,
 ): Promise<CreateVideoServiceResult> {
-  // Pre-check dedupe so we can return 'exists' without parsing Strapi
-  // error strings. Server middleware catches races as a second line of
-  // defense.
+  // Pre-check so the common case returns 'exists' without a failed POST.
+  // The unique index decides races; those come back as a 400 and are
+  // re-read below.
   const existing = await fetchVideoByVideoIdService(input.videoId);
   if (existing) return { success: false, kind: 'exists', video: existing };
 
@@ -583,7 +583,12 @@ export async function createVideoService(
       continue;
     }
     const created = await createTagService(raw);
-    if (created) tagDocumentIds.push(created.documentId);
+    // A tag that cannot be stored stops the share: dropping it silently
+    // was M-12.
+    if (!created.ok) {
+      return { success: false, kind: 'error', error: `Could not create tag "${raw}": ${created.error}` };
+    }
+    tagDocumentIds.push(created.tag.documentId);
   }
 
   const body = {
@@ -601,6 +606,10 @@ export async function createVideoService(
 
   const result = await strapiFetch<StrapiVideo>('POST', '/api/yt-kb/videos', { body });
   if (!result.ok) {
+    if (isUniqueViolation(result)) {
+      const raced = await fetchVideoByVideoIdService(input.videoId);
+      if (raced) return { success: false, kind: 'exists', video: raced };
+    }
     return { success: false, kind: 'error', error: result.error };
   }
   return { success: true, video: result.data };
@@ -977,11 +986,19 @@ export async function searchTagsService(query: string, limit = 8): Promise<Strap
   return result.ok ? (result.data ?? []) : [];
 }
 
-async function createTagService(name: string): Promise<StrapiTag | null> {
+async function createTagService(
+  name: string,
+): Promise<{ ok: true; tag: StrapiTag } | { ok: false; error: string }> {
   const result = await strapiFetch<StrapiTag>('POST', '/api/yt-kb/tags', {
     body: { data: { name } },
   });
-  return result.ok ? result.data : null;
+  if (result.ok) return { ok: true, tag: result.data };
+  // Another writer created it first: use theirs.
+  if (isUniqueViolation(result)) {
+    const raced = await findTagByNameService(name);
+    if (raced) return { ok: true, tag: raced };
+  }
+  return { ok: false, error: result.error };
 }
 
 // =============================================================================

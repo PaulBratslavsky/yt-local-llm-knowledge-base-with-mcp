@@ -13,7 +13,8 @@
 
 import { z } from '@strapi/utils';
 import type { ToolDef } from '../registry';
-import { slugifyTagName } from './tag-utils';
+import { findOrCreateTag } from '../../services/tags';
+import { isUniqueViolation, withUniqueRetry } from '../../services/db-errors';
 
 const schema = z.object({
   url: z
@@ -80,38 +81,48 @@ export const addVideoTool: ToolDef<z.infer<typeof schema>> = {
       .service('fetcher')
       .fetchAndStore(videoId);
 
-    // Resolve tags: create any that don't exist yet (the plugin's rules
-    // normalize names lower-case on create).
-    const tagDocumentIds: string[] = [];
-    for (const raw of tags ?? []) {
-      const name = raw.trim().toLowerCase();
-      if (!name) continue;
-      let existing = (await strapi.documents('plugin::yt-kb.tag').findFirst({
-        filters: { name: { $eq: name } },
-      })) as { documentId: string } | null;
-      if (!existing) {
-        // `documents().create()` does NOT auto-generate uid fields, so we
-        // pass the slug explicitly (matches what the admin UI produces).
-        existing = (await strapi.documents('plugin::yt-kb.tag').create({
-          data: { name, slug: slugifyTagName(name) } as never,
-        })) as { documentId: string };
-      }
-      tagDocumentIds.push(existing.documentId);
-    }
+    // Tags and the Video are written together or not at all (M-18). The
+    // YouTube fetch above stays outside: a slow network call must not
+    // hold a transaction open (and on SQLite, the only connection).
+    const createVideo = async () =>
+      (await strapi.db.transaction(async () => {
+        const tagDocumentIds: string[] = [];
+        for (const raw of tags ?? []) {
+          const tag = await findOrCreateTag(strapi, raw);
+          if (tag && !tagDocumentIds.includes(tag.documentId)) tagDocumentIds.push(tag.documentId);
+        }
+        return strapi.documents('plugin::yt-kb.video').create({
+          data: {
+            youtubeVideoId: videoId,
+            url,
+            videoTitle: transcriptRow.title ?? null,
+            videoAuthor: transcriptRow.author ?? null,
+            videoThumbnailUrl: transcriptRow.thumbnailUrl ?? null,
+            caption: caption ?? null,
+            summaryStatus: 'pending',
+            transcript: transcriptRow.documentId,
+            tags: tagDocumentIds,
+          } as never,
+        });
+      })) as { documentId: string };
 
-    const video = (await strapi.documents('plugin::yt-kb.video').create({
-      data: {
-        youtubeVideoId: videoId,
-        url,
-        videoTitle: transcriptRow.title ?? null,
-        videoAuthor: transcriptRow.author ?? null,
-        videoThumbnailUrl: transcriptRow.thumbnailUrl ?? null,
-        caption: caption ?? null,
-        summaryStatus: 'pending',
-        transcript: transcriptRow.documentId,
-        tags: tagDocumentIds,
-      } as never,
-    })) as { documentId: string };
+    let video: { documentId: string };
+    try {
+      video = await withUniqueRetry(createVideo);
+    } catch (err) {
+      // Another caller added the same video while this one fetched.
+      if (!isUniqueViolation(err)) throw err;
+      const raced = (await strapi.documents('plugin::yt-kb.video').findFirst({
+        filters: { youtubeVideoId: { $eq: videoId } },
+      })) as { documentId: string } | null;
+      if (!raced) throw err;
+      return {
+        videoId,
+        action: 'exists',
+        videoDocumentId: raced.documentId,
+        message: 'Video already in knowledge base.',
+      };
+    }
 
     return {
       videoId,

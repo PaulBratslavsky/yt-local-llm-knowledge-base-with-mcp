@@ -2,7 +2,7 @@
 //
 // The Tag content type has `slug: { type: 'uid', targetField: 'name',
 // required: true }`, and Strapi generates uid fields only in the admin panel.
-// The Document Service middleware in src/index.ts applies this function to
+// The Document Service rule in document-rules.ts applies this function, then freeTagSlug adds -2, -3, … when the slug is taken, to
 // every tag create that arrives without a slug — REST (the app), MCP, or
 // anything else — so callers no longer need to pass one.
 //

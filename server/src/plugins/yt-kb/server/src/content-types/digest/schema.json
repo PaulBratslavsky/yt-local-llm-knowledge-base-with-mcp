@@ -24,6 +24,7 @@
       "required": true,
       "unique": true,
       "maxLength": 500,
+      "column": { "unique": true },
       "description": "Deterministic identifier for the source-video set \u2014 sorted youtubeVideoIds joined with commas. Upsert key so resaving the same /digest URL updates the existing row instead of creating duplicates."
     },
     "title": {

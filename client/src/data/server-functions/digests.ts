@@ -1,13 +1,12 @@
 import { createServerFn } from '@tanstack/react-start';
 import { z } from 'zod';
 import {
-  createDigestService,
   listDigestsService,
   fetchDigestByDocumentIdService,
   deleteDigestService,
   findDigestByVideoSetKeyService,
   makeVideoSetKey,
-  updateDigestService,
+  upsertDigestService,
   strapiRowToDigest,
   type StrapiDigest,
   type PaginatedDigests,
@@ -70,46 +69,20 @@ export const saveDigest = createServerFn({ method: 'POST' })
     }
     const resolved = lookups.flatMap((l) => (l.video ? [l.video.documentId] : []));
 
-    const existing = await findDigestByVideoSetKeyService(videoSetKey);
-    if (!existing.success) return { status: 'error', error: existing.error };
-
-    if (existing.data) {
-      const updated = await updateDigestService({
-        documentId: existing.data.documentId,
-        title: data.digest.title,
-        description: data.digest.description,
-        digest: data.digest,
-        // Preserve any previously-saved article if the caller didn't pass
-        // one this round (user clicked Save before opening the Article tab).
-        articleMarkdown:
-          data.articleMarkdown !== undefined
-            ? data.articleMarkdown
-            : existing.data.articleMarkdown,
-        videoDocumentIds: resolved,
-        model: OLLAMA_MODEL,
-      });
-      if (!updated.success) return { status: 'error', error: updated.error };
-      return {
-        status: 'ok',
-        digestDocumentId: updated.data.documentId,
-        created: false,
-      };
-    }
-
-    const created = await createDigestService({
+    const saved = await upsertDigestService({
+      videoSetKey,
       title: data.digest.title,
       description: data.digest.description,
       digest: data.digest,
-      articleMarkdown: data.articleMarkdown ?? null,
+      articleMarkdown: data.articleMarkdown,
       videoDocumentIds: resolved,
-      videoSetKey,
       model: OLLAMA_MODEL,
     });
-    if (!created.success) return { status: 'error', error: created.error };
+    if (!saved.success) return { status: 'error', error: saved.error };
     return {
       status: 'ok',
-      digestDocumentId: created.data.documentId,
-      created: true,
+      digestDocumentId: saved.data.documentId,
+      created: saved.data.created,
     };
   });
 

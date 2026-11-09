@@ -1128,13 +1128,22 @@ export interface PluginYtKbTranscript extends Struct.CollectionTypeSchema {
     };
   };
   attributes: {
-    author: Schema.Attribute.String &
+    author: Schema.Attribute.Text &
       Schema.Attribute.SetMinMaxLength<{
         maxLength: 200;
+      }>;
+    category: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 100;
+      }>;
+    channelId: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 64;
       }>;
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
+    description: Schema.Attribute.Text;
     durationSec: Schema.Attribute.Integer &
       Schema.Attribute.SetMinMax<
         {
@@ -1143,6 +1152,7 @@ export interface PluginYtKbTranscript extends Struct.CollectionTypeSchema {
         number
       >;
     fetchedAt: Schema.Attribute.DateTime;
+    keywords: Schema.Attribute.JSON;
     language: Schema.Attribute.String &
       Schema.Attribute.SetMinMaxLength<{
         maxLength: 10;
@@ -1157,17 +1167,24 @@ export interface PluginYtKbTranscript extends Struct.CollectionTypeSchema {
     publishedAt: Schema.Attribute.DateTime;
     rawSegments: Schema.Attribute.JSON;
     rawText: Schema.Attribute.RichText;
+    searchIndex: Schema.Attribute.JSON;
+    thumbnails: Schema.Attribute.JSON;
     thumbnailUrl: Schema.Attribute.Text &
       Schema.Attribute.SetMinMaxLength<{
         maxLength: 2000;
       }>;
-    title: Schema.Attribute.String &
+    title: Schema.Attribute.Text &
       Schema.Attribute.SetMinMaxLength<{
         maxLength: 300;
       }>;
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
+    videoPublishedAt: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 100;
+      }>;
+    viewCount: Schema.Attribute.BigInteger;
     youtubeVideoId: Schema.Attribute.String &
       Schema.Attribute.Required &
       Schema.Attribute.Unique &
@@ -1297,7 +1314,7 @@ export interface PluginYtKbVideo extends Struct.CollectionTypeSchema {
       Schema.Attribute.SetMinMaxLength<{
         maxLength: 280;
       }>;
-    videoAuthor: Schema.Attribute.String &
+    videoAuthor: Schema.Attribute.Text &
       Schema.Attribute.SetMinMaxLength<{
         maxLength: 200;
       }>;

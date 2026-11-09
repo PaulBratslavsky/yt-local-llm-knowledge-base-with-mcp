@@ -28,7 +28,8 @@
       "type": "string",
       "required": true,
       "unique": true,
-      "maxLength": 32
+      "maxLength": 32,
+      "column": { "unique": true }
     },
     "url": {
       "type": "text",
@@ -40,7 +41,7 @@
       "maxLength": 300
     },
     "videoAuthor": {
-      "type": "string",
+      "type": "text",
       "maxLength": 200
     },
     "videoThumbnailUrl": {

@@ -11,6 +11,7 @@
 
 import { z } from '@strapi/utils';
 import type { ToolDef } from '../registry';
+import { normalizeTagName } from '../../document-rules';
 import {
   formatTimecode,
   isStoredIndex,
@@ -48,7 +49,7 @@ export const crossSearchTranscriptsTool: ToolDef<z.infer<typeof schema>> = {
   execute: async ({ query, tags, perVideo, maxVideos }, { strapi }) => {
     const filters: Record<string, unknown> = { summaryStatus: { $eq: 'generated' } };
     if (tags && tags.length > 0) {
-      filters.tags = { name: { $in: tags.map((t) => t.trim().toLowerCase()) } };
+      filters.tags = { name: { $in: tags.map(normalizeTagName) } };
     }
 
     const videos = (await strapi.documents('plugin::yt-kb.video').findMany({

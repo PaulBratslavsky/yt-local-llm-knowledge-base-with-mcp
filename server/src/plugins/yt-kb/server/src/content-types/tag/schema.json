@@ -24,12 +24,14 @@
       "required": true,
       "unique": true,
       "minLength": 1,
-      "maxLength": 40
+      "maxLength": 40,
+      "column": { "unique": true }
     },
     "slug": {
       "type": "uid",
       "targetField": "name",
-      "required": true
+      "required": true,
+      "column": { "unique": true }
     },
     "videos": {
       "type": "relation",

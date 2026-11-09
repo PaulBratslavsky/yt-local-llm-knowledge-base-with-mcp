@@ -97,3 +97,50 @@ None. Every check ran against a real Strapi 5.61.0 on a scratch copy of the owne
 - **Commit file list.** M1's **Commit** bullet does not list this log. It is included in the M1 commit, as instructed.
 - **Generated types.** The commit list includes `server/types/generated/*` and step 10 says "commit whatever the boot writes". The boot changed no content, so there was nothing to stage. This is not an error; there was simply nothing to commit.
 - **Dry-run output.** Step 3.1 expects the dry run to show the three dependencies "planned at 5.61.0". The 5.61.0 dry-run output does not itemise them. The real run's `package.json` diff confirmed them instead. No STOP condition applied.
+
+## M2
+
+**Milestone:** M2 — Data model and integrity: unique keys, wider columns, new transcript attributes, race-safe writes. Started from HEAD `f9e2347` (M1), clean working tree. Ports 1340, 1341 and 3005 were free before the checks and after them. As with M1, the commit hash is reported in the hand-off, not written here.
+
+### Steps
+
+- **Step 0, facts on 5.61.0:** `@strapi/database` is 5.61.0. The dialect grep shows only `case 19` (SQLite) and `case '23502'` (Postgres). `database/dist/errors/` holds `database`, `index`, `invalid-date`, `invalid-datetime`, `invalid-relation`, `invalid-time` and `not-null`. `This attribute must be unique` occurs once in `validators.js`. `databaseErrorsToTransform` lists the four time/date/relation errors. `notNestedTransaction` and `forceMigration: true` are both present. `getUniqueIndexName(['yt_kb_tags','slug'])` returns `"yt_kb_tags_slug_uq"`. Every fact matches the spec, so no STOP condition applied.
+- **Step 1, pre-step:** `dupcheck server/.tmp/data.db` (the kit opens it read-only) → `{"duplicates": []}`, exit 0. **Owner DB backup:** `server/.tmp/data.db.pre-m2-1794193565`, `"integrity": "ok"`. No Strapi was booted on `server/.tmp/data.db`. Note that an older, unrelated `server/.tmp/data.db.pre-m2-1793939987` (5 Nov, from an earlier run) is also in that folder. A rollback must restore `…-1794193565`.
+- **Steps 2–16, 17, 18, 18a:** the code blocks were copied verbatim from the spec. A script extracted each fenced block by line number and dedented it, and every splice asserted its anchor lines first. Step 8's grep (`trim().toLowerCase()` under `mcp/tools/`) prints nothing at all.
+- **Step 19:** the first boot on the new schema rewrote `server/types/generated/contentTypes.d.ts` with the transcript's eight new attributes and `title`/`author`/`videoAuthor` as `Text`. That file is committed.
+
+### Verify results
+
+| # | Check | Result | What it proved / did not prove |
+|---|---|---|---|
+| 1 | Facts on 5.61.0 | as in step 0 | Proves that the error shapes, index naming and transaction nesting that `isUniqueViolation` and the checks rely on are unchanged on 5.61.0. |
+| 2 | Gates | `test:ts:back` 0, `yarn plugin:build` 0, `verify` 0, client `tsc --noEmit` 0, client build 0 (server `tsc --noEmit` 0 too). Plugin tests `{"passed":28,"failed":0}`. Client suite `{"total":326,"passed":324,"failed":0,"pending":2}` = M1's 318 + 8, with pending = M1's 0 + 2. | Proves that all five new test files run and pass and that nothing typechecks or builds worse. The plugin tests stub Strapi entirely, except db-errors' real in-memory better-sqlite3. |
+| 3 | Schema sync on a copy | dupcheck `[]`; `/_health` 204; `{"tables":true,"tagSlugs":true}`; `{"uniqueIndexes":5,"retypedToText":true,"newColumns":true}`. Extra (not in spec): SHA-256 of `video_author`, transcript `title`/`author` and `yt_kb_videos_tags_lnk`, compared between `data.db` (read-only) and the synced copy → all equal. | Proves the five indexes are created over real data, the SQLite table rebuilds keep every row, link and component count and every retyped value, and the eight new columns exist. Does not prove anything for Postgres. The copy also ran internal migration `upload::unsign-richtext-and-blocks-urls`, as M1 found. |
+| 4 | DB enforces uniqueness on its own | five `SQLITE_CONSTRAINT_UNIQUE`, `controlOk: true`; afterwards 0 `e8raw*` rows | Proves each index rejects a duplicate without Strapi, and that `trysql` rolled back. |
+| 5 | Tokens | `ok: true`, the three `plugin::yt-kb.*` actions granted | — |
+| 6 | REST races, 5 at once | all four `true`; statuses `[201,400,400,400,400]` each; counts `{"v":1,"t":1,"g":1,"d":1}`; no 5xx in the Strapi log (status tally 200/201/400 only). Losers: video/transcript `A … already exists. documentId=…`, tag/digest `This attribute must be unique`. | Proves one row per key and 400 for every loser, never 500, and never `2 errors occurred`. **Did not prove live** that a raw unique-index error is rethrown as the 400. On SQLite (pool `max 1`) the five writes are serialised, so every loser was stopped by the create rule or the validator, not by the index. That path is covered only by `document-rules.test.ts` (unit) plus Verify 4 (the index itself). |
+| 7 | Slugs (M-12) | `[[201,"e8 c++","e8-c"],[201,"e8 c#","e8-c-2"],[201,"日本語","tag"],[201,"中文","tag-2"]]`; the spaced repeat → 400 `This attribute must be unique` | Proves that a taken slug gets a suffix and that names are normalised (collapsed spaces, lower case) before the unique check. |
+| 8 | MCP tagVideo/untagVideo | exit 0: first `tagsAdded ["e8 mcp c++","e8 mcp c#"]`, `totalTags` 3; second call `[]`, 3; untag removed `["e8 mcp c++"]`, remaining 2; slugs `e8-mcp-c`, `e8-mcp-c-2`. Tool list `missing: []`, `toolCount` 22 (21 yt-kb + core `log`, as in M1). | Proves normalisation, suffixing and idempotence through the real MCP path with `strapi.db.transaction`. It does not observe the transaction boundary itself; `writes.test.ts` checks that against a fake. |
+| 9 | Not run (spec) | `addVideo`/`fetchTranscript` (YouTube) and the `shareVideo`/`saveDigest` handlers were not driven. | As the spec says (OQ-2). |
+| 10 | Live services | `{"passed":2,"failed":0,"skipped":0}`; counts `{"v":1,"g":1,"d":1}` → `true`; negative run without the variables `{"passed":0,"skipped":2}`. Strapi on 1341 stopped; 1340/1341/3005 free; no `strapi develop` process left. | Proves `createVideoService` (5 concurrent shares → 1 created + 4 `exists`, one documentId) and `upsertDigestService` (5 concurrent saves → 5 ok, 1 created, one documentId) through the real `strapiFetch`. |
+
+Scratch DB `server/.tmp/e8-m2.db*` was removed after Verify 10. Kit outputs are in `server/.tmp/e8/m2-*` (not committed).
+
+### Stubs and mocks
+
+- Plugin tests: `document-rules.test.ts`, `services/tags.test.ts` and `mcp/tools/writes.test.ts` use hand-written fake `strapi` objects (`writes.test.ts` stubs the fetcher, so no YouTube). `db-errors.test.ts` uses a real in-memory better-sqlite3.
+- Client `unique-recovery.test.ts` mocks `fetch` at the HTTP boundary. `unique-recovery.live.test.ts` mocks nothing.
+- Every Verify step from 3 on ran against a real Strapi 5.61.0 on a scratch copy of the owner's data.
+- **Environment beyond the spec's commands:** `admin:create-user` and `yarn develop` were started with `PROXY_URL=http://127.0.0.1:9` (per the implementing agent's instructions) and also `TRANSCRIPT_PROXY_URL=http://127.0.0.1:9`, which the M2-era fetcher reads. Nothing in M2's checks fetches from YouTube; the dead proxies only guarantee that nothing could.
+
+### Pre-existing problems found (not fixed)
+
+- `yt_kb_videos_transcript_lnk` has 194 rows for 195 videos and 195 transcripts, so one video has no transcript link. The count is unchanged by M2.
+- `mcp/tools/add-video.ts`: the header comment (lines 5–7, "this tool surfaces the resulting error") and the tool description ("Ingesting a video that already exists throws a duplicate-key error") are stale. The tool returns `action: 'exists'` both on the pre-check and now on a race. The spec leaves both unchanged; `docs/mcp.md` is M8's.
+- `client/src/lib/services/digests.ts` line 1 still says `api::digest.digest`. The tag schema's description says "Free-form tag on a Post".
+
+### Spec discrepancies
+
+- **Commit message:** the **Commit** bullet gives `M2: unique keys in the database, text columns, transcript attributes, race-safe writes`. As instructed, the commit's first line is the `### M2 — …` title instead. The bullet also does not list this log; it is included as instructed.
+- **Step 9 wording:** the literal replacement leaves `tag-utils.ts` reading "…applies this function, then freeTagSlug adds -2, -3, … when the slug is taken, to / every tag create that arrives without a slug…". The grammar is awkward, but I applied it as written. It is a comment, so behaviour is unaffected.
+- **Verify 3 order:** `strapi admin:create-user` loads Strapi, so it runs the schema sync, before `yarn develop` does. The comparison is still valid because `counts-before` is taken before `create-user`. But the "first boot on the new schema" is `create-user`, not `develop`.

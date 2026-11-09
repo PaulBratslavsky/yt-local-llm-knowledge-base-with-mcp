@@ -229,15 +229,6 @@ export const shareVideo = createServerFn({ method: 'POST' })
       if (result.kind === 'exists') {
         return { status: 'exists', video: stripVideoForClient(result.video)! };
       }
-
-      // Race recovery — if the server dedupe check caught what our pre-check
-      // missed, re-fetch and surface as 'exists' for clean redirect.
-      if (/already exists/i.test(result.error)) {
-        const recovered = await fetchVideoByVideoIdService(videoId);
-        if (recovered) {
-          return { status: 'exists', video: stripVideoForClient(recovered)! };
-        }
-      }
       return { status: 'error', error: result.error };
     }
 

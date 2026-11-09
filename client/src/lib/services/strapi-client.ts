@@ -59,6 +59,17 @@ export type StrapiMeta = {
   };
 };
 
+/** A duplicate on a unique key, as strapi-plugin-yt-kb reports it: a 400
+ *  whose message is yt-kb's "… already exists …" (its create rules) or
+ *  exactly "This attribute must be unique" — the plugin's Document Service
+ *  middleware rethrows every other duplicate (a validator failure on one
+ *  attribute or several, e.g. a lost tag race's "2 errors occurred", and a
+ *  raw unique-index error) in that one shape. M6 adds a `details.code`
+ *  check (strapiFetch carries `details` from M3). */
+export function isUniqueViolation(result: StrapiResult<unknown>): boolean {
+  return !result.ok && result.status === 400 && /already exists|must be unique/i.test(result.error);
+}
+
 type Method = 'GET' | 'POST' | 'PUT' | 'DELETE';
 
 type FetchOpts = {

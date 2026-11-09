@@ -1,5 +1,6 @@
 import type { Core } from '@strapi/strapi';
 import { fetchYouTubeMeta, fetchYouTubeTranscript } from './youtube-transcript';
+import { isUniqueViolation } from './db-errors';
 
 // The one place yt-kb fetches a transcript from YouTube and stores it.
 // Used by POST /api/yt-kb/transcripts/fetch (the app) and by the
@@ -56,9 +57,19 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
       return { action: 'updated', transcript: transcript as Record<string, any> };
     }
 
-    const transcript = await strapi.documents(UID as never).create({
-      data: { youtubeVideoId: videoId, ...data } as never,
-    });
-    return { action: 'created', transcript: transcript as Record<string, any> };
+    try {
+      const transcript = await strapi.documents(UID as never).create({
+        data: { youtubeVideoId: videoId, ...data } as never,
+      });
+      return { action: 'created', transcript: transcript as Record<string, any> };
+    } catch (err) {
+      // Another caller stored the same transcript while this one fetched.
+      if (!isUniqueViolation(err)) throw err;
+      const raced = (await strapi.documents(UID as never).findFirst({
+        filters: { youtubeVideoId: { $eq: videoId } } as never,
+      })) as Record<string, any> | null;
+      if (!raced) throw err;
+      return { action: 'skipped', transcript: raced };
+    }
   },
 });

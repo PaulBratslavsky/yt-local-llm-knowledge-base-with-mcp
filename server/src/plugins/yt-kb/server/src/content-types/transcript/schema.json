@@ -23,14 +23,15 @@
       "type": "string",
       "required": true,
       "unique": true,
-      "maxLength": 32
+      "maxLength": 32,
+      "column": { "unique": true }
     },
     "title": {
-      "type": "string",
+      "type": "text",
       "maxLength": 300
     },
     "author": {
-      "type": "string",
+      "type": "text",
       "maxLength": 200
     },
     "thumbnailUrl": {
@@ -55,6 +56,35 @@
     },
     "fetchedAt": {
       "type": "datetime"
+    },
+    "channelId": {
+      "type": "string",
+      "maxLength": 64
+    },
+    "thumbnails": {
+      "type": "json"
+    },
+    "viewCount": {
+      "type": "biginteger"
+    },
+    "description": {
+      "type": "text"
+    },
+    "keywords": {
+      "type": "json"
+    },
+    "category": {
+      "type": "string",
+      "maxLength": 100
+    },
+    "videoPublishedAt": {
+      "type": "string",
+      "maxLength": 100,
+      "description": "YouTube's display text for the publish date, stored as strapi-plugin-youtube-transcripts stores it. Not a datetime."
+    },
+    "searchIndex": {
+      "type": "json",
+      "description": "Model-free BM25 index over rawSegments (makeStoredIndex from services/bm25-core.ts, no contextualizer). Built by fetchAndStore and lazily by readers."
     }
   }
 }

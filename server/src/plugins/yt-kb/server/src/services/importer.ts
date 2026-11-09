@@ -103,29 +103,35 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
           throw new Error('documentId is required');
         }
         const data = toWriteData(model.attributes, record);
-        const existing = await docs.findOne({ documentId } as never);
-        if (existing) {
-          await docs.update({ documentId, data } as never);
-          result.updated += 1;
-        } else {
-          await docs.create({ data: { ...data, documentId } } as never);
-          result.created += 1;
-        }
 
-        // Set the dates last: any write through the Document Service stamps
-        // updatedAt with "now", and validation may drop createdAt. This goes
-        // straight to the row, the same way on SQLite and Postgres.
-        const createdAt = asDate(record.createdAt);
-        const updatedAt = asDate(record.updatedAt);
-        const stamps: AnyRecord = {};
-        if (createdAt) stamps.created_at = createdAt;
-        if (updatedAt) stamps.updated_at = updatedAt;
-        if (Object.keys(stamps).length > 0) {
-          await strapi.db
-            .connection(model.collectionName)
-            .where({ document_id: documentId })
-            .update(stamps);
-        }
+        // The write and the date stamp land together or not at all (M-18).
+        // The stamp uses the transaction's own knex (`trx`): a plain
+        // strapi.db.connection() query would wait for SQLite's single
+        // pooled connection, which this transaction holds.
+        const created = (await strapi.db.transaction(async ({ trx }) => {
+          const existing = await docs.findOne({ documentId } as never);
+          if (existing) {
+            await docs.update({ documentId, data } as never);
+          } else {
+            await docs.create({ data: { ...data, documentId } } as never);
+          }
+
+          // Set the dates last: any write through the Document Service stamps
+          // updatedAt with "now", and validation may drop createdAt. This goes
+          // straight to the row, the same way on SQLite and Postgres.
+          const createdAt = asDate(record.createdAt);
+          const updatedAt = asDate(record.updatedAt);
+          const stamps: AnyRecord = {};
+          if (createdAt) stamps.created_at = createdAt;
+          if (updatedAt) stamps.updated_at = updatedAt;
+          if (Object.keys(stamps).length > 0) {
+            await trx(model.collectionName).where({ document_id: documentId }).update(stamps);
+          }
+          return !existing;
+        })) as boolean;
+
+        if (created) result.created += 1;
+        else result.updated += 1;
       } catch (err) {
         result.failed.push({
           documentId,

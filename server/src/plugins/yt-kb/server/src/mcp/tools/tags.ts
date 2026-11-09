@@ -1,12 +1,12 @@
-// Tag tools: list, apply, remove. Tag names are normalized by the
-// middleware in server/src/index.ts (lowercase + trimmed) so we don't
-// repeat that here — pass whatever and it'll dedupe cleanly.
+// Tag tools: list, apply, remove. Names are normalized with normalizeTagName (document-rules.ts) for every lookup, the same as the create rule.
 
 import { z } from '@strapi/utils';
 import type { Core } from '@strapi/strapi';
 import type { ToolDef } from '../registry';
 import { resolveByEitherId } from './video-access';
-import { slugifyTagName } from './tag-utils';
+import { normalizeTagName } from '../../document-rules';
+import { findOrCreateTag } from '../../services/tags';
+import { withUniqueRetry } from '../../services/db-errors';
 
 const listSchema = z.object({
   limit: z.number().int().min(1).max(500).default(100),
@@ -61,39 +61,29 @@ export const tagVideoTool: ToolDef<z.infer<typeof tagVideoSchema>> = {
     const video = await resolveVideo(strapi, videoId);
     if (!video) return { error: `No video found for "${videoId}".` };
 
-    const resolvedIds = new Set<string>((video.tags ?? []).map((t) => t.documentId));
-    const added: string[] = [];
+    // New tags and the Video's tag list change together (M-18). A unique
+    // violation inside rolls the transaction back; withUniqueRetry runs it
+    // once more and the second pass finds the other writer's tag.
+    const apply = async () =>
+      (await strapi.db.transaction(async () => {
+        const resolvedIds = new Set<string>((video.tags ?? []).map((t) => t.documentId));
+        const added: string[] = [];
+        for (const raw of tags) {
+          const tag = await findOrCreateTag(strapi, raw);
+          if (!tag) continue;
+          if (!resolvedIds.has(tag.documentId)) {
+            resolvedIds.add(tag.documentId);
+            added.push(tag.name);
+          }
+        }
+        await strapi.documents('plugin::yt-kb.video').update({
+          documentId: video.documentId,
+          data: { tags: Array.from(resolvedIds) } as Record<string, unknown>,
+        });
+        return { videoDocumentId: video.documentId, tagsAdded: added, totalTags: resolvedIds.size };
+      })) as { videoDocumentId: string; tagsAdded: string[]; totalTags: number };
 
-    for (const raw of tags) {
-      const name = raw.trim().toLowerCase();
-      if (!name) continue;
-      let tag = (await strapi.documents('plugin::yt-kb.tag').findFirst({
-        filters: { name: { $eq: name } },
-      })) as { documentId: string } | null;
-      if (!tag) {
-        // Tag schema has `slug: uid(targetField: name)` required. The
-        // documents API does NOT auto-generate uid fields, so compute the
-        // slug explicitly to match what the admin UI would produce.
-        tag = (await strapi.documents('plugin::yt-kb.tag').create({
-          data: { name, slug: slugifyTagName(name) } as never,
-        })) as { documentId: string };
-      }
-      if (!resolvedIds.has(tag.documentId)) {
-        resolvedIds.add(tag.documentId);
-        added.push(name);
-      }
-    }
-
-    await strapi.documents('plugin::yt-kb.video').update({
-      documentId: video.documentId,
-      data: { tags: Array.from(resolvedIds) } as Record<string, unknown>,
-    });
-
-    return {
-      videoDocumentId: video.documentId,
-      tagsAdded: added,
-      totalTags: resolvedIds.size,
-    };
+    return withUniqueRetry(apply);
   },
 };
 
@@ -110,7 +100,7 @@ export const untagVideoTool: ToolDef<z.infer<typeof untagSchema>> = {
     const video = await resolveVideo(strapi, videoId);
     if (!video) return { error: `No video found for "${videoId}".` };
 
-    const drop = new Set(tags.map((t) => t.trim().toLowerCase()));
+    const drop = new Set(tags.map(normalizeTagName));
     const remaining = (video.tags ?? [])
       .filter((t) => !drop.has(t.name))
       .map((t) => t.documentId);
