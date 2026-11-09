@@ -75,9 +75,11 @@ First time only: `cd site && npx netlify login && npx netlify link`.
 
 ## Search
 
-`/search-index.json` is emitted at build time from the summary layer — 380 KB
-raw, 133 KB gzipped for 172 videos — and loaded once by the search island on
-the home page. Cmd-K focuses it, or navigates here from a page without it.
+`/search-index.json` is emitted at build time from the summary layer — one
+document per video (`src/lib/search-docs.ts`), so it grows with the library;
+`yarn site:publish` prints its size after each build — and loaded once by the
+search island on the home page. Cmd-K focuses it, or navigates here from a
+page without it.
 
 ## JavaScript
 

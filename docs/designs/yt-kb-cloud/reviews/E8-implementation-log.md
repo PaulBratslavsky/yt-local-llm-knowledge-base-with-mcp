@@ -605,3 +605,101 @@ These are Deployment steps 2–3; the agent did not run them:
 ### Open (owner)
 
 - **OQ-8 (Netlify build hooks)** is still open. M7 assumes the Netlify project is only published by hand.
+
+## M8
+
+**Milestone:** M8 — Docs. Started from HEAD `063049a` (M7), clean working tree. Docs only: nothing was booted, no `.env` file was opened, and no token was created or printed. As with M1–M7, the commit hash is reported in the hand-off, not written here.
+
+### Steps
+
+Every fact was read from the code on this branch, not from the spec's text:
+
+- config keys and defaults: `PSRC/index.ts`;
+- tool names, actions, titles and labels: `mcp-official/names.ts`, `names.test.ts`, `permissions.ts`, `tools.ts`;
+- adapter behaviour: `adapter.ts`;
+- the legacy migration and the Public/Authenticated cleanup: `permission-seeding/`;
+- token scopes, `--rotate` and the guards: `scripts/create-tokens.cjs`;
+- the import gate: `controllers/importer.ts`;
+- copying: `scripts/copy-content.mjs` and `import-batches.mjs`;
+- the fetcher's retries, reasons and log lines: `services/youtube-transcript.ts`, `fetcher.ts`, `fetch-errors.ts`, `bootstrap.ts`, `metadata-backfill.ts`;
+- the MIT notice: `youtube-transcript.ts`'s header;
+- the admin panel's token pages in 5.61.0: `@strapi/admin` translations, "Create new API Token" and "Create new Admin Token".
+
+Files:
+
+- **`server/src/plugins/yt-kb/README.md`** (new). It has the nine sections in M8's order: What it is, Install, Configuration, Tokens, MCP, tanstack-ai, Copying content in, Proxy, License. The pieces the brief asked for are:
+  - Tokens: the script for self-hosted and local hosts, the admin panel with the exact scopes for Strapi Cloud, and a "Pointing a frontend at it" subsection with the `/api/yt-kb` routes and the failure reasons.
+  - MCP: admin tokens with `plugin::yt-kb.tool.*` only, M-9's rule verbatim, and the 21-tool table.
+  - tanstack-ai: `yt-kb__<name>`.
+  - Copying content in: `import: true` while copying, plus the body-limit note.
+  - License: GPL-3.0-or-later, and the full MIT notice copied from `youtube-transcript.ts`.
+- **`CLAUDE.md`:**
+  - **Command table:** `setup` and `install:all` include the plugin. New rows for `plugin:build`, `plugin:test` (121) and `sync:bm25`. `site:publish` and `site:deploy` describe M7's behaviour.
+  - **Test counts:** client 430 (428 + 2 skipped, with the skipped file named), plugin 121, site 107 (unchanged).
+  - **"The server has no test suite"** is replaced by a description of the client and plugin suites.
+  - **Plugin and MCP sections:** a plugin typecheck line; config keys, the `import` gate, tokens, and install/build in setup; `yt_kb__*` names, per-tool permissions, the legacy migration, `ai-tools` and the M-9 rule; "Adding a tool" with the derived action and the zod 4 wording.
+  - **Tag-slug gotcha:** now points at `document-rules.ts`, with `-2`/`-3` suffixes and the surfaced create failure.
+  - **Stored BM25 index invalidation:** M4 had already updated it (plugin copy is the source), so it is unchanged.
+- **`docs/mcp.md`:**
+  - New tool table: name, permission, legacy tier.
+  - Per-tool authentication replaces the three-tier section, plus a "Legacy tiers, migrated at boot" section.
+  - The mint snippet carries the 21 per-tool actions, generated from the `names.test.ts` list.
+  - A `tanstack-ai` section, the proxy via `proxyUrl`, and workflows using the `yt_kb__` names.
+  - Architecture notes: registration and execution errors, zod 4, derived names, adding a tool, and `saveSummary`'s grounding.
+- **`README.md`:**
+  - The `STRAPI_API_TOKEN` row is now required, `yt-kb-app`, created with the script.
+  - The MCP diagram, snippet and text use the `yt_kb__` names and per-tool permissions.
+  - The `server/.env` table gains `MCP_ENABLED` and `PROXY_URL`.
+  - The Development block lists the three suites.
+  - See "Spec errors" for the Node and MySQL lines.
+- **`docs/operations.md`:** the bot-wall item now says `PROXY_URL` in the Strapi host's `server/.env`, read by `proxyUrl`, then restart Strapi and check the boot log's proxy line.
+- **`docs/architecture.md`:**
+  - §4.1 covers the hardened fetcher (retries, timeouts, reasons and statuses, what is stored, the two extra routes), the proxy check and the backfill.
+  - §11.6 covers names, per-tool permissions, the migration, skip-on-collision and `ai-tools`.
+  - The three bare tool names left in the file were renamed to `yt_kb__…`.
+- **`site/README.md`, "Search":** it no longer hard-codes a size. The text says one document per video (`src/lib/search-docs.ts`, read from the code), and that `yarn site:publish` prints the size after each build.
+
+### Verify results
+
+| # | Check | Result |
+|---|---|---|
+| 1 | `git grep -n TRANSCRIPT_PROXY_URL -- . ':!docs/designs'` | no output, exit 1 |
+| 2 | bare old tool names in `docs/mcp.md` and `README.md` | `{"total":0,"hits":[]}`, exit 0 |
+| 3 | distinct `plugin::yt-kb.tool.*` in `docs/mcp.md` | `21` |
+| extra | `npm pack --dry-run` in the plugin folder | lists `README.md` (18.9 kB); 75 files. No tarball written. |
+| extra | test counts behind the docs (vitest JSON reporter, run before editing) | client `{"total":430,"passed":428,"failed":0,"pending":2}` (52 files; the 2 are `unique-recovery.live.test.ts`); plugin 121/121 (20 files); site 107/107 |
+
+The plugin README has all nine sections, in order.
+
+### Not verified
+
+The README's admin-panel steps were not clicked through: Settings → API Tokens / Admin Tokens, the **Custom** type and the **AI tools** group. The labels come from the 5.61.0 admin translations and from `permissions.ts`. `npm install strapi-plugin-yt-kb` describes the published package, which does not exist yet; publishing is a non-goal.
+
+### Spec errors (the code wins)
+
+1. **"every 319"**: CLAUDE.md said 321, not 319 (M1 measured 321 as the baseline). All the counts were replaced with the measured ones.
+2. **`docs/operations.md` line 85**: the spec quotes `TRANSCRIPT_PROXY_URL` in `client/.env`, but M3 had already changed that line to `PROXY_URL`. Only the restart and boot-log wording was added.
+3. **"Adding a tool now also needs a per-tool action — follow M5's file"**: there is no action to add. `permissions.ts` generates one action per `tools.ts` entry from the tool's name. What a new tool does need is updates to the pinned lists and counts in `names.test.ts`, `permissions.guard.test.ts` and `adapter.test.ts`. The old CLAUDE.md text said a `tools.ts` entry gives "a title"; titles are derived too, and entries carry only `tool` and `sideEffects`.
+4. **Tokens "with Strapi stopped"**: `create-tokens.cjs` requires that only for SQLite. It refuses when something listens on the app's port, and on PostgreSQL it runs next to a live Strapi. It also needs a built TypeScript app (`dist/config`). The README says both.
+5. **Configuration "exactly as in M3/M5"**: the table follows `PSRC/index.ts` (defaults and validator) and `metadata-backfill.ts`: 500 rows per boot, 1.5 s apart, only rows whose `thumbnails` is empty.
+
+### Fixed beyond M8's file list (code facts M1–M7 made wrong)
+
+- **`README.md`:**
+  - "Node 20+" → "Node 22.12+" (M1, precondition 4).
+  - `DATABASE_CLIENT` "(or `mysql`)" removed: MySQL and MariaDB are unsupported.
+- **`CLAUDE.md`:** "the sole step of CI's `Test` job" → `Test` is a step of the `ci` job in `.github/workflows/ci.yml`.
+- **`docs/mcp.md`:**
+  - `mcp-permissions.guard.test.ts` → `mcp-official/permissions.guard.test.ts`.
+  - The result guard was "~900 KB"; the code's `MAX_WIRE_BYTES` is 950 000, measured on doubled bytes plus 2 048.
+  - The Content Manager CRUD-tools note now carries the M-9 rule.
+
+### Pre-existing problems found (not fixed)
+
+- **No `LICENSE` file:** `README.md` links `./LICENSE`, but there is none at the repo root or in the plugin. The npm package carries only the `license` field.
+- **`docs/architecture.md` §10 file map:** it still lists `server/src/api/*` and `server/src/mcp/`, which are gone since the plugin move. It is out of M8's scope.
+- **`CLAUDE.md`:**
+  - "see the gotcha below" (Tests) points at no gotcha.
+  - "Two route loaders (`/feed`, `/learn/$videoId`, `/video/$documentId`)" lists three.
+- **`add-video.ts` description:** it still says a duplicate "throws a duplicate-key error" (noted in M2, M3 and M5). The docs don't repeat it; OQ-4 keeps descriptions unchanged.
+- **Old tier names:** `docs/adr/0008-…` and `docs/superpowers/plans/2026-08-22-…` still use them. They are historical records and were left as they are.

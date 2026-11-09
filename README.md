@@ -14,7 +14,7 @@ No accounts. No cloud AI. Runs entirely on your machine against a local [Ollama]
 - **Cross-video digests** — synthesize 2–5 videos into structured themes, contradictions, unique insights, and a long-form article. Saved digests are upserted by a deterministic `videoSetKey` so re-saving the same selection updates in place instead of duplicating.
 - **Notes that stick** — "Summarize to note" turns a chat conversation into a markdown note attached to the video. MCP clients (Claude Desktop, etc.) can also leave notes. Every note is markdown; every note renders timecode chips back into the player.
 - **Semantic discovery** — per-video embeddings from the summary layer power "Related videos" on the learn page and library-wide semantic search on the feed. Same `embeddings.ts` infra ready to layer onto transcript chunks for moment-level search.
-- **Frontier-model bridge via MCP** — the official [Strapi MCP server](https://modelcontextprotocol.io) (built into Strapi 5.47+) at `/mcp` lets you drive the knowledge base from Claude Desktop / Claude Code / Cursor with a bigger model when you need one. 21 tools cover transcripts, videos, tags, notes — tiered read/write/maintenance, defined once in Strapi, no duplication with the in-app chat. See [`docs/mcp.md`](./docs/mcp.md).
+- **Frontier-model bridge via MCP** — the official [Strapi MCP server](https://modelcontextprotocol.io) (built into Strapi 5.47+) at `/mcp` lets you drive the knowledge base from Claude Desktop / Claude Code / Cursor with a bigger model when you need one. 21 tools (`yt_kb__*`) cover transcripts, videos, tags, notes — each with its own admin permission, defined once in Strapi (strapi-plugin-yt-kb), no duplication with the in-app chat. See [`docs/mcp.md`](./docs/mcp.md).
 - **Handles long videos** — map-reduce summary pipeline kicks in past ~15K tokens. Transcript caching means regeneration never re-hits YouTube.
 - **Fully TanStack stack** — [TanStack Start](https://tanstack.com/start) (Vite + React 19) + [TanStack Router](https://tanstack.com/router) + TanStack AI + [Tailwind v4](https://tailwindcss.com).
 
@@ -36,7 +36,7 @@ No accounts. No cloud AI. Runs entirely on your machine against a local [Ollama]
 
 ## Quick start
 
-**Prerequisites:** Node 20+, [Yarn Classic](https://classic.yarnpkg.com/), [Ollama](https://ollama.com) installed.
+**Prerequisites:** Node 22.12+, [Yarn Classic](https://classic.yarnpkg.com/), [Ollama](https://ollama.com) installed.
 
 ```bash
 # 1. Install everything + copy .env files
@@ -165,9 +165,9 @@ Claude Desktop ──▶ POST /mcp  (Streamable HTTP + admin Bearer token)
                    │
                    ▼
                  Official Strapi MCP server (5.47+)
-                 ├── listVideos / getVideo / searchVideos / addVideo / saveSummary
-                 ├── listTranscripts / getTranscript / searchTranscript / findTranscripts / fetchTranscript
-                 └── listTags / tagVideo / untagVideo / saveNote / …  (21 tools, tiered read/write/maintenance)
+                 ├── yt_kb__list_videos / yt_kb__get_video / yt_kb__search_videos / yt_kb__add_video / yt_kb__save_summary
+                 ├── yt_kb__list_transcripts / yt_kb__get_transcript / yt_kb__search_transcript / yt_kb__find_transcripts / yt_kb__fetch_transcript
+                 └── yt_kb__list_tags / yt_kb__tag_video / yt_kb__untag_video / yt_kb__save_note / …  (21 tools, one permission each)
 ```
 
 **Quick setup:**
@@ -177,9 +177,11 @@ Claude Desktop ──▶ POST /mcp  (Streamable HTTP + admin Bearer token)
 
    ```bash
    printf '%s\n' \
-     "const u=(await strapi.db.query('admin::user').findMany({populate:['roles']}))[0]; const t=await strapi.service('admin::api-token-admin').create({name:'claude-'+Date.now(), description:'MCP', lifespan:null, adminUserOwner:u.id, adminPermissions:[{action:'plugin::yt-kb.read'},{action:'plugin::yt-kb.write'},{action:'plugin::yt-kb.maintenance'}]}, u); console.log('TOKEN='+t.accessKey);" \
+     "const u=(await strapi.db.query('admin::user').findMany({populate:['roles']}))[0]; const t=await strapi.service('admin::api-token-admin').create({name:'claude-'+Date.now(), description:'MCP', lifespan:null, adminUserOwner:u.id, adminPermissions:[{action:'plugin::yt-kb.tool.library-stats'},{action:'plugin::yt-kb.tool.list-videos'},{action:'plugin::yt-kb.tool.search-videos'},{action:'plugin::yt-kb.tool.get-video'},{action:'plugin::yt-kb.tool.get-transcript'},{action:'plugin::yt-kb.tool.search-transcript'},{action:'plugin::yt-kb.tool.find-transcripts'},{action:'plugin::yt-kb.tool.cross-search-transcripts'},{action:'plugin::yt-kb.tool.list-transcripts'},{action:'plugin::yt-kb.tool.aggregate-by-tag'},{action:'plugin::yt-kb.tool.list-untagged'},{action:'plugin::yt-kb.tool.list-tags'},{action:'plugin::yt-kb.tool.related-videos'},{action:'plugin::yt-kb.tool.get-readable-article'},{action:'plugin::yt-kb.tool.generate-digest'},{action:'plugin::yt-kb.tool.save-summary'},{action:'plugin::yt-kb.tool.tag-video'},{action:'plugin::yt-kb.tool.untag-video'},{action:'plugin::yt-kb.tool.save-note'},{action:'plugin::yt-kb.tool.add-video'},{action:'plugin::yt-kb.tool.fetch-transcript'}]}, u); console.log('TOKEN='+t.accessKey);" \
      ".exit" | npx strapi console
    ```
+
+   This grants all 21 per-tool permissions (`plugin::yt-kb.tool.*`); drop the ones the token should not have. Or create it in the admin panel: Settings → Admin Tokens → Create new Admin Token, and tick the tools under the plugin's **AI tools** permissions. Never give an agent's token Content Manager permissions on yt-kb types — see [`docs/mcp.md`](./docs/mcp.md).
 
 3. Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
@@ -198,11 +200,11 @@ Claude Desktop ──▶ POST /mcp  (Streamable HTTP + admin Bearer token)
    }
    ```
 
-4. ⌘Q Claude Desktop and reopen. The connector toggles on; 21 tools appear (or fewer for a read-only token).
+4. ⌘Q Claude Desktop and reopen. The connector toggles on; the `yt_kb__*` tools the token holds appear (21 with the snippet above).
 
 For Claude Code: `claude mcp add yt-knowledge-base --transport http http://localhost:1340/mcp -H "Authorization: Bearer YOUR_TOKEN"`.
 
-Full walkthrough (Cursor, MCP Inspector, permission tiers, auth rotation) in [`docs/mcp.md`](./docs/mcp.md).
+Full walkthrough (Cursor, MCP Inspector, per-tool permissions and the migration from the old tiers, `tanstack-ai`, auth rotation) in [`docs/mcp.md`](./docs/mcp.md).
 
 **Design constraint: no tool duplication.** Tools are defined once in `server/src/plugins/yt-kb/server/src/mcp/tools/` and consumed via MCP. The in-app Ollama chat does not use MCP — it stays on its BM25 + `web_search` path so local inference doesn't pay the protocol overhead. The two worlds meet at the same Strapi data layer, not at the tool definitions.
 
@@ -215,7 +217,7 @@ Full walkthrough (Cursor, MCP Inspector, permission tiers, auth rotation) in [`d
 | Variable | Default | Purpose |
 |---|---|---|
 | `STRAPI_URL` | `http://localhost:1340` | Local Strapi |
-| `STRAPI_API_TOKEN` | *(empty)* | Optional bearer token for locked-down deployments |
+| `STRAPI_API_TOKEN` | *(empty)* | **Required.** The `yt-kb-app` custom Content API token, scoped to yt-kb only. Create it with the plugin's token script (Strapi stopped): `cd server && node src/plugins/yt-kb/scripts/create-tokens.cjs --out-app <file> --out-site <file>`, then paste the `--out-app` file's contents here. The plugin grants the Public role nothing, so with this empty every request fails with 403. Never use a Full-access token: the app has no sign-in. Server-only. |
 | `OLLAMA_BASE_URL` | `http://localhost:11434/v1` | Ollama endpoint (the `/v1` suffix is stripped for the TanStack AI adapter, but kept for env-file portability) |
 | `OLLAMA_MODEL` | `gemma4-kb:latest` | Summary generation model |
 | `OLLAMA_CHAT_MODEL` | *(inherits `OLLAMA_MODEL`)* | Separate model for chat Q&A if you want one |
@@ -244,10 +246,12 @@ Standard Strapi config. `yarn setup` copies `server/.env.example` into `server/.
 | `TRANSFER_TOKEN_SALT` | *(generated)* | Salt for the transfer-tokens used by `strapi export` / `strapi import` |
 | `ENCRYPTION_KEY` | *(generated)* | Symmetric key for Strapi's field-level encryption |
 | `JWT_SECRET` | *(generated)* | Signs users-and-permissions JWTs |
-| `DATABASE_CLIENT` | `sqlite` | `sqlite` for local dev; set to `postgres` (or `mysql`) in production |
+| `DATABASE_CLIENT` | `sqlite` | `sqlite` for local dev; set to `postgres` in production. MySQL / MariaDB are not supported by strapi-plugin-yt-kb |
 | `DATABASE_FILENAME` | `.tmp/data.db` | SQLite file path (relative to `server/`). Ignored when `DATABASE_CLIENT` is not sqlite |
-| `DATABASE_HOST` / `_PORT` / `_NAME` / `_USERNAME` / `_PASSWORD` | *(empty)* | Connection details for Postgres/MySQL. Leave empty for SQLite. |
+| `DATABASE_HOST` / `_PORT` / `_NAME` / `_USERNAME` / `_PASSWORD` | *(empty)* | Connection details for Postgres. Leave empty for SQLite. |
 | `DATABASE_SSL` | `false` | Enable SSL for the DB connection (managed Postgres providers usually require this) |
+| `MCP_ENABLED` | `true` | Strapi's official MCP server at `/mcp` |
+| `PROXY_URL` | *(empty)* | Residential proxy for every YouTube request strapi-plugin-yt-kb makes (its `proxyUrl` setting defaults to this). Leave empty locally; set it on a cloud host, whose IPs YouTube tends to block. The boot log shows the proxy check. |
 
 **Regenerating secrets:** each of the six `*_KEY` / `*_SECRET` / `*_SALT` values is just a base64-encoded 16-byte random string. Regenerate with:
 
@@ -288,7 +292,9 @@ Transcripts over ~15K estimated tokens split into 2500-word windows (50-word ove
 yarn dev            # Strapi + client only (skip the Ollama env setup)
 yarn client         # Client only (expects Strapi already running)
 yarn server         # Strapi only
-yarn --cwd client test    # Run vitest suite
+yarn test           # Client vitest suite (430 tests, 2 of them skipped live checks)
+yarn plugin:test    # strapi-plugin-yt-kb's vitest suite (121 tests)
+yarn site:test      # Static site's vitest suite (107 tests)
 ```
 
 `server/` and `client/` are one unified git repo rooted here (no nested `.git` directories, no independent history) — active development happens on feature branches off `main`, merged in when ready.
