@@ -48,7 +48,7 @@ export type StrapiQuery = {
 
 export type StrapiResult<T> =
   | { ok: true; data: T; meta?: StrapiMeta }
-  | { ok: false; status: number; error: string };
+  | { ok: false; status: number; error: string; details?: Record<string, unknown> };
 
 export type StrapiMeta = {
   pagination?: {
@@ -200,14 +200,19 @@ export async function strapiFetch<T>(
     // res.text()/json() twice would throw on a consumed body.
     const raw = await res.text().catch(() => '');
     let error = `Strapi error ${res.status}`;
+    let details: Record<string, unknown> | undefined;
     try {
-      const parsed = JSON.parse(raw) as { error?: { message?: string } };
+      const parsed = JSON.parse(raw) as { error?: { message?: string; details?: unknown } };
       if (parsed.error?.message) error = parsed.error.message;
+      const d = parsed.error?.details;
+      if (d && typeof d === 'object' && !Array.isArray(d) && Object.keys(d).length > 0) {
+        details = d as Record<string, unknown>;
+      }
     } catch {
       /* not JSON */
     }
     logFailure(method, url, res.status, raw);
-    return { ok: false, status: res.status, error };
+    return details ? { ok: false, status: res.status, error, details } : { ok: false, status: res.status, error };
   }
 
   // Some endpoints (DELETE, no-content writes) return nothing. We treat

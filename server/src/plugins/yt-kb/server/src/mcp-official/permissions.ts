@@ -16,6 +16,12 @@ export const MCP_ACTIONS = {
   MAINTENANCE: 'plugin::yt-kb.maintenance',
 } as const;
 
+/** Gates GET /yt-kb/yt-transcript/:videoId (admin route) — the action
+ *  youtube-transcripts uses for its route, and the per-tool action M5 gives
+ *  the fetchTranscript tool. Registered here ahead of M5 so the route works
+ *  now; M5 keeps this uid (it must not register it a second time). */
+export const FETCH_TRANSCRIPT_ACTION = 'plugin::yt-kb.tool.fetch-transcript';
+
 const ACTION_DEFS = [
   {
     section: 'plugins',
@@ -40,6 +46,13 @@ const ACTION_DEFS = [
     subCategory: 'MCP tools',
     displayName: 'Use maintenance MCP tools (hit YouTube)',
     uid: 'maintenance',
+  },
+  {
+    section: 'plugins',
+    pluginName: 'yt-kb',
+    subCategory: 'AI tools',
+    displayName: 'Fetch transcript',
+    uid: 'tool.fetch-transcript',
   },
 ];
 

@@ -8,6 +8,7 @@ import {
   linkVideoToTranscriptService,
   markSummaryFailedService,
   requestTranscriptFetchService,
+  type TranscriptFetchReason,
   updateVideoSummaryService,
   type StrapiTranscript,
   type StrapiVideo,
@@ -97,9 +98,29 @@ type TranscriptData = {
   prepared?: PreparedTranscript | null;
 };
 
+/** A failed transcript fetch, with what the plugin said about it. */
+class TranscriptFetchFailure extends Error {
+  readonly status: number;
+  readonly reason: TranscriptFetchReason | null;
+
+  constructor(message: string, status: number, reason: TranscriptFetchReason | null) {
+    super(message);
+    this.name = 'TranscriptFetchFailure';
+    this.status = status;
+    this.reason = reason;
+  }
+}
+
+// Retry only when Strapi was unreachable or the plugin could not reach
+// YouTube. The plugin already retries YouTube's rate limits itself
+// (3 attempts, Retry-After, fresh session), and no captions, a bot wall
+// or an invalid id will not change on a second try.
+function isRetryableTranscriptFailure(err: unknown): boolean {
+  return err instanceof TranscriptFetchFailure && (err.status === 0 || err.reason === 'network');
+}
+
 // Ask Strapi to fetch the transcript from YouTube and store it, and return
-// the stored row. Retries only failures that look transient (a dropped
-// connection to YouTube); "no captions" and the like fail at once.
+// the stored row. Retried only per isRetryableTranscriptFailure.
 async function fetchTranscriptThroughStrapi(
   videoId: string,
   force: boolean,
@@ -111,11 +132,12 @@ async function fetchTranscriptThroughStrapi(
     const result = await withRetry(
       async () => {
         const r = await requestTranscriptFetchService(videoId, { force });
-        if (!r.success) throw new Error(r.error);
+        if (!r.success) throw new TranscriptFetchFailure(r.error, r.status, r.reason);
         return r;
       },
       {
         attempts: 3,
+        shouldRetry: isRetryableTranscriptFailure,
         onRetry: (err, attempt, delayMs) => {
           const cause = err instanceof Error ? err.message : 'network error';
           logPhase(videoId, `transcript ↻ retry ${attempt}/2 in ${delayMs}ms`, {

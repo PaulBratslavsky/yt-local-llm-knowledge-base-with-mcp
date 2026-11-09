@@ -177,7 +177,7 @@ The app does not talk to YouTube. It asks Strapi — `POST /api/yt-kb/transcript
 
 The plugin uses `youtubei.js` against YouTube's Innertube API — the same API the web client uses. Caption tracks come with **millisecond-precise segment timings** that downstream chunking preserves.
 
-The residential proxy, `TRANSCRIPT_PROXY_URL`, is set in Strapi's environment (`server/.env`), not the app's. It's needed only where YouTube shows its "confirm you're not a bot" wall — typically datacenter and cloud IPs. Localhost is fine.
+The residential proxy is the plugin setting `proxyUrl`, which defaults to `PROXY_URL` in Strapi's environment (`server/.env`), not the app's. It's needed only where YouTube shows its "confirm you're not a bot" wall — typically datacenter and cloud IPs. Localhost is fine.
 
 ### 4.2 Clean
 

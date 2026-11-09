@@ -82,7 +82,7 @@ The transcript fetch (youtubei.js) didn't succeed.
 
 **Likely causes:**
 
-- **YouTube bot wall.** Your IP is hitting captcha. Set `TRANSCRIPT_PROXY_URL` in `client/.env` to a residential proxy.
+- **YouTube bot wall.** Your IP is hitting captcha. Set `PROXY_URL` in `server/.env` (the yt-kb plugin setting `proxyUrl`) to a residential proxy.
 - **Live URL during stream.** YouTube hasn't auto-generated captions yet. `/live/<id>` will fail until the stream ends. Wait, retry once it's archived.
 - **Captions disabled** on the video (creator opt-out). No fix — this app is caption-dependent.
 - **Private / age-gated.** Same — youtubei.js is unauthenticated.

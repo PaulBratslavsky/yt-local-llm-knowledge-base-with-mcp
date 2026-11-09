@@ -144,3 +144,85 @@ Scratch DB `server/.tmp/e8-m2.db*` was removed after Verify 10. Kit outputs are 
 - **Commit message:** the **Commit** bullet gives `M2: unique keys in the database, text columns, transcript attributes, race-safe writes`. As instructed, the commit's first line is the `### M2 — …` title instead. The bullet also does not list this log; it is included as instructed.
 - **Step 9 wording:** the literal replacement leaves `tag-utils.ts` reading "…applies this function, then freeTagSlug adds -2, -3, … when the slug is taken, to / every tag create that arrives without a slug…". The grammar is awkward, but I applied it as written. It is a comment, so behaviour is unaffected.
 - **Verify 3 order:** `strapi admin:create-user` loads Strapi, so it runs the schema sync, before `yarn develop` does. The comparison is still valid because `counts-before` is taken before `create-user`. But the "first boot on the new schema" is `create-user`, not `develop`.
+
+## M3
+
+**Milestone:** M3 — Fetcher parity and REST routes. Started from HEAD `acf9dd6` (M2), clean working tree. Ports 1340, 1341 and 3005 were free before the checks and after them. As with M1 and M2, the commit hash is reported in the hand-off, not written here.
+
+### Pre-check on 5.61.0
+
+All four facts hold on the installed 5.61.0:
+
+- A plugin's admin routers get the `/<pluginName>` prefix (`@strapi/core/dist/services/server/register-routes.js`, now around lines 76–86).
+- `admin-token.js` is registered for the `admin` auth scope (`@strapi/admin/dist/server/server/src/register.js:22`).
+- `hasPermissions` reads `ctx.state.userAbility` (`policies/hasPermissions.js:37`).
+- `config.default` may be a function, called with `{ env }` (`@strapi/core/dist/loaders/plugins/index.js`, `applyUserConfig`).
+- `/_health` is routed (`services/server/index.js:37`) and answered 204 (Verify 3).
+
+No STOP condition applied.
+
+### Steps
+
+- **Steps 1–7 and 10, the whole-file code blocks:** a script copied them verbatim from the spec, taking each fenced block from a given line number to its closing fence and dedenting it. The files are:
+  - `PSRC/services/fetch-errors.ts`
+  - `services/youtube-transcript.ts`
+  - `services/fetcher.ts`
+  - `services/metadata-backfill.ts`
+  - `bootstrap.ts`
+  - `index.ts`
+  - `controllers/fetcher.ts`
+  - `mcp/tools/fetch-transcript.ts`
+- **Step 5, one approved change:** `bootstrap.ts` line 15 is `if (result.success === true) {` instead of `if (result.success) {`. See "Spec discrepancies".
+- **Steps 8, 9, 11 and 13–15, the edits:** each splice asserted its anchor first. In step 14 the spec's block (the reason type, the reason set, the new doc comment and the function) replaced everything from the old doc comment to the end of the function. The `TranscriptFetchAction` line was kept.
+- **Step 12, the plugin tests:** I wrote these from the spec's tables. 12a's preamble is verbatim.
+  - `services/fetcher.test.ts`: 11 tests, the 10 table cases plus `maskProxyUrl`.
+  - `controllers/fetcher.test.ts`: 12 tests. The six reasons are an `it.each`.
+  - `bootstrap.test.ts`: 4 tests.
+  - `services/metadata-backfill.test.ts`: 2 tests.
+  - `mcp/tools/fetch-transcript.test.ts`: 4 tests.
+- **Steps 16 and 17, the client tests:** step 16 edits the existing case and appends the spec's verbatim `describe` (4 tests). Step 17 adds 4 tests to `videos.test.ts` and 1 to `strapi-client.test.ts`, the last inside the existing `describe('strapiFetch')`.
+- **Step 18, the proxy variable:**
+  - `server/.env.example`'s last block was replaced verbatim.
+  - The one-line replacements went into `client/.env.example`, `CLAUDE.md`, `docs/architecture.md` and `docs/operations.md`.
+  - No `.env` file was opened. **Owner step:** if `server/.env` has a value for `TRANSCRIPT_PROXY_URL`, rename that key to `PROXY_URL` and keep the value. Nothing reads the old name any more.
+- **Generated types:** the boot changed nothing in `server/types/generated/` (M3 has no schema change).
+
+### Verify results
+
+| # | Check | Result | What it proved / did not prove |
+|---|---|---|---|
+| 0 | Ports | 1340, 1341 and 3005 all `"busy":false` | — |
+| 1 | Gates | Plugin vitest `{"passed":61,"failed":0,"missing":[]}`, so all 10 named files ran and passed (61 > 28, written to `server/.tmp/e8/plugin-passed-m3.txt`). `test:ts:back` 0, plugin build 0, client `tsc --noEmit` 0, server `tsc --noEmit` 0. Client suite `{"total":335,"passed":333,"failed":0,"pending":2}` = 326 + 9. `git grep -n TRANSCRIPT_PROXY_URL -- . ':!docs/designs'` printed nothing (exit 1). | Proves the new code typechecks, builds and passes its unit tests. The plugin tests stub YouTube and undici entirely (see "Stubs and mocks"). The client suite was run as `npx vitest run --reporter=json` in `client/`, which is what `yarn test` runs. Ollama was up (the owner's process) and the owner's Strapi was down. |
+| 2 | Kit | `token`, `mcpx`, `tokenOf` and the new `race` were spliced in verbatim. `node --check` passes. With no command, the kit exits 1 and lists `token` and `mcpx`. | — |
+| 3 | Scratch Strapi | backup `integrity: ok`; `create-user` 0; `/_health` 204; `grantedActions` = `["plugin::yt-kb.maintenance","plugin::yt-kb.tool.fetch-transcript"]`; tokens `app`, `noscope` and `admread` each `ok: true`, with the granted scopes as requested; both fixture POSTs 201 | Proves the new admin action registers and can be granted, and that the new content-API scope `plugin::yt-kb.fetcher.getOrFetch` exists. |
+| 4 | Boot log | `Proxy configured: http://127.0.0.1:9` ×1, `Proxy connection FAILED` ×1, `registered 4 MCP admin permission` ×1 | Proves the `proxyUrl` default comes from `PROXY_URL` and the boot check runs without blocking boot. `strapi admin:create-user` also runs bootstrap: its own log, `m3-create-user.log`, shows the same failed proxy check. |
+| 5 | REST, content API | all 16 checks passed: by id; by `watch?v=…&t=10s`, `youtu.be` and `live` URLs; `fetching m3StoredAAA` count 0; invalid id 400 `invalid_id`, logged once; missing id 502 `network`, logged once; anonymous 403; token without the scope 403; POST skipped, bad id 400 `invalid_id`, `force:"yes"` 400 (not a TranscriptFetchError), `force:true` 502 `network`; the stored row is untouched (`de`, `M3 stored`) | Proves the route, the URL parsing, the status mapping and the single log line against real Strapi. It only exercised `network` and `invalid_id`; the other four reasons are covered by the unit tests alone. |
+| 6 | Admin route | `mcp` token 200; `admread` 403; no token 401 | Proves `admin::hasPermissions` gates the route with `plugin::yt-kb.tool.fetch-transcript` for an admin API token. An admin browser session was not tried. |
+| 7 | MCP | `fetchTranscript`'s inputSchema has no `proxyUrl`; the call for `m3MissingAA` returns `structuredContent.reason == "network"` with `isError` false; `videoId:"bad"` is rejected (`rpcError` or `isError`). The tool list for the `mcp` token: `log`, `addVideo`, `fetchTranscript`. | Proves the tool returns the reason as a result. `addVideo` was listed but not called. |
+| 8 | Through the app | `/learn/m3PendingAA` 200; `summaryStatus` became `failed` within about 2 s; fetch-failed log lines N=5 → 8 (N+3); `Generation failed` appears once in the rendered HTML | Proves the app retries the plugin's `network` reason three times and shows the failed state. **Tool note:** in this agent's shell, `grep` is a wrapper function. It prints nothing for this HTML because the page contains NUL bytes (TanStack Router's serialized match ids use `\u0000` separators). `/usr/bin/grep -c 'Generation failed'` on the same `curl` output prints `1`, and a Node count agrees. The spec's command is correct; only the agent's wrapper differed. The app's one oEmbed request for `m3PendingAA` went to youtube.com, as the spec discloses; nothing else did. |
+| 9 | Clean up | killed the listeners on 1341 and 3005 (both started here); `rm -f server/.tmp/e8-m3.db*`; 1340, 1341 and 3005 free; no `strapi develop` or `vite dev` left | — |
+
+Kit outputs are in `server/.tmp/e8/m3-*` (not committed). The kit's pre-M3 copy is `server/.tmp/e8/e8.mjs.pre-m3`.
+
+### Stubs and mocks
+
+- **Plugin tests:**
+  - `youtubei.js` is mocked with `vi.mock`.
+  - Caption and oEmbed requests go to a stubbed global `fetch`.
+  - `undici` is mocked in `bootstrap.test.ts`.
+  - `fetchYouTubeMetadata` is mocked in `metadata-backfill.test.ts`.
+  - Strapi, `ctx` and the fetcher service are hand-written fakes.
+  - Nothing touches the network.
+- **Client tests:** `fetch` is mocked at the HTTP boundary (`videos.test.ts`, `strapi-client.test.ts`). The `./videos` services are mocked in `learning.persistence.test.ts`.
+- **Verify 3–8:** these ran against a real Strapi 5.61.0 on a scratch copy of the owner's data, with `PROXY_URL=http://127.0.0.1:9`. The instructions also asked for `TRANSCRIPT_PROXY_URL=http://127.0.0.1:9`, so I set it as well; the M3 code no longer reads it.
+
+### Pre-existing problems found (not fixed)
+
+- **Duplicated failure message:** Strapi's console log prints the failure message twice, for example `transcript fetch failed: m3PendingAA (network): Could not reach YouTube: fetch failed Could not reach YouTube: fetch failed`. The spec's comment in `fetcher.ts` says the default console format prints only the message. On 5.61.0 it also appends the meta object's `message` field. The output is cosmetic and every check still passes. This is new behaviour from M3's code, not pre-existing, but I did not change it because the spec fixes the text.
+- **Stale `add-video.ts` text:** its header comment and description still mention a duplicate-key error (as already noted for M2).
+
+### Spec discrepancies
+
+- **Step 5, `bootstrap.ts`: the spec's code did not typecheck.** The verbatim `if (result.success) { … } else { …result.error… }` fails `test:ts:back` with `TS2339: Property 'error' does not exist on type '{ success: true; ip: string; } | { success: false; error: string; }'`. The plugin's tsconfig extends `@strapi/typescript-utils/tsconfigs/server`, which sets `"strict": false`. Without `strictNullChecks`, a truthiness check does not narrow a union on a boolean discriminant. A scratch compile under the same base config showed that `=== true`, `=== false` and `'error' in` all narrow. I stopped and asked. **Ruling:** explicit `=== true` comparison. The plugin's strict:false tsconfig doesn't narrow a boolean discriminant on truthiness; behaviour is identical. Applied at `bootstrap.ts` line 15. The tsc error itself was reported at line 18, where `result.error` is used. No other occurrence of the pattern exists in M3's plugin code; afterwards `test:ts:back` is clean.
+- **Commit message:** as instructed, the first line is the `### M3 — …` title. The spec's milestone has no separate **Commit** bullet.
+- **Verify 8's text check:** the spec's command is correct. It only failed under this agent's `grep` wrapper (see Verify 8).

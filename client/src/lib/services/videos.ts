@@ -913,19 +913,41 @@ export async function fetchTranscriptByVideoIdService(
 
 export type TranscriptFetchAction = 'created' | 'updated' | 'skipped';
 
+/** Why strapi-plugin-yt-kb could not fetch a transcript (its TranscriptFetchError reasons). */
+export type TranscriptFetchReason =
+  | 'invalid_id'
+  | 'unavailable'
+  | 'no_captions'
+  | 'blocked'
+  | 'rate_limited'
+  | 'network';
+
+const TRANSCRIPT_FETCH_REASONS: ReadonlySet<string> = new Set<TranscriptFetchReason>([
+  'invalid_id',
+  'unavailable',
+  'no_captions',
+  'blocked',
+  'rate_limited',
+  'network',
+]);
+
 /** Ask Strapi to fetch a transcript from YouTube and store it.
  *
  *  The app never talks to YouTube itself: strapi-plugin-yt-kb does the fetch
  *  (POST /api/yt-kb/transcripts/fetch), stores the row, and returns it. A
  *  stored transcript comes back as `skipped` unless `force` is set, which
- *  re-fetches and replaces it. One fetcher, one TRANSCRIPT_PROXY_URL, shared
- *  with the MCP tools. */
+ *  re-fetches and replaces it. One fetcher and one proxy setting (the
+ *  plugin's `proxyUrl`, default PROXY_URL), shared with the MCP tools.
+ *
+ *  On failure, `status` is the HTTP status (0 = Strapi unreachable) and
+ *  `reason` the plugin's TranscriptFetchError reason, or null when the
+ *  failure was not one (auth, Strapi down, unexpected 500). */
 export async function requestTranscriptFetchService(
   videoId: string,
   { force }: { force: boolean },
 ): Promise<
   | { success: true; action: TranscriptFetchAction; transcript: StrapiTranscript }
-  | { success: false; error: string }
+  | { success: false; error: string; status: number; reason: TranscriptFetchReason | null }
 > {
   const result = await strapiFetch<StrapiTranscript>('POST', '/api/yt-kb/transcripts/fetch', {
     body: { data: { videoId, force } },
@@ -934,13 +956,20 @@ export async function requestTranscriptFetchService(
     const action = (result.meta as { action?: TranscriptFetchAction } | undefined)?.action;
     return { success: true, action: action ?? 'created', transcript: result.data };
   }
-  if (result.ok) return { success: false, error: 'Transcript fetch returned no row' };
-  // 502 means Strapi reached YouTube and YouTube refused (no captions, bot
-  // wall); its message says which, so pass it through rather than the
-  // generic "Backend error".
+  if (result.ok) {
+    return { success: false, error: 'Transcript fetch returned no row', status: 200, reason: null };
+  }
+  const raw = result.details?.reason;
+  const reason =
+    typeof raw === 'string' && TRANSCRIPT_FETCH_REASONS.has(raw) ? (raw as TranscriptFetchReason) : null;
+  // A reasoned failure is the plugin saying what YouTube did (no captions,
+  // bot wall, rate limit); its message says which, so pass it through
+  // rather than the generic "Backend error".
   return {
     success: false,
-    error: result.status === 502 ? result.error : friendlyBackendError(result.status, result.error),
+    error: reason ? result.error : friendlyBackendError(result.status, result.error),
+    status: result.status,
+    reason,
   };
 }
 

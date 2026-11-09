@@ -1,42 +1,65 @@
 import type { Core } from '@strapi/strapi';
-import { YOUTUBE_VIDEO_ID } from '../services/fetcher';
+import { extractYouTubeId } from '../services/fetcher';
+import { TranscriptFetchError, transcriptFetchErrorResponse } from '../services/fetch-errors';
 
-// POST /api/yt-kb/transcripts/fetch  { data: { videoId, force? } }
-// Fetches the transcript from YouTube and stores it, or returns the stored
-// one (force re-fetches). Responds { data: <transcript>, meta: { action } }.
-// Scope plugin::yt-kb.fetcher.fetchTranscript — granted to no role.
-export default ({ strapi }: { strapi: Core.Strapi }) => ({
-  async fetchTranscript(ctx: any) {
-    const { videoId, force } = ctx.request.body?.data ?? {};
-    if (typeof videoId !== 'string' || !YOUTUBE_VIDEO_ID.test(videoId)) {
-      return ctx.badRequest('data.videoId must be an 11-character YouTube video id');
-    }
-    if (force !== undefined && typeof force !== 'boolean') {
-      return ctx.badRequest('data.force must be true or false');
-    }
+// POST /api/yt-kb/transcripts/fetch  { data: { videoId, force? } }   scope plugin::yt-kb.fetcher.fetchTranscript
+//   → 200 { data, meta: { action: created | updated | skipped } }
+// GET  /api/yt-kb/yt-transcript/:videoId (content API)                scope plugin::yt-kb.fetcher.getOrFetch
+// GET  /yt-kb/yt-transcript/:videoId     (admin, plugin::yt-kb.tool.fetch-transcript)
+//   → 200 { data } when stored (no YouTube call), else fetch + store → 200 { data, meta: { action: 'created' } }
+// A TranscriptFetchError answers with services/fetch-errors.ts's status and body.
+// fetchAndStore already logged it; this file does not log.
+const TRANSCRIPT_UID = 'plugin::yt-kb.transcript';
 
-    let result;
-    try {
-      result = await strapi
-        .plugin('yt-kb')
-        .service('fetcher')
-        .fetchAndStore(videoId, { force: force === true });
-    } catch (err) {
-      // YouTube refused or failed (no captions, bot wall, network). 502:
-      // the request was fine, the upstream wasn't.
-      const message = err instanceof Error ? err.message : 'Transcript fetch failed';
-      strapi.log.warn(`[yt-kb] transcript fetch failed for ${videoId}: ${message}`);
-      ctx.status = 502;
-      ctx.body = { data: null, error: { status: 502, name: 'TranscriptFetchError', message } };
-      return;
-    }
+export default ({ strapi }: { strapi: Core.Strapi }) => {
+  const fetcher = () => strapi.plugin('yt-kb').service('fetcher');
 
-    const schema = strapi.getModel('plugin::yt-kb.transcript' as never);
+  const sendTranscript = async (ctx: any, transcript: Record<string, unknown>, meta?: Record<string, unknown>) => {
+    const schema = strapi.getModel(TRANSCRIPT_UID as never);
     ctx.body = {
-      data: await strapi.contentAPI.sanitize.output(result.transcript, schema, {
-        auth: ctx.state.auth,
-      }),
-      meta: { action: result.action },
+      data: await strapi.contentAPI.sanitize.output(transcript, schema, { auth: ctx.state.auth }),
+      ...(meta ? { meta } : {}),
     };
-  },
-});
+  };
+
+  // TranscriptFetchError → mapped status and body; anything else goes to Strapi's error middleware.
+  const sendFetchError = (ctx: any, err: unknown) => {
+    if (!(err instanceof TranscriptFetchError)) throw err;
+    const { status, body } = transcriptFetchErrorResponse(err);
+    ctx.status = status;
+    ctx.body = body;
+  };
+
+  return {
+    async fetchTranscript(ctx: any) {
+      const { videoId, force } = ctx.request.body?.data ?? {};
+      if (force !== undefined && typeof force !== 'boolean') {
+        return ctx.badRequest('data.force must be true or false');
+      }
+      try {
+        const result = await fetcher().fetchAndStore(typeof videoId === 'string' ? videoId : '', {
+          force: force === true,
+        });
+        await sendTranscript(ctx, result.transcript, { action: result.action });
+      } catch (err) {
+        sendFetchError(ctx, err);
+      }
+    },
+
+    async getOrFetch(ctx: any) {
+      const raw = String(ctx.params?.videoId ?? '');
+      // An unparseable value is passed through so fetchAndStore rejects (and logs) it as invalid_id.
+      const videoId = extractYouTubeId(raw) ?? raw;
+      try {
+        const result = await fetcher().fetchAndStore(videoId, { force: false });
+        await sendTranscript(
+          ctx,
+          result.transcript,
+          result.action === 'skipped' ? undefined : { action: result.action },
+        );
+      } catch (err) {
+        sendFetchError(ctx, err);
+      }
+    },
+  };
+};

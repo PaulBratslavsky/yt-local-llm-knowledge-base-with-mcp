@@ -168,16 +168,14 @@ describe('resolveGenerationInputs and the transcript', () => {
   });
 
   it('fails the run when Strapi cannot fetch the transcript', async () => {
-    services.requestTranscriptFetchService.mockResolvedValue({
-      success: false,
-      error: 'No captions available for this video',
-    });
+    services.requestTranscriptFetchService.mockResolvedValue({ success: false, error: 'No captions available for this video', status: 404, reason: 'no_captions' });
 
     const outcome = await resolveGenerationInputs('abc123', { forceRefetch: true });
 
     expect(outcome.kind).toBe('error');
     if (outcome.kind !== 'error') return;
     expect(outcome.error).toMatch(/no captions/i);
+    expect(services.requestTranscriptFetchService).toHaveBeenCalledTimes(1);
   });
 
   it('does not ask Strapi to fetch when the stored transcript has segments', async () => {
@@ -200,5 +198,84 @@ describe('resolveGenerationInputs and the transcript', () => {
     await resolveGenerationInputs('abc123', {});
 
     expect(services.requestTranscriptFetchService).toHaveBeenCalledWith('abc123', { force: true });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M-4 — the app retries only what the plugin did not: Strapi down, or a
+// network failure reaching YouTube.
+// ---------------------------------------------------------------------------
+
+describe('resolveGenerationInputs retries the transcript fetch only on network failures', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    // The run also asks YouTube oEmbed for metadata; keep it off the network.
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 404 })));
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    services.fetchVideoByVideoIdService.mockResolvedValue(video);
+    services.fetchTranscriptByVideoIdService.mockResolvedValue(null);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  const run = async () => {
+    const pending = resolveGenerationInputs('abc123', { forceRefetch: true });
+    await vi.runAllTimersAsync();
+    return pending;
+  };
+
+  it('retries when the plugin reports a network failure', async () => {
+    services.requestTranscriptFetchService
+      .mockResolvedValueOnce({ success: false, error: 'Could not reach YouTube: fetch failed', status: 502, reason: 'network' })
+      .mockResolvedValueOnce({ success: true, action: 'updated', transcript: freshRow });
+
+    const outcome = await run();
+
+    expect(services.requestTranscriptFetchService).toHaveBeenCalledTimes(2);
+    expect(outcome.kind).toBe('ready');
+  });
+
+  it('retries when Strapi is unreachable, up to three attempts in all', async () => {
+    services.requestTranscriptFetchService.mockResolvedValue({
+      success: false,
+      error: 'Backend unreachable. Check that Strapi is running on port 1340.',
+      status: 0,
+      reason: null,
+    });
+
+    const outcome = await run();
+
+    expect(services.requestTranscriptFetchService).toHaveBeenCalledTimes(3);
+    expect(outcome.kind).toBe('error');
+  });
+
+  it('does not retry a rate limit — the plugin already did', async () => {
+    services.requestTranscriptFetchService.mockResolvedValue({
+      success: false,
+      error: 'YouTube is rate limiting caption downloads from this server (HTTP 429), 3 attempts.',
+      status: 502,
+      reason: 'rate_limited',
+    });
+
+    const outcome = await run();
+
+    expect(services.requestTranscriptFetchService).toHaveBeenCalledTimes(1);
+    expect(outcome.kind).toBe('error');
+  });
+
+  it('does not retry a 502 that carries no reason', async () => {
+    services.requestTranscriptFetchService.mockResolvedValue({
+      success: false,
+      error: 'Backend error. Strapi is up but rejected the request — check its console for details.',
+      status: 502,
+      reason: null,
+    });
+
+    await run();
+
+    expect(services.requestTranscriptFetchService).toHaveBeenCalledTimes(1);
   });
 });

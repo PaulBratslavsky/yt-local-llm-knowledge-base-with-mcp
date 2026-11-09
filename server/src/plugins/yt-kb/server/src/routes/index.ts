@@ -1,3 +1,5 @@
+import { FETCH_TRANSCRIPT_ACTION } from '../mcp-official/permissions';
+
 // Content API routes, served under the plugin prefix: /api/yt-kb/<plural>.
 // The prefix is kept on purpose — the host this plugin targets already has a
 // `tag` content type of its own, so /api/tags would collide.
@@ -25,8 +27,26 @@ export default {
       ...crud('digest', 'digests'),
       // Fetch a transcript from YouTube and store it — see services/fetcher.ts.
       { method: 'POST' as const, path: '/transcripts/fetch', handler: 'fetcher.fetchTranscript' },
+      // Stored transcript, or fetch and store it — same path as
+      // strapi-plugin-youtube-transcripts. Accepts an id or a YouTube URL.
+      { method: 'GET' as const, path: '/yt-transcript/:videoId', handler: 'fetcher.getOrFetch' },
       // Bulk copy that keeps documentIds and dates — see services/importer.ts.
       { method: 'POST' as const, path: '/import/:type', handler: 'importer.importRecords' },
+    ],
+  },
+  // Admin API, served at /yt-kb/yt-transcript/:videoId: an admin session or an
+  // admin API token holding the "Fetch transcript" permission.
+  admin: {
+    type: 'admin' as const,
+    routes: [
+      {
+        method: 'GET' as const,
+        path: '/yt-transcript/:videoId',
+        handler: 'fetcher.getOrFetch',
+        config: {
+          policies: [{ name: 'admin::hasPermissions', config: { actions: [FETCH_TRANSCRIPT_ACTION] } }],
+        },
+      },
     ],
   },
 };

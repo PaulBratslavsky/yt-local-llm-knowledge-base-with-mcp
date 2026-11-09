@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { listAllVideosForEmbeddingService } from './videos';
+import { listAllVideosForEmbeddingService, requestTranscriptFetchService } from './videos';
 
 // These tests drive the Strapi HTTP boundary directly (same harness as
 // strapi-client.test.ts) so a backend failure can be simulated per page.
@@ -74,5 +74,56 @@ describe('listAllVideosForEmbeddingService', () => {
 
     expect(result.videos).toEqual([]);
     expect(result.error).toMatch(/Backend error/i);
+  });
+});
+
+describe('requestTranscriptFetchService', () => {
+  const errorResponse = (status: number, message: string, details: Record<string, unknown>) =>
+    new Response(
+      JSON.stringify({ data: null, error: { status, name: 'TranscriptFetchError', message, details } }),
+      { status },
+    );
+
+  it('passes the plugin message and reason through for a reasoned failure', async () => {
+    fetchMock.mockResolvedValueOnce(
+      errorResponse(404, 'No captions available for this video. Playability: OK.', { reason: 'no_captions' }),
+    );
+    await expect(requestTranscriptFetchService('dQw4w9WgXcQ', { force: false })).resolves.toEqual({
+      success: false,
+      error: 'No captions available for this video. Playability: OK.',
+      status: 404,
+      reason: 'no_captions',
+    });
+  });
+
+  it('reports an unreachable Strapi as status 0 with no reason', async () => {
+    fetchMock.mockRejectedValueOnce(new Error('ECONNREFUSED'));
+    await expect(requestTranscriptFetchService('dQw4w9WgXcQ', { force: false })).resolves.toEqual({
+      success: false,
+      error: 'Backend unreachable. Check that Strapi is running on port 1340.',
+      status: 0,
+      reason: null,
+    });
+  });
+
+  it('ignores a reason it does not know', async () => {
+    fetchMock.mockResolvedValueOnce(errorResponse(502, 'odd', { reason: 'something-new' }));
+    await expect(requestTranscriptFetchService('dQw4w9WgXcQ', { force: false })).resolves.toEqual({
+      success: false,
+      error: 'Backend error. Strapi is up but rejected the request — check its console for details.',
+      status: 502,
+      reason: null,
+    });
+  });
+
+  it('returns the row and the action on success', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ data: { documentId: 't1' }, meta: { action: 'skipped' } }), { status: 200 }),
+    );
+    await expect(requestTranscriptFetchService('dQw4w9WgXcQ', { force: false })).resolves.toEqual({
+      success: true,
+      action: 'skipped',
+      transcript: { documentId: 't1' },
+    });
   });
 });

@@ -303,4 +303,12 @@ describe('strapiFetch', () => {
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.data).toBeUndefined();
   });
+
+  it('carries a non-empty error.details through', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(404, { error: { message: 'm', details: { reason: 'no_captions' } } }),
+    );
+    const result = await strapiFetch('POST', '/api/yt-kb/transcripts/fetch', { body: {} });
+    expect(result).toEqual({ ok: false, status: 404, error: 'm', details: { reason: 'no_captions' } });
+  });
 });
